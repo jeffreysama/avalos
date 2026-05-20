@@ -1,0 +1,26 @@
+post_install() {
+    echo ":: AvalOS — Generando initramfs para linux-avalos…"
+    # mkinitcpio lee el preset que instalamos en /etc/mkinitcpio.d/
+    if command -v mkinitcpio &>/dev/null; then
+        mkinitcpio -p linux-avalos || echo "[WARN] mkinitcpio falló — regenera manualmente con: mkinitcpio -p linux-avalos"
+    fi
+
+    echo ":: AvalOS — Actualizando entradas de GRUB…"
+    if command -v grub-mkconfig &>/dev/null; then
+        grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null \
+            || echo "[WARN] grub-mkconfig falló — actualiza manualmente con: grub-mkconfig -o /boot/grub/grub.cfg"
+    fi
+
+    echo ":: AvalOS — linux-avalos instalado correctamente."
+    echo "   Kernel: $(ls /usr/lib/modules/ | grep avalos | tail -1)"
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    echo ":: AvalOS — linux-avalos eliminado."
+    echo "   Recuerda actualizar GRUB si eliminaste el kernel predeterminado:"
+    echo "   grub-mkconfig -o /boot/grub/grub.cfg"
+}

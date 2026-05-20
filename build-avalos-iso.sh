@@ -89,7 +89,7 @@ fi
 
 # Auto-detectar kernel personalizado
 if [[ "$KERNEL_PKG" == "linux" ]]; then
-    if pacman -Qq linux-avalos &>/dev/null 2>&1; then
+    if pacman -Qq linux-avalos &>/dev/null; then
         KERNEL_PKG="linux-avalos"; KERNEL_HEADERS_PKG="linux-avalos-headers"
         log_ok "Kernel personalizado: linux-avalos"
     else
@@ -99,7 +99,7 @@ fi
 
 # Versión
 [[ -z "$VERSION" ]] && VERSION="$(date +%Y.%m.%d)"
-if git -C "$(dirname "$0")" describe --tags --abbrev=0 &>/dev/null 2>&1; then
+if git -C "$(dirname "$0")" describe --tags --abbrev=0 &>/dev/null; then
     GIT_VER="$(git -C "$(dirname "$0")" describe --tags --abbrev=0)"
     VERSION="${GIT_VER#v}"
     log_ok "Versión desde git tag: ${VERSION}"
@@ -179,14 +179,10 @@ log_ok "profiledef.sh listo"
 log_step "pacman.conf"
 
 cp /etc/pacman.conf "$BUILD_DIR/pacman.conf"
-grep -q "\[avalos\]" "$BUILD_DIR/pacman.conf" || cat >> "$BUILD_DIR/pacman.conf" << PACEOF
-
-[avalos]
-SigLevel = Optional TrustAll
-Server = ${GITHUB_RELEASES_URL}
-PACEOF
 sed -i 's/^#ParallelDownloads/ParallelDownloads/' "$BUILD_DIR/pacman.conf" || true
-log_ok "pacman.conf con repo [avalos]"
+# Excluir firmware de nvidia (no lo necesitamos y falla en WSL)
+echo "IgnorePkg = linux-firmware-nvidia" >> "$BUILD_DIR/pacman.conf"
+log_ok "pacman.conf listo (sin nvidia firmware)"
 
 # ═══════════════════════════════════════════════════════════════════
 #  packages.x86_64
@@ -197,9 +193,16 @@ cat > "$BUILD_DIR/packages.x86_64" << PKGEOF
 # ── AvalOS live environment ──────────────────────────────────────
 # Kernel
 ${KERNEL_PKG}
-${KERNEL_HEADERS_PKG}
-linux-firmware
+linux-firmware-amdgpu
+linux-firmware-radeon
+linux-firmware-intel
+linux-firmware-atheros
+linux-firmware-realtek
+linux-firmware-broadcom
+linux-firmware-other
+linux-firmware-whence
 amd-ucode
+intel-ucode
 
 # Base
 base
@@ -215,6 +218,8 @@ os-prober
 syslinux
 memtest86+
 memtest86+-efi
+mkinitcpio
+iptables
 
 # Red
 networkmanager
@@ -244,7 +249,7 @@ fastfetch
 bat
 github-cli
 
-# AMD GPU
+# AMD GPU (RX 580 y similares GCN/RDNA)
 mesa
 mesa-utils
 vulkan-radeon
@@ -252,8 +257,12 @@ vulkan-icd-loader
 vulkan-tools
 libva-mesa-driver
 libva-utils
-radeontop
-gstreamer-vaapi
+
+# Intel GPU (iGPU integrado — laptops y Xeon)
+intel-media-driver
+vulkan-intel
+libva-intel-driver
+thermald
 
 # Hyprland + Wayland
 hyprland
@@ -319,6 +328,7 @@ parted
 
 # Archiso (disponible en el live para rebuild)
 archiso
+
 PKGEOF
 
 log_ok "packages.x86_64 generado ($(wc -l < "$BUILD_DIR/packages.x86_64") líneas)"
@@ -352,14 +362,6 @@ DISTRIB_DESCRIPTION="${DISTRO_NAME} ${VERSION} Live"
 LSBEOF
 
 echo "avalos-live" > "$AIROOTFS/etc/hostname"
-
-# zram en el live
-mkdir -p "$AIROOTFS/etc/systemd"
-cat > "$AIROOTFS/etc/systemd/zram-generator.conf" << 'ZRAMEOF'
-[zram0]
-zram-size = min(ram / 2, 8192)
-compression-algorithm = zstd
-ZRAMEOF
 
 # ── Instalar el instalador gráfico ────────────────────────────────
 mkdir -p \
@@ -405,6 +407,60 @@ fi
 LIVE_HYPR="$AIROOTFS/root/.config/hypr"
 mkdir -p "$LIVE_HYPR"
 
+# ── Script de detección de GPU (AMD/Intel) para el live ──────────
+cat > "$AIROOTFS/usr/local/bin/avalos-gpu-env" << 'GPUEOF'
+#!/bin/bash
+# Detecta GPU y genera gpu-env.conf para hyprland
+HYPR_CFG="$HOME/.config/hypr/gpu-env.conf"
+mkdir -p "$(dirname "$HYPR_CFG")"
+
+if lspci 2>/dev/null | grep -qiE 'amd|radeon|amdgpu'; then
+    cat > "$HYPR_CFG" << 'EOF'
+env = AMD_VULKAN_ICD,RADV
+env = VDPAU_DRIVER,radeonsi
+env = LIBVA_DRIVER_NAME,radeonsi
+EOF
+elif lspci 2>/dev/null | grep -qiE 'intel.*(graphics|vga|display)'; then
+    cat > "$HYPR_CFG" << 'EOF'
+env = LIBVA_DRIVER_NAME,iHD
+env = VDPAU_DRIVER,va_gl
+EOF
+else
+    # Fallback: archivo vacío (mesa auto-detecta)
+    : > "$HYPR_CFG"
+fi
+GPUEOF
+chmod 755 "$AIROOTFS/usr/local/bin/avalos-gpu-env"
+
+# Crear gpu-env.conf vacío por defecto (se sobreescribe antes de que Hyprland arranque)
+touch "$LIVE_HYPR/gpu-env.conf"
+
+# ── Systemd service: detectar GPU ANTES de que SDDM/Hyprland arranquen ───────
+# Esto resuelve la condición de carrera donde hyprland.conf hace `source`
+# de gpu-env.conf antes de que exec-once haya podido escribirlo.
+mkdir -p "$AIROOTFS/etc/systemd/system"
+cat > "$AIROOTFS/etc/systemd/system/avalos-gpu-detect.service" << 'GPUSVCEOF'
+[Unit]
+Description=AvalOS — GPU Environment Detection
+Documentation=https://github.com/jeffreysama/avalos
+Before=sddm.service display-manager.service
+After=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/avalos-gpu-env
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target
+GPUSVCEOF
+
+# Habilitar el servicio creando el symlink de wants
+mkdir -p "$AIROOTFS/etc/systemd/system/graphical.target.wants"
+ln -sf "/etc/systemd/system/avalos-gpu-detect.service" \
+    "$AIROOTFS/etc/systemd/system/graphical.target.wants/avalos-gpu-detect.service"
+log_ok "avalos-gpu-detect.service habilitado (GPU detectada antes de SDDM)"
+
 cat > "$LIVE_HYPR/hyprland.conf" << 'HYPREOF'
 # ── AvalOS Live — hyprland.conf ──────────────────────────────────
 monitor = ,preferred,auto,1
@@ -413,12 +469,14 @@ env = XCURSOR_SIZE,24
 env = QT_QPA_PLATFORM,wayland;xcb
 env = GDK_BACKEND,wayland,x11
 env = MOZ_ENABLE_WAYLAND,1
-env = AMD_VULKAN_ICD,RADV
-env = VDPAU_DRIVER,radeonsi
-env = LIBVA_DRIVER_NAME,radeonsi
 env = __GLX_VENDOR_LIBRARY_NAME,mesa
 
+# GPU-specific env vars se cargan dinámicamente según hardware detectado
+source = ~/.config/hypr/gpu-env.conf
+
 # ── AUTOSTART del live ────────────────────────────────────────────
+exec-once = /usr/local/bin/avalos-gpu-env
+exec-once = hyprpaper
 exec-once = waybar
 exec-once = dunst
 exec-once = nm-applet --indicator
@@ -528,16 +586,25 @@ log_ok "Waybar del live configurado (botón 'Instalar AvalOS' en la barra)"
 mkdir -p "$AIROOTFS/root/.config/dunst"
 cat > "$AIROOTFS/root/.config/dunst/dunstrc" << 'DUNSTEOF'
 [global]
-    width = 340; height = 100; origin = top-right; offset = 10x40
-    font = JetBrainsMono Nerd Font 11; markup = full
-    format = "<b>%s</b>\n%b"; corner_radius = 6
+    width = 340
+    height = 100
+    origin = top-right
+    offset = 10x40
+    font = JetBrainsMono Nerd Font 11
+    markup = full
+    format = "<b>%s</b>\n%b"
+    corner_radius = 6
     mouse_left_click = close_current
 
 [urgency_normal]
-    background = "#24283b"; foreground = "#c0caf5"; timeout = 8
+    background = "#24283b"
+    foreground = "#c0caf5"
+    timeout = 8
 
 [urgency_critical]
-    background = "#1a0000"; foreground = "#f7768e"; timeout = 0
+    background = "#1a0000"
+    foreground = "#f7768e"
+    timeout = 0
 DUNSTEOF
 
 # ── rofi live ─────────────────────────────────────────────────────
@@ -556,17 +623,87 @@ mkdir -p "$AIROOTFS/root/.config/kitty"
 cat > "$AIROOTFS/root/.config/kitty/kitty.conf" << 'KITTYEOF'
 font_family JetBrainsMono Nerd Font
 font_size 12.0
-background #1a1b26; foreground #c0caf5
-cursor #c0caf5; cursor_text_color #1a1b26
-background_opacity 0.92; window_padding_width 10
-enable_audio_bell no; scrollback_lines 5000
+background #1a1b26
+foreground #c0caf5
+cursor #c0caf5
+cursor_text_color #1a1b26
+background_opacity 0.92
+window_padding_width 10
+enable_audio_bell no
+scrollback_lines 5000
 KITTYEOF
 
 # ── hyprpaper (wallpaper sólido Tokyo Night) ──────────────────────
 mkdir -p "$AIROOTFS/root/.config/hypr"
+
+# Generar wallpaper sólido Tokyo Night (#1a1b26) con Python puro (sin dependencias)
+WALLPAPER_PATH="$AIROOTFS/root/.config/hypr/wallpaper.png"
+python3 - "$WALLPAPER_PATH" << 'PYPNG'
+import sys, struct, zlib
+path = sys.argv[1]
+def chunk(t, d):
+    crc = zlib.crc32(t + d) & 0xffffffff
+    return struct.pack('>I', len(d)) + t + d + struct.pack('>I', crc)
+w, h, R, G, B = 1920, 1080, 26, 27, 38
+rows = (b'\x00' + bytes([R, G, B]) * w) * h
+png = (b'\x89PNG\r\n\x1a\n'
+       + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+       + chunk(b'IDAT', zlib.compress(rows, 9))
+       + chunk(b'IEND', b''))
+open(path, 'wb').write(png)
+PYPNG
+
 cat > "$AIROOTFS/root/.config/hypr/hyprpaper.conf" << 'HPEOF'
 splash = false
+preload = ~/.config/hypr/wallpaper.png
+wallpaper = ,~/.config/hypr/wallpaper.png
 HPEOF
+
+# ── ZRAM con zstd ─────────────────────────────────────────────────────
+mkdir -p "$AIROOTFS/etc/systemd"
+cat > "$AIROOTFS/etc/systemd/zram-generator.conf" << 'ZRAMEOF'
+[zram0]
+zram-size = min(ram / 2, 8192)
+compression-algorithm = zstd
+swap-priority = 100
+ZRAMEOF
+
+# ── systemd-oomd ────────────────────────────────────────────────────────
+cat > "$AIROOTFS/etc/systemd/oomd.conf" << 'OOMDEOF'
+[OOM]
+SwapUsedLimit=85%
+DefaultMemoryPressureLimit=70%
+DefaultMemoryPressureDurationSec=10s
+OOMDEOF
+
+# ── sysctl: BBR + memoria ─────────────────────────────────────────────
+mkdir -p "$AIROOTFS/etc/sysctl.d"
+cat > "$AIROOTFS/etc/sysctl.d/80-avalos-bbr.conf" << 'BBREOF'
+# AvalOS: BBR congestion control (mainline desde Linux 4.9, muy estable)
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+BBREOF
+
+cat > "$AIROOTFS/etc/sysctl.d/81-avalos-memory.conf" << 'MEMEOF'
+# AvalOS: memory tuning conservador
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
+MEMEOF
+
+# ── IO scheduler por tipo de disco ─────────────────────────────────────
+mkdir -p "$AIROOTFS/etc/udev/rules.d"
+cat > "$AIROOTFS/etc/udev/rules.d/60-avalos-iosched.rules" << 'IOEOF'
+# AvalOS: IO schedulers automáticos
+ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
+ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"
+ACTION=="add|change", KERNEL=="nvme[0-9n]*", ATTR{queue/scheduler}="kyber"
+IOEOF
+
+log_ok "ZRAM + systemd-oomd + BBR + IO scheduler configurados en airootfs"
 
 # ── sudo NOPASSWD para el live (como releng) ──────────────────────
 mkdir -p "$AIROOTFS/etc/sudoers.d"
@@ -591,19 +728,11 @@ Current=breeze
 EnableHiDPI=true
 SDDMEOF
 
-# Sesión Hyprland para SDDM
-mkdir -p "$AIROOTFS/usr/share/wayland-sessions"
-cat > "$AIROOTFS/usr/share/wayland-sessions/hyprland.desktop" << 'SESSEOF'
-[Desktop Entry]
-Name=Hyprland
-Comment=An intelligent dynamic tiling Wayland compositor
-Exec=Hyprland
-Type=Application
-SESSEOF
+# Sesión Hyprland — la provee el paquete hyprland
 
 # ── Welcome message en TTY (fallback si Hyprland no arranca) ─────
 mkdir -p "$AIROOTFS/etc/profile.d"
-cat > "$AIROOTFS/etc/profile.d/avalos-welcome.sh" << 'MOTDEOF'
+cat > "$AIROOTFS/etc/profile.d/avalos-welcome.sh" << MOTDEOF
 #!/bin/bash
 echo ""
 echo "  ╔═══════════════════════════════════════════╗"
@@ -659,10 +788,20 @@ log_ok "Entradas actualizadas: '${DISTRO_NAME} ${VERSION}'"
 # ═══════════════════════════════════════════════════════════════════
 #  CONSTRUIR ISO
 # ═══════════════════════════════════════════════════════════════════
+log_step "Verificando espacio disponible"
+SPACE_NEEDED=10
+BUILD_WORK="${HOME}/avalos-work"
+SPACE_AVAIL=$(df -BG "$HOME" | awk 'NR==2 {gsub("G",""); print $4}')
+if [[ "${SPACE_AVAIL:-0}" -lt "$SPACE_NEEDED" ]]; then
+    log_err "Espacio insuficiente: tienes ${SPACE_AVAIL}GB disponibles, se necesitan ~${SPACE_NEEDED}GB"
+    log_err "Directorio de trabajo: ${BUILD_WORK}"
+    exit 1
+fi
+log_ok "Espacio disponible: ${SPACE_AVAIL}GB en ${HOME}"
+
 log_step "Construyendo ISO con mkarchiso"
 echo -e "  ${C_DIM}Esto puede tardar 10-30 minutos…${C_RESET}\n"
 
-BUILD_WORK="/tmp/avalos-work"
 rm -rf "$BUILD_WORK"
 mkdir -p "$BUILD_WORK" "$OUTPUT_DIR"
 
@@ -711,7 +850,7 @@ if $UPLOAD; then
 $(cat "$SHA_FILE")
 \`\`\`
 "
-    if gh release view "$TAG" --repo "$GITHUB_REPO" &>/dev/null 2>&1; then
+    if gh release view "$TAG" --repo "$GITHUB_REPO" &>/dev/null; then
         log_info "Tag ${TAG} existe — actualizando assets…"
         gh release upload "$TAG" "$ISO_FILE" "$SHA_FILE" --repo "$GITHUB_REPO" --clobber
     else
