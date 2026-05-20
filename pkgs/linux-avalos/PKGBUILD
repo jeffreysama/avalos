@@ -156,7 +156,6 @@ package_linux-avalos() {
     )
     provides=("linux=${pkgver}")
     backup=("etc/mkinitcpio.d/${pkgbase}.preset")
-    install=${pkgbase}.install
 
     cd "linux-${pkgver}"
 
