@@ -196,7 +196,7 @@ EOF
 # ── Package: headers ───────────────────────────────────────────────────────────
 package_linux-avalos-headers() {
     pkgdesc="Headers del AvalOS Linux Kernel"
-    depends=(linux-avalos)
+    depends=(${pkgbase})
     provides=("linux-headers=${pkgver}")
 
     cd "linux-${pkgver}"

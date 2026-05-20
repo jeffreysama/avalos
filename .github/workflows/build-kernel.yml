@@ -167,6 +167,11 @@ jobs:
 
           sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-bore|' "$BORE_DIR/PKGBUILD"
           sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-bore linux-avalos-bore-headers)|' "$BORE_DIR/PKGBUILD"
+          # Renombrar las funciones package_() para que coincidan con los nuevos pkgname.
+          # makepkg busca package_<pkgname>() — si no existen, falla con exit code 12.
+          # Importante: renombrar primero -headers para no hacer match parcial con la siguiente línea.
+          sed -i 's|^package_linux-avalos-headers()|package_linux-avalos-bore-headers()|' "$BORE_DIR/PKGBUILD"
+          sed -i 's|^package_linux-avalos()|package_linux-avalos-bore()|' "$BORE_DIR/PKGBUILD"
 
           BORE_URL="https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/stable/linux-${MAJOR}.${MINOR}-bore.patch"
           if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
