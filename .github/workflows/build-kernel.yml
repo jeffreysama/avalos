@@ -23,6 +23,8 @@ env:
   REPO_TAG: repo
   MARCH: x86-64-v3
   PKGBUILD_DIR: pkgs/linux-avalos
+  # Version de fallback — se actualiza manualmente si kernel.org no responde
+  FALLBACK_KERNEL_VER: "7.0.9"
 
 jobs:
   check-version:
@@ -35,35 +37,56 @@ jobs:
       - name: Obtener ultima version estable
         id: get_ver
         run: |
+          # Si el usuario especificó una versión manualmente, usarla
           if [[ -n "${{ github.event.inputs.kernel_version }}" ]]; then
             KERNEL_VER="${{ github.event.inputs.kernel_version }}"
+            echo "Version especificada manualmente: $KERNEL_VER"
           else
-            KERNEL_VER=$(curl -s https://www.kernel.org/finger_banner \
+            # Intentar varias fuentes de kernel.org
+            KERNEL_VER=""
+
+            # Fuente 1: finger_banner
+            KERNEL_VER=$(curl -fsSL --max-time 15 https://www.kernel.org/finger_banner 2>/dev/null \
               | grep "stable:" \
               | grep -oP '\d+\.\d+\.\d+' \
-              | head -1)
+              | head -1 || true)
+
+            # Fuente 2: API JSON de kernel.org
+            if [[ -z "$KERNEL_VER" ]]; then
+              echo "finger_banner fallo, intentando API JSON..."
+              KERNEL_VER=$(curl -fsSL --max-time 15 https://www.kernel.org/releases.json 2>/dev/null \
+                | grep -oP '"version"\s*:\s*"\K[0-9]+\.[0-9]+\.[0-9]+' \
+                | head -1 || true)
+            fi
+
+            # Fuente 3: fallback hardcodeado
+            if [[ -z "$KERNEL_VER" ]]; then
+              echo "Todas las fuentes fallaron, usando version de fallback: ${{ env.FALLBACK_KERNEL_VER }}"
+              KERNEL_VER="${{ env.FALLBACK_KERNEL_VER }}"
+            fi
           fi
-          if [[ -z "$KERNEL_VER" ]]; then
-            echo "Error: no se pudo obtener version del kernel"
-            exit 1
-          fi
+
           echo "kernel_ver=$KERNEL_VER" >> "$GITHUB_OUTPUT"
-          echo "Version: $KERNEL_VER"
+          echo "Version final: $KERNEL_VER"
 
       - name: Revisar si ya esta construida
         id: check_build
         run: |
           KERNEL_VER="${{ steps.get_ver.outputs.kernel_ver }}"
           FORCE="${{ github.event.inputs.force_rebuild }}"
+
           if [[ "$FORCE" == "true" ]]; then
+            echo "Rebuild forzado"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           EXISTING=$(gh release view "${{ env.REPO_TAG }}" \
             --repo "${{ env.GITHUB_REPO }}" \
             --json assets \
             --jq ".assets[].name" 2>/dev/null \
             | grep "linux-avalos-${KERNEL_VER}" || true)
+
           if [[ -n "$EXISTING" ]]; then
             echo "La version $KERNEL_VER ya esta publicada - omitiendo build"
             echo "should_build=false" >> "$GITHUB_OUTPUT"
@@ -151,7 +174,7 @@ jobs:
             echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
             sed -i 's|    "config"|    "config"\n    "bore-scheduler.patch"|' "$BORE_DIR/PKGBUILD"
           else
-            echo "Parche BORE no disponible - BORE build usara EEVDF con HZ=1000"
+            echo "Parche BORE no disponible - usara EEVDF con HZ=1000"
           fi
 
           sudo -u builder bash -c "
