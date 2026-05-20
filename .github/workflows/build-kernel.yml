@@ -150,7 +150,7 @@ jobs:
             MAKEFLAGS='-j${JOBS}' \
             LLVM=1 LLVM_IAS=1 \
             KCFLAGS='-march=${{ env.MARCH }} -mtune=generic' \
-            makepkg -s --noconfirm --needed
+            makepkg -s --noconfirm --needed --skippgpcheck
           "
 
       - name: Compilar linux-avalos-bore
@@ -182,7 +182,7 @@ jobs:
             MAKEFLAGS='-j${JOBS}' \
             LLVM=1 LLVM_IAS=1 \
             KCFLAGS='-march=${{ env.MARCH }} -mtune=generic' \
-            makepkg -s --noconfirm --needed
+            makepkg -s --noconfirm --needed --skippgpcheck
           "
 
       - name: Generar base de datos del repo de pacman

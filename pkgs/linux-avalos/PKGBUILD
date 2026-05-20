@@ -22,11 +22,9 @@ _majorver=${pkgver%%.*}
 
 source=(
     "https://cdn.kernel.org/pub/linux/kernel/v${_majorver}.x/linux-${pkgver}.tar.xz"
-    "https://cdn.kernel.org/pub/linux/kernel/v${_majorver}.x/linux-${pkgver}.tar.sign"
     "config"              # Generado por gen-config.sh — base estable de Arch Linux
 )
 sha256sums=(
-    'SKIP'
     'SKIP'
     'SKIP'
 )

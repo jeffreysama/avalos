@@ -1,0 +1,407 @@
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  AvalOS — .github/workflows/build-kernel.yml                        ║
+# ║                                                                      ║
+# ║  Construye linux-avalos y linux-avalos-headers en un contenedor      ║
+# ║  Arch Linux y los sube al release "repo" de GitHub, que actúa       ║
+# ║  como repositorio de pacman para los instaladores de AvalOS.         ║
+# ║                                                                      ║
+# ║  URL del repo que pacman usa:                                        ║
+# ║    https://github.com/jeffreysama/avalos/releases/download/repo      ║
+# ║                                                                      ║
+# ║  Triggers:                                                           ║
+# ║    - Manual (workflow_dispatch) — con opción de forzar versión       ║
+# ║    - Automático cada lunes a las 03:00 UTC (comprueba si hay nuevo   ║
+# ║      kernel estable y construye solo si cambió la versión)           ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+
+name: Build linux-avalos
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: "Versión del kernel (vacío = última estable automática)"
+        required: false
+        default: ""
+      force_rebuild:
+        description: "Forzar rebuild aunque la versión no haya cambiado"
+        type: boolean
+        default: false
+      build_bore:
+        description: "Construir también linux-avalos-bore (BORE scheduler)"
+        type: boolean
+        default: true
+
+  schedule:
+    # Cada lunes 03:00 UTC — comprueba si hay kernel nuevo
+    - cron: "0 3 * * 1"
+
+env:
+  GITHUB_REPO: jeffreysama/avalos
+  REPO_TAG: repo           # Tag del release que actúa como pacman repo
+  MARCH: x86-64-v3
+  PKGBUILD_DIR: pkgs/linux-avalos
+
+jobs:
+  # ── JOB 1: Determinar versión del kernel ─────────────────────────────────────
+  check-version:
+    name: Verificar versión del kernel
+    runs-on: ubuntu-latest
+    outputs:
+      kernel_ver: ${{ steps.get_ver.outputs.kernel_ver }}
+      should_build: ${{ steps.check_build.outputs.should_build }}
+
+    steps:
+      - name: Obtener última versión estable del kernel
+        id: get_ver
+        run: |
+          if [[ -n "${{ github.event.inputs.kernel_version }}" ]]; then
+            KERNEL_VER="${{ github.event.inputs.kernel_version }}"
+            echo "Versión especificada manualmente: $KERNEL_VER"
+          else
+            # kernel.org finger_banner — la fuente más fiable y simple
+            KERNEL_VER=$(curl -s https://www.kernel.org/finger_banner \
+              | grep "stable:" \
+              | grep -oP '\d+\.\d+\.\d+' \
+              | head -1)
+            if [[ -z "$KERNEL_VER" ]]; then
+              echo "❌ No se pudo obtener la versión del kernel de kernel.org"
+              exit 1
+            fi
+            echo "Última versión estable: $KERNEL_VER"
+          fi
+          echo "kernel_ver=$KERNEL_VER" >> "$GITHUB_OUTPUT"
+
+      - name: Revisar si ya está construida esta versión
+        id: check_build
+        run: |
+          KERNEL_VER="${{ steps.get_ver.outputs.kernel_ver }}"
+          FORCE="${{ github.event.inputs.force_rebuild }}"
+
+          if [[ "$FORCE" == "true" ]]; then
+            echo "Rebuild forzado — construyendo de todas formas."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Comprobar si el release 'repo' ya tiene un paquete con esta versión
+          EXISTING=$(gh release view "${{ env.REPO_TAG }}" \
+            --repo "${{ env.GITHUB_REPO }}" \
+            --json assets \
+            --jq ".assets[].name" 2>/dev/null \
+            | grep "linux-avalos-${KERNEL_VER}" || true)
+
+          if [[ -n "$EXISTING" ]]; then
+            echo "La versión $KERNEL_VER ya está en el release — omitiendo build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "La versión $KERNEL_VER no está publicada — iniciando build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── JOB 2: Compilar el kernel ─────────────────────────────────────────────────
+  build-kernel:
+    name: Compilar linux-avalos ${{ needs.check-version.outputs.kernel_ver }}
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+
+    # Arch Linux oficial en Docker — el único entorno correcto para makepkg
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged   # Necesario para fakeroot y operaciones de makepkg
+
+    steps:
+      # ── Setup básico del contenedor Arch ───────────────────────────────────
+      - name: Actualizar sistema Arch y instalar dependencias de build
+        run: |
+          # Inicializar pacman (el contenedor de Arch viene sin llavero configurado)
+          pacman-key --init
+          pacman-key --populate archlinux
+
+          # Actualizar mirrors y sistema
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+
+          # Dependencias de makepkg / kernel build
+          pacman -S --noconfirm --needed \
+            base-devel git curl wget \
+            bc bison flex python \
+            clang llvm lld \
+            pahole cpio perl tar xz zstd libelf \
+            github-cli
+
+      - name: Checkout del repo AvalOS
+        uses: actions/checkout@v4
+
+      # ── Configurar usuario para makepkg (no puede correr como root) ────────
+      - name: Crear usuario builder para makepkg
+        run: |
+          useradd -m -G wheel builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          # Darle ownership del directorio de trabajo
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      # ── Preparar PKGBUILD con la versión correcta ──────────────────────────
+      - name: Actualizar pkgver en PKGBUILD
+        run: |
+          KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
+          cd "${{ env.PKGBUILD_DIR }}"
+
+          # Actualizar pkgver y resetear pkgrel a 1
+          sed -i "s|^pkgver=.*|pkgver=${KERNEL_VER}|" PKGBUILD
+          sed -i "s|^pkgrel=.*|pkgrel=1|" PKGBUILD
+
+          echo "PKGBUILD actualizado:"
+          grep -E "^pkg(ver|rel|base|name)" PKGBUILD
+
+      - name: Generar config base del kernel
+        run: |
+          cd "${{ env.PKGBUILD_DIR }}"
+          chown -R builder:builder .
+          sudo -u builder bash gen-config.sh
+          echo "Config generado: $(wc -l < config) líneas"
+
+      # ── Build: linux-avalos (EEVDF) ────────────────────────────────────────
+      - name: Compilar linux-avalos (EEVDF)
+        run: |
+          cd "${{ env.PKGBUILD_DIR }}"
+          chown -R builder:builder .
+
+          KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
+          JOBS=$(nproc)
+          echo "==> Compilando linux-avalos ${KERNEL_VER} con ${JOBS} cores"
+          echo "==> Esto puede tardar entre 30 y 90 minutos según el runner"
+
+          sudo -u builder bash -c "
+            cd '${{ env.PKGBUILD_DIR }}'
+            MAKEFLAGS='-j${JOBS}' \
+            LLVM=1 LLVM_IAS=1 \
+            KCFLAGS='-march=${{ env.MARCH }} -mtune=generic' \
+            makepkg -s --noconfirm --needed --log 2>&1
+          "
+
+      # ── Build: linux-avalos-bore (BORE scheduler, opcional) ────────────────
+      - name: Compilar linux-avalos-bore (BORE scheduler)
+        if: github.event.inputs.build_bore != 'false'
+        run: |
+          KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
+          MAJOR="${KERNEL_VER%%.*}"
+          MINOR="${KERNEL_VER#*.}"; MINOR="${MINOR%.*}"
+          JOBS=$(nproc)
+
+          # Copiar el PKGBUILD y adaptarlo para BORE
+          BORE_DIR="${{ env.PKGBUILD_DIR }}-bore"
+          cp -r "${{ env.PKGBUILD_DIR }}" "$BORE_DIR"
+          chown -R builder:builder "$BORE_DIR"
+
+          # Cambiar pkgbase y pkgname a linux-avalos-bore
+          sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-bore|' "$BORE_DIR/PKGBUILD"
+          sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-bore linux-avalos-bore-headers)|' "$BORE_DIR/PKGBUILD"
+          sed -i 's|provides=("linux=|provides=("linux-avalos-bore=${pkgver}" "linux=|' "$BORE_DIR/PKGBUILD"
+
+          # Reemplazar scheduler EEVDF por BORE en el prepare()
+          # Añadir parche BORE si está disponible para esta versión
+          BORE_PATCH_URL="https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/stable/linux-${MAJOR}.${MINOR}-bore.patch"
+          echo "Intentando descargar parche BORE: $BORE_PATCH_URL"
+          if curl -fsSL "$BORE_PATCH_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
+             && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
+            echo "✓ Parche BORE descargado para ${MAJOR}.${MINOR}"
+            # Añadir el parche al source[]
+            sed -i 's|    "config"|    "config"\n    "bore-scheduler.patch"|' "$BORE_DIR/PKGBUILD"
+            # Activar BORE en prepare()
+            sed -i 's|CONFIG_PREEMPT_DYNAMIC|CONFIG_PREEMPT\n        -d CONFIG_PREEMPT_VOLUNTARY|' "$BORE_DIR/PKGBUILD"
+            sed -i '/CONFIG_HZ_1000/i\    # BORE: aplicar parche y activar scheduler\n    patch -Np1 < ../bore-scheduler.patch || echo "[WARN] parche BORE falló — usando EEVDF"\n    scripts/config \\\n        -e CONFIG_SCHED_BORE \\' "$BORE_DIR/PKGBUILD"
+          else
+            echo "[WARN] Parche BORE no disponible para ${MAJOR}.${MINOR} — BORE build usará EEVDF + HZ=1000"
+          fi
+
+          sudo -u builder bash -c "
+            cd '$BORE_DIR'
+            MAKEFLAGS='-j${JOBS}' \
+            LLVM=1 LLVM_IAS=1 \
+            KCFLAGS='-march=${{ env.MARCH }} -mtune=generic' \
+            makepkg -s --noconfirm --needed --log 2>&1
+          "
+
+      # ── Recopilar paquetes ─────────────────────────────────────────────────
+      - name: Recopilar paquetes compilados
+        id: collect
+        run: |
+          mkdir -p /tmp/avalos-repo
+
+          # Recopilar todos los .pkg.tar.zst generados
+          find "${{ env.PKGBUILD_DIR }}" \
+               "${{ env.PKGBUILD_DIR }}-bore" \
+               -name "*.pkg.tar.zst" 2>/dev/null \
+          | while read -r pkg; do
+            cp "$pkg" /tmp/avalos-repo/
+            echo "  Copiado: $(basename "$pkg")"
+          done
+
+          PKG_COUNT=$(ls /tmp/avalos-repo/*.pkg.tar.zst 2>/dev/null | wc -l)
+          if [[ "$PKG_COUNT" -eq 0 ]]; then
+            echo "❌ No se encontraron paquetes compilados — el build falló."
+            exit 1
+          fi
+          echo "✓ $PKG_COUNT paquetes recopilados"
+          ls -lh /tmp/avalos-repo/
+
+      # ── Generar base de datos del repo de pacman ───────────────────────────
+      - name: Generar avalos.db (base de datos de pacman)
+        run: |
+          cd /tmp/avalos-repo
+
+          # Si hay un repo existente, descargarlo para hacer merge
+          # (así no perdemos paquetes viejos del release)
+          if gh release view "${{ env.REPO_TAG }}" \
+               --repo "${{ env.GITHUB_REPO }}" \
+               --json assets \
+               --jq ".assets[].name" 2>/dev/null | grep -q "avalos.db"; then
+            echo "Descargando repo existente para merge…"
+            gh release download "${{ env.REPO_TAG }}" \
+              --repo "${{ env.GITHUB_REPO }}" \
+              --pattern "avalos.db.tar.zst" \
+              --output avalos.db.tar.zst \
+              --clobber 2>/dev/null || true
+            gh release download "${{ env.REPO_TAG }}" \
+              --repo "${{ env.GITHUB_REPO }}" \
+              --pattern "*.pkg.tar.zst" \
+              --dir /tmp/avalos-repo \
+              --clobber 2>/dev/null || true
+            echo "Repo existente descargado — haciendo merge con nuevos paquetes"
+          fi
+
+          # Construir la base de datos del repo
+          shopt -s nullglob
+          PKGS=(*.pkg.tar.zst)
+          shopt -u nullglob
+
+          if [[ ${#PKGS[@]} -eq 0 ]]; then
+            echo "❌ No hay paquetes para indexar"
+            exit 1
+          fi
+
+          repo-add --new avalos.db.tar.zst "${PKGS[@]}"
+
+          # repo-add crea symlinks; GitHub releases necesita archivos reales
+          # (los symlinks avalos.db y avalos.files apuntan a avalos.db.tar.zst)
+          if [[ -L avalos.db ]]; then
+            cp --remove-destination avalos.db.tar.zst avalos.db
+          fi
+          if [[ -L avalos.files ]]; then
+            cp --remove-destination avalos.files.tar.zst avalos.files
+          fi
+
+          echo "✓ avalos.db generado"
+          ls -lh *.db* *.pkg.tar.zst
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Subir al release de GitHub ─────────────────────────────────────────
+      - name: Publicar en GitHub Releases (tag: repo)
+        run: |
+          KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
+          cd /tmp/avalos-repo
+
+          # Crear el release "repo" si no existe todavía
+          if ! gh release view "${{ env.REPO_TAG }}" \
+               --repo "${{ env.GITHUB_REPO }}" &>/dev/null; then
+            echo "Creando release '${{ env.REPO_TAG }}'…"
+            gh release create "${{ env.REPO_TAG }}" \
+              --repo "${{ env.GITHUB_REPO }}" \
+              --title "AvalOS Package Repo" \
+              --notes "## Repositorio de paquetes AvalOS
+
+Este release actúa como repositorio de pacman.
+Para añadirlo al sistema, agrega esto a \`/etc/pacman.conf\`:
+
+\`\`\`ini
+[avalos]
+SigLevel = Optional TrustAll
+Server = https://github.com/jeffreysama/avalos/releases/download/repo
+\`\`\`
+
+Luego ejecuta:
+\`\`\`bash
+sudo pacman -Sy linux-avalos linux-avalos-headers
+\`\`\`
+
+> **Nota:** Este release se actualiza automáticamente. No borres los archivos manualmente." \
+              --prerelease=false \
+              --latest=false
+          fi
+
+          echo "Subiendo archivos al release '${{ env.REPO_TAG }}'…"
+
+          # Subir todos los paquetes + db (--clobber reemplaza si ya existen)
+          shopt -s nullglob
+          ALL_FILES=(*.pkg.tar.zst *.db.tar.zst *.db *.files.tar.zst *.files)
+          shopt -u nullglob
+
+          if [[ ${#ALL_FILES[@]} -eq 0 ]]; then
+            echo "❌ No hay archivos para subir"
+            exit 1
+          fi
+
+          gh release upload "${{ env.REPO_TAG }}" \
+            "${ALL_FILES[@]}" \
+            --repo "${{ env.GITHUB_REPO }}" \
+            --clobber
+
+          echo ""
+          echo "✅ Publicado en:"
+          echo "   https://github.com/${{ env.GITHUB_REPO }}/releases/tag/${{ env.REPO_TAG }}"
+          echo ""
+          echo "   Paquetes disponibles:"
+          for f in *.pkg.tar.zst; do
+            echo "   • $f ($(du -h "$f" | cut -f1))"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Guardar logs como artefactos (si el build falla, se pueden revisar) ─
+      - name: Subir logs como artefactos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ needs.check-version.outputs.kernel_ver }}
+          path: |
+            ${{ env.PKGBUILD_DIR }}/*.log
+            ${{ env.PKGBUILD_DIR }}-bore/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ── JOB 3: Notificar resultado ─────────────────────────────────────────────
+  notify:
+    name: Resumen del build
+    needs: [check-version, build-kernel]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resumen
+        run: |
+          KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
+          BUILD_RESULT="${{ needs.build-kernel.result }}"
+
+          echo "## 🐧 AvalOS Kernel Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Campo       | Valor |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Versión     | \`${KERNEL_VER}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Resultado   | ${BUILD_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Arquitectura| x86-64-v3 (AMD+Intel) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Compilador  | Clang/LLVM + ThinLTO |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Scheduler   | EEVDF + BORE variant |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$BUILD_RESULT" == "success" ]]; then
+            echo "✅ **Publicado en:** [releases/tag/repo](https://github.com/${{ env.GITHUB_REPO }}/releases/tag/repo)" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "${{ needs.check-version.outputs.should_build }}" == "false" ]]; then
+            echo "ℹ️ **Sin cambios:** La versión \`${KERNEL_VER}\` ya estaba publicada." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ **El build falló.** Revisa los logs y artefactos del job anterior." >> "$GITHUB_STEP_SUMMARY"
+          fi
