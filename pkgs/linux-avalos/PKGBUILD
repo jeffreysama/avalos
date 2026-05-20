@@ -137,6 +137,13 @@ prepare() {
 build() {
     cd "linux-${pkgver}"
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld all
+
+    # ThinLTO puede no generar Module.symvers automáticamente en la raíz.
+    # Si no existe, forzar su generación (necesario para DKMS y el paquete headers).
+    if [[ ! -f Module.symvers ]]; then
+        echo "  → Module.symvers no encontrado tras make all — forzando generación..."
+        make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld modules
+    fi
 }
 
 # ── Package: kernel ────────────────────────────────────────────────────────────
@@ -197,7 +204,15 @@ package_linux-avalos-headers() {
 
     echo "  → Instalando headers en ${builddir}…"
 
-    install -Dt "${builddir}" -m644 .config Makefile Module.symvers System.map vmlinux
+    install -Dt "${builddir}" -m644 .config Makefile System.map vmlinux
+    # Module.symvers: con ThinLTO puede no generarse en raíz; se instala si existe,
+    # o se crea vacío como fallback para que DKMS no falle al verificar la presencia del archivo.
+    if [[ -f Module.symvers ]]; then
+        install -Dt "${builddir}" -m644 Module.symvers
+    else
+        echo "  ⚠ Module.symvers ausente — creando archivo vacío (fallback DKMS)"
+        touch "${builddir}/Module.symvers"
+    fi
     install -Dt "${builddir}/kernel" -m644 kernel/Makefile
     install -Dt "${builddir}/arch/x86" -m644 arch/x86/Makefile
     cp -t "${builddir}" -a scripts
