@@ -101,7 +101,7 @@ jobs:
           # profiledef.sh
           cat > "$BUILD_DIR/profiledef.sh" << PROFILEEOF
           #!/usr/bin/env bash
-          iso_name="avalos-${VERSION}-x86_64"
+          iso_name="avalos-${VERSION}"
           iso_label="AvalOS_${VERSION//./_}"
           iso_publisher="AvalOS <https://github.com/jeffreysama/avalos>"
           iso_application="AvalOS — Arch-based · Hyprland · Tokyo Night"
@@ -131,7 +131,9 @@ jobs:
             printf '\n[avalos]\nSigLevel = Optional TrustAll\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' >> "$BUILD_DIR/pacman.conf"
           fi
           # Sin nvidia
-          echo "IgnorePkg = linux-firmware-nvidia" >> "$BUILD_DIR/pacman.conf"
+          sed -i '/^[options]/a IgnorePkg = linux-firmware-nvidia' "$BUILD_DIR/pacman.conf"
+          # Habilitar multilib para paquetes lib32
+          printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$BUILD_DIR/pacman.conf"
 
           echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_ENV"
           echo "AIROOTFS=$AIROOTFS" >> "$GITHUB_ENV"
@@ -182,7 +184,6 @@ jobs:
           mesa
           vulkan-radeon
           libva-mesa-driver
-          mesa-vdpau
           lib32-mesa
           lib32-vulkan-radeon
 
