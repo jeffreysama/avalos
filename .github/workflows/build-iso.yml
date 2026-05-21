@@ -232,6 +232,8 @@ jobs:
 
           # archiso (para el live)
           archiso
+          syslinux
+          edk2-shell
           PKGEOF
 
           echo "packages.x86_64 generado"
