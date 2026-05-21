@@ -249,6 +249,15 @@ jobs:
           mkdir -p "$AIROOTFS/root/.config/hypr"
           mkdir -p "$AIROOTFS/etc/sddm.conf.d"
           mkdir -p "$AIROOTFS/etc/systemd/system/graphical.target.wants"
+          mkdir -p "$AIROOTFS/etc/pacman.d"
+
+          # mirrorlist dentro del airootfs (requerido por mkarchiso al crear lista de paquetes)
+          cp /etc/pacman.d/mirrorlist "$AIROOTFS/etc/pacman.d/mirrorlist" 2>/dev/null || \
+            echo 'Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch' \
+              > "$AIROOTFS/etc/pacman.d/mirrorlist"
+
+          # pacman.conf dentro del airootfs
+          cp "$BUILD_DIR/pacman.conf" "$AIROOTFS/etc/pacman.conf"
 
           # Copiar instalador si existe en el repo
           if [[ -f "skill_instalar_usb.py" ]]; then
