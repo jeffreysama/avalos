@@ -1,5 +1,4 @@
 # Maintainer: AvalOS <https://github.com/jeffreysama/avalos>
-# Basado en linux-cachyos (CachyOS team) — patches moderados
 # Target: x86-64-v3 · Clang/LLVM · ThinLTO · EEVDF
 #
 # Este PKGBUILD vive en pkgs/linux-avalos/ del repo de AvalOS.
@@ -13,6 +12,7 @@ pkgrel=1
 pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
 url="https://github.com/jeffreysama/avalos"
+packager="Jefferson Stanley <jeffersonstln4@gmail.com>"
 license=(GPL2)
 makedepends=(bc bison flex python clang llvm lld pahole cpio perl tar xz zstd git libelf)
 options=(!strip)
