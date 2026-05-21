@@ -22,6 +22,7 @@ env:
   GITHUB_REPO: jeffreysama/avalos
   REPO_TAG: repo
   MARCH: x86-64-v3
+  MARCH_COMPAT: x86-64   # Para CPUs sin AVX2: Celeron N-series, Pentium Silver, hardware antiguo
   PKGBUILD_DIR: pkgs/linux-avalos
   # Version de fallback — se actualiza manualmente si kernel.org no responde
   FALLBACK_KERNEL_VER: "7.0.9"
@@ -190,6 +191,43 @@ jobs:
             makepkg -s --noconfirm --needed --skippgpcheck
           "
 
+      # ── linux-avalos-compat: x86-64 baseline ──────────────────────────────
+      # Para CPUs sin AVX2: Intel Celeron N-series (Jasper Lake, Gemini Lake),
+      # Pentium Silver, hardware antiguo, VMs sin extensiones modernas.
+      # Mismas configs que linux-avalos pero compilado con -march=x86-64.
+      - name: Compilar linux-avalos-compat (x86-64 baseline)
+        run: |
+          KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
+          JOBS=$(nproc)
+
+          COMPAT_DIR="${{ env.PKGBUILD_DIR }}-compat"
+          cp -r "${{ env.PKGBUILD_DIR }}" "$COMPAT_DIR"
+          chown -R builder:builder "$COMPAT_DIR"
+
+          # Renombrar paquete a linux-avalos-compat
+          sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-compat|' "$COMPAT_DIR/PKGBUILD"
+          sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-compat linux-avalos-compat-headers)|' "$COMPAT_DIR/PKGBUILD"
+          sed -i 's|provides=("linux=${pkgver}")|provides=("linux-avalos-compat=${pkgver}" "linux=${pkgver}")|' "$COMPAT_DIR/PKGBUILD"
+          sed -i 's|^package_linux-avalos-headers()|package_linux-avalos-compat-headers()|' "$COMPAT_DIR/PKGBUILD"
+          sed -i 's|^package_linux-avalos()|package_linux-avalos-compat()|' "$COMPAT_DIR/PKGBUILD"
+          # Actualizar pkgdesc
+          sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64 baseline, AMD+Intel, EEVDF (Celeron N/Pentium Silver/hardware antiguo)|g' "$COMPAT_DIR/PKGBUILD"
+
+          # Quitar CONFIG_MNATIVE_AMD (optimización solo válida para CPUs modernas)
+          # y usar defconfig genérico para x86-64 baseline
+          sed -i 's|-e CONFIG_MNATIVE_AMD \\|-d CONFIG_MNATIVE_AMD \\|' "$COMPAT_DIR/PKGBUILD"
+
+          echo "PKGBUILD compat generado:"
+          grep -E "^pkg(base|name|ver|rel)" "$COMPAT_DIR/PKGBUILD"
+
+          sudo -u builder bash -c "
+            cd '$COMPAT_DIR'
+            MAKEFLAGS='-j${JOBS}' \
+            LLVM=1 LLVM_IAS=1 \
+            KCFLAGS='-march=${{ env.MARCH_COMPAT }} -mtune=generic' \
+            makepkg -s --noconfirm --needed --skippgpcheck
+          "
+
       - name: Generar base de datos del repo de pacman
         run: |
           mkdir -p /tmp/avalos-repo
@@ -200,6 +238,11 @@ jobs:
 
           BORE_DIR="${{ env.PKGBUILD_DIR }}-bore"
           find "$BORE_DIR" \
+               -name "*.pkg.tar.zst" 2>/dev/null \
+               -exec cp {} /tmp/avalos-repo/ \; || true
+
+          COMPAT_DIR="${{ env.PKGBUILD_DIR }}-compat"
+          find "$COMPAT_DIR" \
                -name "*.pkg.tar.zst" 2>/dev/null \
                -exec cp {} /tmp/avalos-repo/ \; || true
 
@@ -250,6 +293,7 @@ jobs:
           path: |
             ${{ env.PKGBUILD_DIR }}/*.log
             ${{ env.PKGBUILD_DIR }}-bore/*.log
+            ${{ env.PKGBUILD_DIR }}-compat/*.log
           retention-days: 7
           if-no-files-found: ignore
 
