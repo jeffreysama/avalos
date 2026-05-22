@@ -45,6 +45,7 @@ jobs:
             mtools \
             libisoburn \
             erofs-utils
+            imagemagick
 
       - name: Checkout del repo
         uses: actions/checkout@v4
@@ -170,6 +171,8 @@ jobs:
           wofi
           kitty
           sddm
+          qt5-graphicaleffects
+          plymouth
           qt5-wayland
           qt6-wayland
           polkit-kde-agent
@@ -342,21 +345,8 @@ jobs:
           Session=hyprland
           SDDMEOF
 
-          # Wallpaper Tokyo Night PNG puro (sin dependencias)
-          python3 - "$AIROOTFS/root/.config/hypr/wallpaper.png" << 'PYPNG'
-          import sys, struct, zlib
-          path = sys.argv[1]
-          def chunk(t, d):
-              crc = zlib.crc32(t + d) & 0xffffffff
-              return struct.pack('>I', len(d)) + t + d + struct.pack('>I', crc)
-          w, h, R, G, B = 1920, 1080, 26, 27, 38
-          rows = (b'\x00' + bytes([R, G, B]) * w) * h
-          png = (b'\x89PNG\r\n\x1a\n'
-                 + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
-                 + chunk(b'IDAT', zlib.compress(rows, 9))
-                 + chunk(b'IEND', b''))
-          open(path, 'wb').write(png)
-          PYPNG
+          # Wallpaper: fondo Tokyo Night sólido (el branding step lo sobreescribe con logo)
+          convert -size 1920x1080 xc:"#1a1b26" "$AIROOTFS/root/.config/hypr/wallpaper.png"
 
           # hyprpaper.conf
           cat > "$AIROOTFS/root/.config/hypr/hyprpaper.conf" << 'HYPRPAPEREOF'
@@ -420,7 +410,336 @@ jobs:
           net.ipv4.tcp_congestion_control = bbr
           BBREOF
 
+
+          # Fastfetch — logo AvalOS + Tokyo Night
+          mkdir -p "$AIROOTFS/etc/fastfetch"
+          mkdir -p "$AIROOTFS/root/.config/fastfetch"
+
+          cat > "$AIROOTFS/etc/fastfetch/avalos.txt" << 'LOGOEOF'
+$1                          ʌ
+$1                         /#\
+$1                        /#$2@$1#\
+$1                       /#$2@$3$$$2@$1#\
+$1                ___   /#$3$$$2@$1ʌ$2@$3$$$1#\    ___
+$1                \$4&&$1\ /#$3$$$2@$1/$3$$$1\$2@$1##\  /$4&&$1/
+$1                 \$4&&$1\#$3$$$2@$1/$3$$$$$$$1\$2@$1##\/$4&&$1/
+$1                  \$4&&$1\$2@$1/$3$$$$$1ʌ$3$$$$$1\$2@$3$$$1#\$4&$1/
+$1                  /\$4&&$1\$3$$$$$1/ \$3$$$$$1\$2@$3$$$1#\
+$1                 /#$3$$$1\$4&&$1\/   \$3$$$$$1\$2@$3$$$1#\
+$1                /#$3$$$2@$1/\$4&&$1\    \$3$$$$$1\$2@$3$$$1#\
+$1               /#$3$$$2@$1/$3$$$$$1\$4&&$1\  /$4&$1\$3$$$$$1\$2@$3$$$1#\
+$1              /#$3$$$2@$1/$3$$$$$1/ \$4&&$1\/$4&&$1/\$3$$$$$1\$2@$3$$$1#\
+$1             /#$3$$$2@$1/$3$$$$$1/   \$4&&&&$1/  \$3$$$$$1\$2@$3$$$1#\
+$1             \#$3$$$1/$3$$$$$1/     \$4&&$1/    \$3$$$$$1\$2@$3$$$1/
+$1              \/__/       \/      \__\/
+LOGOEOF
+
+          cat > "$AIROOTFS/root/.config/fastfetch/config.jsonc" << 'FFEOF'
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "source": "/etc/fastfetch/avalos.txt",
+    "colors": [
+      "38;2;122;162;247",
+      "38;2;125;207;255",
+      "38;2;187;154;247",
+      "38;2;158;206;106"
+    ],
+    "padding": { "top": 1, "right": 2 }
+  },
+  "display": {
+    "separator": " → ",
+    "color": {
+      "keys":   "38;2;122;162;247",
+      "title":  "38;2;125;207;255",
+      "output": "38;2;192;202;245"
+    }
+  },
+  "modules": [
+    { "type": "title",    "format": "{user-name}@{host-name}" },
+    "separator",
+    { "type": "os",       "key": " OS",          "format": "AvalOS ({distro-id})" },
+    { "type": "host",     "key": "󰇄 Host"                                         },
+    { "type": "kernel",   "key": " Kernel"                                        },
+    { "type": "uptime",   "key": "󰔟 Uptime"                                       },
+    { "type": "packages", "key": "󰏗 Paquetes"                                     },
+    { "type": "shell",    "key": " Shell"                                         },
+    { "type": "display",  "key": "󰍹 Resolución"                                   },
+    { "type": "wm",       "key": " WM"                                            },
+    { "type": "terminal", "key": " Terminal"                                      },
+    "separator",
+    { "type": "cpu",    "key": " CPU",    "showPeCoreCount": true, "temp": true   },
+    { "type": "gpu",    "key": "󰿵 GPU",   "temp": true                            },
+    { "type": "memory", "key": "󰍛 RAM"                                             },
+    { "type": "disk",   "key": "󰋊 Disco",  "folders": "/"                          },
+    "separator",
+    { "type": "colors", "paddingLeft": 2, "symbol": "circle"                     }
+  ]
+}
+FFEOF
+
           echo "airootfs configurado"
+
+
+      - name: Branding completo (logo, os-release, wallpaper, SDDM, Plymouth)
+        run: |
+          AIROOTFS="$BUILD_DIR/airootfs"
+          LOGO_URL="https://raw.githubusercontent.com/${{ env.GITHUB_REPO }}/main/AvalOS-logo.png"
+
+          # ── Logo: descargarlo al airootfs ─────────────────────────────────
+          mkdir -p "$AIROOTFS/usr/share/pixmaps"
+          curl -fsSL "$LOGO_URL" -o "$AIROOTFS/usr/share/pixmaps/avalos-logo.png"
+          echo "Logo descargado: $(wc -c < "$AIROOTFS/usr/share/pixmaps/avalos-logo.png") bytes"
+
+          # ── os-release ────────────────────────────────────────────────────
+          cat > "$AIROOTFS/etc/os-release" << 'OSEOF'
+NAME="AvalOS"
+PRETTY_NAME="AvalOS"
+ID=avalos
+ID_LIKE=arch
+HOME_URL="https://github.com/jeffreysama/avalos"
+SUPPORT_URL="https://github.com/jeffreysama/avalos/issues"
+BUG_REPORT_URL="https://github.com/jeffreysama/avalos/issues"
+LOGO=avalos-logo
+BUILD_ID=rolling
+ANSI_COLOR="38;2;122;162;247"
+OSEOF
+
+          # ── Wallpaper: fondo Tokyo Night + logo centrado ─────────────────
+          convert -size 1920x1080 xc:"#1a1b26" \
+            \( "$AIROOTFS/usr/share/pixmaps/avalos-logo.png" \
+               -resize 380x380 \
+               -background none \) \
+            -gravity center -geometry +0-80 \
+            -composite "$AIROOTFS/root/.config/hypr/wallpaper.png" \
+            && echo "Wallpaper con logo generado" \
+            || echo "Fallback: wallpaper solido Tokyo Night"
+
+          # ── SDDM: tema AvalOS Tokyo Night ─────────────────────────────────
+          SDDM_THEME="$AIROOTFS/usr/share/sddm/themes/avalos"
+          mkdir -p "$SDDM_THEME"
+
+          # Copiar logo al tema
+          cp "$AIROOTFS/usr/share/pixmaps/avalos-logo.png" "$SDDM_THEME/avalos-logo.png"
+
+          # theme.conf
+          cat > "$SDDM_THEME/theme.conf" << 'THEMEEOF'
+[General]
+type=theme
+name=AvalOS
+description=AvalOS — Tokyo Night
+author=AvalOS
+license=MIT
+THEMEEOF
+
+          # Main.qml
+          cat > "$SDDM_THEME/Main.qml" << 'QMLEOF'
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+
+Item {
+    id: root
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#1a1b26"
+    }
+
+    ColumnLayout {
+        anchors.centerIn: parent
+        spacing: 18
+        width: 300
+
+        Image {
+            Layout.alignment: Qt.AlignHCenter
+            source: Qt.resolvedUrl("avalos-logo.png")
+            width: 140; height: 140
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+        }
+
+        Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: "AvalOS"
+            color: "#7aa2f7"
+            font.pixelSize: 30
+            font.weight: Font.Light
+        }
+
+        Item { Layout.preferredHeight: 8 }
+
+        TextField {
+            id: nameField
+            Layout.fillWidth: true
+            text: userModel.lastUser
+            placeholderText: "Usuario"
+            color: "#c0caf5"
+            placeholderTextColor: "#565f89"
+            font.pixelSize: 13
+            leftPadding: 14; rightPadding: 14
+            topPadding: 10; bottomPadding: 10
+            background: Rectangle {
+                color: "#24283b"
+                radius: 8
+                border.color: nameField.activeFocus ? "#7aa2f7" : "#414868"
+                border.width: 1
+            }
+            KeyNavigation.tab: passField
+        }
+
+        TextField {
+            id: passField
+            Layout.fillWidth: true
+            placeholderText: "Contraseña"
+            echoMode: TextInput.Password
+            color: "#c0caf5"
+            placeholderTextColor: "#565f89"
+            font.pixelSize: 13
+            leftPadding: 14; rightPadding: 14
+            topPadding: 10; bottomPadding: 10
+            background: Rectangle {
+                color: "#24283b"
+                radius: 8
+                border.color: passField.activeFocus ? "#7aa2f7" : "#414868"
+                border.width: 1
+            }
+            Keys.onReturnPressed: doLogin()
+            KeyNavigation.tab: loginBtn
+        }
+
+        Text {
+            Layout.fillWidth: true
+            text: sddm.lastError
+            color: "#f7768e"
+            font.pixelSize: 11
+            wrapMode: Text.WordWrap
+            visible: sddm.lastError !== ""
+        }
+
+        Button {
+            id: loginBtn
+            Layout.fillWidth: true
+            text: "Iniciar sesión"
+            topPadding: 10; bottomPadding: 10
+            onClicked: doLogin()
+            Keys.onReturnPressed: doLogin()
+            background: Rectangle {
+                color: loginBtn.pressed ? "#5a7fd4"
+                     : loginBtn.hovered ? "#8aade7"
+                     : "#7aa2f7"
+                radius: 8
+                Behavior on color { ColorAnimation { duration: 100 } }
+            }
+            contentItem: Text {
+                text: loginBtn.text
+                color: "#1a1b26"
+                font.pixelSize: 13
+                font.weight: Font.Medium
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+    }
+
+    ComboBox {
+        id: sessionSelect
+        anchors { right: parent.right; bottom: parent.bottom; margins: 20 }
+        width: 170
+        model: sessionModel
+        textRole: "name"
+        background: Rectangle {
+            color: "#24283b"; radius: 6
+            border.color: "#414868"
+        }
+        contentItem: Text {
+            leftPadding: 10
+            text: sessionSelect.displayText
+            color: "#c0caf5"
+            font.pixelSize: 12
+            verticalAlignment: Text.AlignVCenter
+        }
+        popup.background: Rectangle {
+            color: "#24283b"
+            border.color: "#414868"
+            radius: 6
+        }
+    }
+
+    function doLogin() {
+        sddm.login(nameField.text, passField.text, sessionSelect.currentIndex)
+    }
+}
+QMLEOF
+
+          # Activar tema en sddm.conf.d
+          cat > "$AIROOTFS/etc/sddm.conf.d/theme.conf" << 'THEOF'
+[Theme]
+Current=avalos
+THEOF
+
+          # ── Plymouth: tema AvalOS ──────────────────────────────────────────
+          PLY_THEME="$AIROOTFS/usr/share/plymouth/themes/avalos"
+          mkdir -p "$PLY_THEME"
+          mkdir -p "$AIROOTFS/etc/plymouth"
+
+          # Copiar logo al tema
+          cp "$AIROOTFS/usr/share/pixmaps/avalos-logo.png" "$PLY_THEME/avalos-logo.png"
+
+          # avalos.plymouth
+          cat > "$PLY_THEME/avalos.plymouth" << 'PLYEOF'
+[Plymouth Theme]
+Name=AvalOS
+Description=AvalOS boot splash — Tokyo Night
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/avalos
+ScriptFile=/usr/share/plymouth/themes/avalos/avalos.script
+PLYEOF
+
+          # avalos.script
+          cat > "$PLY_THEME/avalos.script" << 'SCRIPTEOF'
+# AvalOS Plymouth — Tokyo Night
+screen_width  = Window.GetWidth();
+screen_height = Window.GetHeight();
+
+Window.SetBackgroundTopColor(0.102, 0.106, 0.149);
+Window.SetBackgroundBottomColor(0.102, 0.106, 0.149);
+
+logo_image  = Image("avalos-logo.png");
+logo_image  = logo_image.Scale(260, 260);
+logo_sprite = Sprite(logo_image);
+logo_sprite.SetX(Math.Int(screen_width  / 2 - 130));
+logo_sprite.SetY(Math.Int(screen_height / 2 - 150));
+logo_sprite.SetOpacity(1);
+
+# Barra de progreso
+bar_bg_image = Image(300, 6);
+bar_bg_sprite = Sprite(bar_bg_image);
+bar_bg_sprite.SetX(Math.Int(screen_width / 2 - 150));
+bar_bg_sprite.SetY(Math.Int(screen_height / 2 + 150));
+
+fun boot_progress_cb(duration, progress) {
+    bar_w = Math.Int(300 * progress);
+    if (bar_w < 2) bar_w = 2;
+    bar_image  = Image(bar_w, 6);
+    bar_sprite = Sprite(bar_image);
+    bar_sprite.SetX(Math.Int(screen_width / 2 - 150));
+    bar_sprite.SetY(Math.Int(screen_height / 2 + 150));
+    bar_sprite.SetOpacity(1);
+}
+Plymouth.SetBootProgressFunction(boot_progress_cb);
+SCRIPTEOF
+
+          # plymouthd.conf: tema por defecto
+          cat > "$AIROOTFS/etc/plymouth/plymouthd.conf" << 'PLYDEOF'
+[Daemon]
+Theme=avalos
+ShowDelay=0
+PLYDEOF
+
+          echo "Branding completo OK"
 
       - name: Construir ISO con mkarchiso
         run: |
