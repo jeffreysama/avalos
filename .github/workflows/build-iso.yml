@@ -276,7 +276,7 @@ jobs:
           # archiso.conf: hooks mínimos para el initramfs del live
           mkdir -p "$AIROOTFS/etc/mkinitcpio.conf.d"
           cat > "$AIROOTFS/etc/mkinitcpio.conf.d/archiso.conf" << 'ARCHISOCONF'
-          HOOKS=(base systemd modconf kms keyboard sd-vconsole block filesystems)
+          HOOKS=(base systemd keyboard sd-vconsole block filesystems)
           COMPRESSION="zstd"
           ARCHISOCONF
 
@@ -286,7 +286,7 @@ jobs:
 
           # Symlink: mkarchiso espera /boot/vmlinuz-linux para el preset archiso
           # Apuntarlo al kernel linux-avalos
-          ln -sf /boot/vmlinuz-linux-avalos "$AIROOTFS/boot/vmlinuz-linux" 2>/dev/null || true
+          ln -sf vmlinuz-linux-avalos "$AIROOTFS/boot/vmlinuz-linux" 2>/dev/null || true
 
           # pacman.conf dentro del airootfs
           cp "$BUILD_DIR/pacman.conf" "$AIROOTFS/etc/pacman.conf"
