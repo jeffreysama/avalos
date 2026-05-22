@@ -102,7 +102,7 @@ jobs:
           cat > "$BUILD_DIR/profiledef.sh" << PROFILEEOF
           #!/usr/bin/env bash
           iso_name="avalos-${VERSION}"
-          iso_label="AvalOS_${VERSION//./_}"
+          iso_label="AVLS_${VERSION//./_}"
           iso_publisher="AvalOS <https://github.com/jeffreysama/avalos>"
           iso_application="AvalOS — Arch-based · Hyprland · Tokyo Night"
           iso_version="${VERSION}"
@@ -153,6 +153,8 @@ jobs:
           linux-firmware-atheros
           linux-firmware-realtek
           linux-firmware-whence
+          linux-firmware-bnx2x
+          linux-firmware-qcom
 
           # Base
           base
