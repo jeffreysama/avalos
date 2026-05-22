@@ -44,7 +44,7 @@ jobs:
             dosfstools \
             mtools \
             libisoburn \
-            erofs-utils
+            erofs-utils \
             imagemagick
 
       - name: Checkout del repo
@@ -473,7 +473,7 @@ jobs:
               }
               """)
           print("Fastfetch OK")
-FFPYEOF
+          FFPYEOF
 
 
           echo "airootfs configurado"
@@ -682,7 +682,7 @@ FFPYEOF
               """)
 
           print("Branding OK")
-BRANDPYEOF
+          BRANDPYEOF
 
 
       - name: Construir ISO con mkarchiso
