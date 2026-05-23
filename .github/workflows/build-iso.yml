@@ -10,7 +10,7 @@ on:
       kernel:
         description: "Kernel a usar (linux-avalos / linux-avalos-compat / linux)"
         required: false
-        default: "linux-avalos"
+        default: "linux-avalos-compat"
       upload:
         description: "Subir ISO a GitHub Releases"
         type: boolean
