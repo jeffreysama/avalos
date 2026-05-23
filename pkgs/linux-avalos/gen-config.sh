@@ -53,20 +53,20 @@ ARCH_CONFIG_URLS=(
 )
 
 echo "    Fuente: config de Arch Linux (descarga)"
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
 
 # Intentar descargar el paquete de Arch y extraer su config
 DOWNLOADED=false
 for url in "${ARCH_CONFIG_URLS[@]}"; do
     echo "    Intentando: $url"
-    if curl -fsSL --max-time 60 -o "$TMPDIR/linux.pkg.tar.zst" "$url" 2>/dev/null; then
+    if curl -fsSL --max-time 60 -o "$_tmpdir/linux.pkg.tar.zst" "$url" 2>/dev/null; then
         # Extraer config desde el paquete
-        if tar -I zstd -xf "$TMPDIR/linux.pkg.tar.zst" -C "$TMPDIR" \
+        if tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
                "./boot/config" 2>/dev/null \
-           || tar -I zstd -xf "$TMPDIR/linux.pkg.tar.zst" -C "$TMPDIR" \
+           || tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
                "boot/config" 2>/dev/null; then
-            CONFIG_FILE=$(find "$TMPDIR/boot" -name "config" | head -1)
+            CONFIG_FILE=$(find "$_tmpdir/boot" -name "config" | head -1)
             if [[ -f "$CONFIG_FILE" ]]; then
                 cp "$CONFIG_FILE" "$OUT"
                 echo "    ✓ config extraído del paquete Arch Linux"
@@ -75,9 +75,9 @@ for url in "${ARCH_CONFIG_URLS[@]}"; do
             fi
         fi
         # Intentar extraer el .config directamente (algunos paquetes lo incluyen)
-        if tar -I zstd -xf "$TMPDIR/linux.pkg.tar.zst" -C "$TMPDIR" \
+        if tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
                --wildcards "*/config*" 2>/dev/null; then
-            CONFIG_FILE=$(find "$TMPDIR" -name "config" | grep -v ".pkg" | head -1)
+            CONFIG_FILE=$(find "$_tmpdir" -name "config" | grep -v ".pkg" | head -1)
             if [[ -f "$CONFIG_FILE" ]]; then
                 cp "$CONFIG_FILE" "$OUT"
                 echo "    ✓ config extraído del paquete Arch Linux (wildcard)"

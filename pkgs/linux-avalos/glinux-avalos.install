@@ -1,0 +1,71 @@
+post_install() {
+    echo ":: AvalOS — Generando initramfs para linux-avalos…"
+    # mkinitcpio lee el preset que instalamos en /etc/mkinitcpio.d/
+    if command -v mkinitcpio &>/dev/null; then
+        mkinitcpio -p linux-avalos || echo "[WARN] mkinitcpio falló — regenera manualmente con: mkinitcpio -p linux-avalos"
+    fi
+
+    _update_bootloader
+    echo ":: AvalOS — linux-avalos instalado correctamente."
+    echo "   Kernel: $(ls /usr/lib/modules/ | grep avalos | tail -1)"
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    echo ":: AvalOS — linux-avalos eliminado."
+    echo "   Recuerda actualizar el bootloader si eliminaste el kernel predeterminado."
+    echo "   GRUB:         grub-mkconfig -o /boot/grub/grub.cfg"
+    echo "   systemd-boot: bootctl update"
+    echo "   rEFInd:       refind-install"
+}
+
+# ── Detecta qué bootloader está activo y lo actualiza ────────────────────────
+_update_bootloader() {
+    # ── GRUB ──────────────────────────────────────────────────────────────────
+    if command -v grub-mkconfig &>/dev/null && [[ -f /boot/grub/grub.cfg ]]; then
+        echo ":: AvalOS — Actualizando entradas de GRUB…"
+        grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null \
+            || echo "[WARN] grub-mkconfig falló — actualiza con: grub-mkconfig -o /boot/grub/grub.cfg"
+    fi
+
+    # ── systemd-boot ──────────────────────────────────────────────────────────
+    # Copia el kernel e initramfs nuevos a la ESP (instalador los pone en /boot/efi/AvalOS/)
+    if command -v bootctl &>/dev/null && bootctl is-installed &>/dev/null; then
+        echo ":: AvalOS — Actualizando archivos de kernel en la ESP (systemd-boot)…"
+        _kver=$(ls /usr/lib/modules/ | grep avalos | grep -v bore | grep -v compat | tail -1)
+        _esp=""
+        # Detectar punto de montaje de la ESP
+        for _candidate in /efi /boot/efi /boot; do
+            if mountpoint -q "$_candidate" && [[ -d "$_candidate/EFI" || -d "$_candidate/loader" ]]; then
+                _esp="$_candidate"
+                break
+            fi
+        done
+        if [[ -n "$_kver" && -n "$_esp" ]]; then
+            _dest="$_esp/AvalOS"
+            mkdir -p "$_dest"
+            # El PKGBUILD instala el kernel como vmlinuz-linux-avalos (pkgbase),
+            # NO como vmlinuz-${_kver} (kernel release). Mismo para initramfs.
+            _pkgbase="linux-avalos"
+            cp "/boot/vmlinuz-${_pkgbase}"             "$_dest/vmlinuz-${_pkgbase}"     2>/dev/null || true
+            cp "/boot/initramfs-${_pkgbase}.img"       "$_dest/initramfs-${_pkgbase}.img" 2>/dev/null \
+                || echo "[WARN] initramfs-${_pkgbase}.img no encontrado — ejecuta: mkinitcpio -p linux-avalos"
+            # Copiar microcode si existe
+            for _uc in amd-ucode.img intel-ucode.img; do
+                [[ -f "/boot/$_uc" ]] && cp "/boot/$_uc" "$_dest/$_uc"
+            done
+            echo "   Archivos copiados a ${_dest}/"
+        else
+            echo "[WARN] No se encontró la ESP o la versión del kernel — copia manual requerida."
+        fi
+    fi
+
+    # ── rEFInd ────────────────────────────────────────────────────────────────
+    # rEFInd detecta kernels automáticamente — solo necesita refind-install en actualizaciones mayores
+    if command -v refind-install &>/dev/null && [[ -d /boot/EFI/refind || -d /efi/EFI/refind || -d /boot/efi/EFI/refind ]]; then
+        echo ":: AvalOS — rEFInd detectado (detecta kernels automáticamente, no se requiere acción)."
+    fi
+}

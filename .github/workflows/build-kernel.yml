@@ -25,7 +25,7 @@ env:
   MARCH_COMPAT: x86-64   # Para CPUs sin AVX2: Celeron N-series, Pentium Silver, hardware antiguo
   PKGBUILD_DIR: pkgs/linux-avalos
   # Version de fallback — se actualiza manualmente si kernel.org no responde
-  FALLBACK_KERNEL_VER: "7.0.9"
+  FALLBACK_KERNEL_VER: "7.0.10"
 
 jobs:
   check-version:
@@ -178,7 +178,13 @@ jobs:
           if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
              && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
             echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
-            sed -i 's|    "config"|    "config"\n    "bore-scheduler.patch"|' "$BORE_DIR/PKGBUILD"
+            # El delimitador en source=() puede ser tab o espacios — matcheamos ambos
+            if grep -qE '^\s+"config"' "$BORE_DIR/PKGBUILD"; then
+              sed -i -E 's|^(\s+)"config"|\1"config"\n\1"bore-scheduler.patch"|' "$BORE_DIR/PKGBUILD"
+              echo "bore-scheduler.patch añadido a source=()"
+            else
+              echo "[WARN] No se encontró \"config\" en source=() — patch no insertado, build sin BORE"
+            fi
           else
             echo "Parche BORE no disponible - usara EEVDF con HZ=1000"
           fi

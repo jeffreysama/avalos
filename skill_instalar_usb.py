@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 import json, os, re, shutil, subprocess, sys, threading, time
-from datetime import datetime
 from pathlib import Path
 
 try:
@@ -291,8 +290,8 @@ def detectar_gpu() -> dict:
                     if any(k in l for k in intel_kw):
                         return {"vendor": "intel", "model": _parse_lspci_model(line),
                                 "pkgs": DRIVER_PKGS_INTEL}
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] detectar_gpu lspci: {e}")
 
     # Fallback: /sys/class/drm
     try:
@@ -302,8 +301,8 @@ def detectar_gpu() -> dict:
                 return {"vendor": "amd", "model": "AMD GPU", "pkgs": DRIVER_PKGS_AMD}
             if vid == "0x8086":   # Intel
                 return {"vendor": "intel", "model": "Intel GPU", "pkgs": DRIVER_PKGS_INTEL}
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] detectar_gpu /sys/class/drm: {e}")
 
     return {"vendor": "amd", "model": "GPU desconocida (asumiendo AMD)", "pkgs": DRIVER_PKGS_AMD}
 
@@ -817,13 +816,21 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         <div class="form-group">
           <label>Bootloader</label>
           <div class="opts-row">
-            <button class="opt-btn sel" id="opt-grub-si" onclick="selGrub(true)">
-              <span class="opt-title">✓ Con GRUB</span>
-              <span class="opt-desc">Instala GRUB en el disco. Recomendado para PCs y dual-boot.</span>
+            <button class="opt-btn sel" id="opt-bl-grub" onclick="selBootloader('grub')">
+              <span class="opt-title">GRUB</span>
+              <span class="opt-desc">Universal. BIOS + UEFI, dual-boot, hardware antiguo.</span>
             </button>
-            <button class="opt-btn" id="opt-grub-no" onclick="selGrub(false)">
-              <span class="opt-title">Sin GRUB</span>
-              <span class="opt-desc">Omitir. Si ya tienes rEFInd u otro bootloader.</span>
+            <button class="opt-btn" id="opt-bl-sd" onclick="selBootloader('sd-boot')">
+              <span class="opt-title">systemd-boot</span>
+              <span class="opt-desc">Moderno, rápido. Solo UEFI. Ideal para instalaciones nuevas.</span>
+            </button>
+            <button class="opt-btn" id="opt-bl-refind" onclick="selBootloader('refind')">
+              <span class="opt-title">rEFInd</span>
+              <span class="opt-desc">Solo UEFI. Detecta kernels automáticamente, bonito menú gráfico.</span>
+            </button>
+            <button class="opt-btn" id="opt-bl-none" onclick="selBootloader('none')">
+              <span class="opt-title">Sin bootloader</span>
+              <span class="opt-desc">Omitir. Ya tengo un gestor de arranque instalado.</span>
             </button>
           </div>
         </div>
@@ -877,7 +884,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         <div class="info-row"><span class="info-key">Microcode:</span><span id="iv-ucode" class="info-val">—</span></div>
         <div class="info-row"><span class="info-key">Internet:</span><span id="iv-net" class="info-val warn">verif…</span></div>
         <div class="info-row"><span class="info-key">Modo:</span><span id="iv-modo" class="info-val">—</span></div>
-        <div class="info-row"><span class="info-key">GRUB:</span><span id="iv-grub" class="info-val">—</span></div>
+        <div class="info-row"><span class="info-key">Bootloader:</span><span id="iv-grub" class="info-val">—</span></div>
         <div class="info-row"><span class="info-key">Usuario:</span><span id="iv-user" class="info-val ok">—</span></div>
         <div class="info-row"><span class="info-key">DE/WM:</span><span class="info-val ok">Hyprland · Wayland</span></div>
       </div>
@@ -965,7 +972,7 @@ function showPage(name) {
 //  WIZARD CONFIG STATE
 // ══════════════════════════════════════════════════════════════════
 let _selDisco = '';
-let _conGrub  = true;
+let _bootloader = 'grub';  // 'grub' | 'sd-boot' | 'refind' | 'none'
 let _modoUsb  = false;
 
 // populate timezone select
@@ -1073,10 +1080,16 @@ function checkPass() {
   else                { h.textContent = '✗ Las contraseñas no coinciden'; h.className = 'field-hint err'; }
 }
 
-function selGrub(val) {
-  _conGrub = val;
-  document.getElementById('opt-grub-si').classList.toggle('sel', val);
-  document.getElementById('opt-grub-no').classList.toggle('sel', !val);
+function selBootloader(val) {
+  _bootloader = val;
+  const map = {grub:'opt-bl-grub','sd-boot':'opt-bl-sd','refind':'opt-bl-refind','none':'opt-bl-none'};
+  Object.entries(map).forEach(([k,id]) => {
+    document.getElementById(id).classList.toggle('sel', k === val);
+  });
+  // Mostrar advertencia si elige rEFInd o sd-boot en BIOS
+  if ((val === 'refind' || val === 'sd-boot') && window._esUEFI === false) {
+    showFormError('⚠ ' + (val==='refind'?'rEFInd':'systemd-boot') + ' requiere UEFI. Esta máquina parece BIOS Legacy — se detectará al iniciar la instalación.');
+  }
 }
 
 function selModo(val, manual) {
@@ -1108,7 +1121,7 @@ function validarEIniciar() {
 
   // Pasar a la página de instalación y avisar a Python
   showPage('install');
-  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _conGrub, _modoUsb);
+  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1125,7 +1138,7 @@ const PASOS = [
   { id:'pacstrap', label:'Instalando sistema base',            detail:'pacstrap — puede tardar varios minutos' },
   { id:'fstab',    label:'Generando fstab',                    detail:'' },
   { id:'config',   label:'Configurando sistema',               detail:'locale · hostname · timezone · initramfs' },
-  { id:'grub',     label:'Instalando bootloader GRUB',         detail:'' },
+  { id:'grub',     label:'Instalando bootloader',               detail:'' },
   { id:'services', label:'Habilitando servicios',              detail:'NetworkManager · bluetooth · SDDM' },
   { id:'user',     label:'Creando usuario del sistema',        detail:'' },
   { id:'aur',      label:'Instalando paquetes AUR (yay)',      detail:'microsoft-edge-stable-bin' },
@@ -1228,6 +1241,7 @@ function pyStopTimer()           { stopTimer(); }
 function pyStatusLabel(txt)      { document.getElementById('status-label').textContent = txt; }
 
 function pyBadges(internet, uefi) {
+  window._esUEFI = uefi;
   const nb = document.getElementById('internet-badge');
   nb.textContent = internet ? 'NET ✓' : 'SIN RED';
   nb.className   = 'badge-' + (internet ? 'ok' : 'err');
@@ -1302,8 +1316,8 @@ window.addEventListener('pywebviewready', function() {
 class InstaladorAPI:
     """Métodos expuestos al JavaScript."""
 
-    def __init__(self, vent: "VentanaInstalador"):
-        self._v = vent
+    def __init__(self, ventana: "VentanaInstalador"):
+        self._v = ventana
 
     def on_ready(self):
         """DOM listo: poblar discos y mostrar bienvenida."""
@@ -1312,14 +1326,14 @@ class InstaladorAPI:
         return True
 
     def iniciar_instalacion(self, username: str, password: str, hostname: str,
-                             timezone: str, disco: str, grub: bool, usb: bool):
+                             timezone: str, disco: str, bootloader: str, usb: bool):
         """El usuario pulsó 'Instalar AvalOS' con configuración válida."""
         self._v._username = username.strip()
         self._v._password = password
         self._v._hostname = hostname.strip() or DEFAULT_HOSTNAME
         self._v._timezone = timezone or DEFAULT_TIMEZONE
         self._v._disco_destino = disco
-        self._v._con_grub  = bool(grub)
+        self._v._bootloader = bootloader if bootloader in ('grub','sd-boot','refind','none') else 'grub'
         self._v._modo_usb  = bool(usb)
         self._v._config_lista.set()
         return True
@@ -1369,7 +1383,7 @@ class VentanaInstalador:
         self._hostname   = DEFAULT_HOSTNAME
         self._timezone   = DEFAULT_TIMEZONE
         self._disco_destino: str | None = None
-        self._con_grub   = True
+        self._bootloader = 'grub'  # 'grub' | 'sd-boot' | 'refind' | 'none'
         self._modo_usb   = False
         self._config_lista = threading.Event()
 
@@ -1528,8 +1542,8 @@ class VentanaInstalador:
                 _default_cfg.parent.mkdir(parents=True, exist_ok=True)
                 if not _default_cfg.exists():
                     _default_cfg.touch()
-        except Exception:
-            pass
+        except Exception as e:
+            self._log(f"[WARN] config de archivos: {e}", "warn")
 
         # ── ZRAM con zstd ─────────────────────────────────────────────────────
         zram_path = MOUNT_ROOT / "etc" / "systemd" / "zram-generator.conf"
@@ -2121,7 +2135,7 @@ confirm_os_window_close 0
 """)
 
         # SDDM config
-        self._escribir("etc/sddm.conf.d/hyprland.conf", f"""\
+        self._escribir("etc/sddm.conf.d/hyprland.conf", """\
 [Theme]
 Current=breeze
 
@@ -2236,8 +2250,9 @@ WantedBy=multi-user.target
 
         self._info("user", usuario, "ok")
         self._info("modo", "USB (noatime)" if self._modo_usb else "Disco (ext4)", "ok")
-        self._info("grub", "Con GRUB" if self._con_grub else "Sin GRUB",
-                   "ok" if self._con_grub else "warn")
+        _bl_labels = {"grub": "GRUB", "sd-boot": "systemd-boot", "refind": "rEFInd", "none": "Omitido"}
+        self._info("grub", _bl_labels.get(self._bootloader, "GRUB"),
+                   "ok" if self._bootloader != "none" else "warn")
 
         PASOS_IDS = [
             "uefi","net","tools","part","format","mount","mirrors",
@@ -2362,12 +2377,13 @@ WantedBy=multi-user.target
             # Verificar que ninguna partición del disco destino está montada
             # (más allá del check de es_arranque, que solo detecta el boot disk)
             self._log("  Verificando que el disco destino no tiene particiones montadas…", "info")
-            _proc_mounts = open("/proc/mounts").read()
+            with open("/proc/mounts") as _mf:
+                _proc_mounts = _mf.read()
             _dev_base = dev_name  # ej. "sdb", "nvme1n1"
             _mounted = [
                 _line.split()[1]
                 for _line in _proc_mounts.splitlines()
-                if _line.split()[0].lstrip("/dev/").startswith(_dev_base)
+                if _line.split()[0].removeprefix("/dev/").startswith(_dev_base)
                    and _line.split()[0] != dev
             ]
             if _mounted:
@@ -2491,7 +2507,13 @@ WantedBy=multi-user.target
             self._log("\n── pacstrap ──\n", "step")
 
             pkgs = list(BASE_PKGS)
-            if not self._con_grub:
+            if self._bootloader == 'sd-boot':
+                # systemd-boot incluido en systemd; quitar grub y os-prober
+                pkgs = [p for p in pkgs if p not in {"grub", "os-prober"}]
+            elif self._bootloader == 'refind':
+                # refind se instala desde AUR/repo; quitar grub y os-prober
+                pkgs = [p for p in pkgs if p not in {"grub", "os-prober"}]
+            elif self._bootloader == 'none':
                 pkgs = [p for p in pkgs if p not in {"grub", "efibootmgr", "os-prober"}]
 
             # ── Selección dinámica del kernel según CPU + repo [avalos] ──────
@@ -2633,11 +2655,12 @@ WantedBy=multi-user.target
 
             # ── PASO 11: GRUB ─────────────────────────────────────────────────
             self._step("grub", "active")
-            if not self._con_grub:
-                self._step("grub", "skip", "GRUB omitido")
-                self._log("[INFO] GRUB omitido por elección del usuario.", "warn")
+            if self._bootloader == 'none':
+                self._step("grub", "skip", "Bootloader omitido por el usuario")
+                self._log("[INFO] Sin bootloader — omitido por elección del usuario.", "warn")
                 avanzar()
-            else:
+
+            elif self._bootloader == 'grub':
                 self._status("Instalando GRUB…")
                 self._log("\n── Instalando GRUB ──\n", "step")
                 if uefi:
@@ -2654,16 +2677,179 @@ WantedBy=multi-user.target
                     self._jsc("pyErrorPaso", "grub-install falló. Revisa el log.")
                     self._limpiar_montajes(); return
 
-                # Activar os-prober en /etc/default/grub
+                # Activar os-prober para detectar otros OS en el menú
                 gd_path = MOUNT_ROOT / "etc" / "default" / "grub"
                 if gd_path.exists():
                     lines = [l for l in gd_path.read_text().splitlines()
                              if not l.strip().startswith("GRUB_DISABLE_OS_PROBER")]
                     lines.append("GRUB_DISABLE_OS_PROBER=false")
                     gd_path.write_text("\n".join(lines) + "\n")
-                # grub-mkconfig invoca os-prober internamente con GRUB_DISABLE_OS_PROBER=false
                 self._run_chroot(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
                 self._step("grub", "done", "GRUB instalado · os-prober activo")
+                avanzar()
+
+
+            elif self._bootloader == 'refind':
+                # rEFInd: solo UEFI; detecta kernels automáticamente
+                if not uefi:
+                    self._step("grub", "error")
+                    self._jsc("pyErrorPaso",
+                              "rEFInd requiere UEFI. Esta máquina arranca en BIOS Legacy.\n"
+                              "Elige GRUB en su lugar o reinicia el instalador.")
+                    self._limpiar_montajes(); return
+
+                self._status("Instalando rEFInd…")
+                self._log("\n── Instalando rEFInd ──\n", "step")
+
+                # Instalar el paquete refind
+                rc, _ = self._run_chroot(["pacman", "-S", "--noconfirm", "--needed", "refind"])
+                if rc != 0:
+                    self._step("grub", "error")
+                    self._jsc("pyErrorPaso",
+                              "No se pudo instalar el paquete refind.\n"
+                              "Verifica la conexión o añade un repo con el paquete.")
+                    self._limpiar_montajes(); return
+
+                # refind-install copia los archivos a la ESP y crea la entrada NVRAM
+                rc, _ = self._run_chroot(["refind-install"])
+                if rc != 0:
+                    self._step("grub", "error")
+                    self._jsc("pyErrorPaso", "refind-install falló. Revisa el log.")
+                    self._limpiar_montajes(); return
+
+                # Obtener UUID de la partición raíz para el refind_linux.conf
+                rc_uuid, uuid_out, _ = _ejecutar(["blkid", "-s", "UUID", "-o", "value", dev_root])
+                root_uuid = uuid_out.strip() if rc_uuid == 0 and uuid_out.strip() else ""
+                root_opts = (f"root=UUID={root_uuid}" if root_uuid else f"root={dev_root}")
+
+                # Detectar kernel instalado
+                import glob as _glob
+                vmlinuz_files = _glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
+                kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
+                self._log(f"  Kernel detectado: {kernel_name}", "info")
+
+                # Crear /boot/refind_linux.conf para que rEFInd sepa las opciones del kernel
+                refind_conf = MOUNT_ROOT / "boot" / "refind_linux.conf"
+                refind_conf.write_text(
+                    f'"AvalOS (normal)"   "{root_opts} rw quiet splash loglevel=3"\n'
+                    f'"AvalOS (verbose)"  "{root_opts} rw"\n'
+                    f'"AvalOS (recovery)" "{root_opts} rw single"\n'
+                )
+                self._log("  /boot/refind_linux.conf creado.", "info")
+
+                # Hook pacman para que rEFInd se actualice solo al actualizar el paquete
+                hook_dir = MOUNT_ROOT / "etc" / "pacman.d" / "hooks"
+                hook_dir.mkdir(parents=True, exist_ok=True)
+                (hook_dir / "refind.hook").write_text(
+                    "[Trigger]\n"
+                    "Operation = Upgrade\n"
+                    "Type = Package\n"
+                    "Target = refind\n"
+                    "\n"
+                    "[Action]\n"
+                    "Description = Actualizando rEFInd en la ESP…\n"
+                    "When = PostTransaction\n"
+                    "Exec = /usr/bin/refind-install\n"
+                )
+
+                self._step("grub", "done", f"rEFInd instalado · detecta {kernel_name} automáticamente")
+                avanzar()
+            elif self._bootloader == 'sd-boot':
+                # systemd-boot: solo funciona en UEFI
+                if not uefi:
+                    self._step("grub", "error")
+                    self._jsc("pyErrorPaso",
+                              "systemd-boot requiere UEFI. Esta máquina arranca en BIOS Legacy.\n"
+                              "Elige GRUB en su lugar o reinicia el instalador.")
+                    self._limpiar_montajes(); return
+
+                self._status("Instalando systemd-boot…")
+                self._log("\n── Instalando systemd-boot ──\n", "step")
+
+                # Instalar bootctl en la ESP montada en /boot/efi
+                rc, _ = self._run_chroot(["bootctl", "install", "--esp-path=/boot/efi"])
+                if rc != 0:
+                    self._step("grub", "error")
+                    self._jsc("pyErrorPaso", "bootctl install falló. Revisa el log.")
+                    self._limpiar_montajes(); return
+
+                # Detectar nombre del kernel instalado
+                import glob
+                vmlinuz_files = glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
+                kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
+                self._log(f"  Kernel detectado: {kernel_name}", "info")
+
+                # Obtener UUID de la partición raíz
+                rc_uuid, uuid_out, _ = _ejecutar(["blkid", "-s", "UUID", "-o", "value", dev_root])
+                root_uuid = uuid_out.strip() if rc_uuid == 0 and uuid_out.strip() else ""
+
+                # Copiar kernel e initramfs a la ESP
+                # (systemd-boot lee archivos desde la ESP; con /boot/efi separado
+                #  hay que copiarlos manualmente)
+                esp_entries_dir = MOUNT_ROOT / "boot" / "efi" / "AvalOS"
+                esp_entries_dir.mkdir(parents=True, exist_ok=True)
+
+                import shutil as _shutil
+                _shutil.copy2(MOUNT_ROOT / f"boot/vmlinuz-{kernel_name}",
+                              esp_entries_dir / f"vmlinuz-{kernel_name}")
+                initrd_src = MOUNT_ROOT / f"boot/initramfs-{kernel_name}.img"
+                if initrd_src.exists():
+                    _shutil.copy2(initrd_src, esp_entries_dir / f"initramfs-{kernel_name}.img")
+
+                # Copiar imagen de microcode a la ESP
+                _ucode_name = f"{ucode}.img"   # ucode ya detectado arriba: amd-ucode / intel-ucode
+                _ucode_src  = MOUNT_ROOT / f"boot/{_ucode_name}"
+                _ucode_copied = False
+                if _ucode_src.exists():
+                    _shutil.copy2(_ucode_src, esp_entries_dir / _ucode_name)
+                    _ucode_copied = True
+                    self._log(f"  microcode: {_ucode_name} copiado a ESP", "ok")
+                else:
+                    self._log(f"  [WARN] {_ucode_src} no encontrado — microcode omitido", "warn")
+
+                # loader.conf
+                loader_dir = MOUNT_ROOT / "boot" / "efi" / "loader"
+                loader_dir.mkdir(parents=True, exist_ok=True)
+                (loader_dir / "loader.conf").write_text(
+                    "default  avalos.conf\n"
+                    "timeout  3\n"
+                    "console-mode auto\n"
+                    "editor   no\n"
+                )
+
+                # entrada de arranque
+                entries_dir = loader_dir / "entries"
+                entries_dir.mkdir(parents=True, exist_ok=True)
+                root_opts = (f"root=UUID={root_uuid}" if root_uuid else f"root={dev_root}")
+                _ucode_initrd_line = (
+                    f"initrd  /AvalOS/{_ucode_name}\n" if _ucode_copied else ""
+                )
+                (entries_dir / "avalos.conf").write_text(
+                    f"title   AvalOS\n"
+                    f"linux   /AvalOS/vmlinuz-{kernel_name}\n"
+                    f"{_ucode_initrd_line}"
+                    f"initrd  /AvalOS/initramfs-{kernel_name}.img\n"
+                    f"options {root_opts} rw quiet splash loglevel=3\n"
+                )
+
+                # Hook para copiar kernel a ESP al hacer actualizaciones
+                hook_dir = MOUNT_ROOT / "etc" / "pacman.d" / "hooks"
+                hook_dir.mkdir(parents=True, exist_ok=True)
+                (hook_dir / "95-systemd-boot.hook").write_text(
+                    "[Trigger]\n"
+                    "Type = Package\n"
+                    f"Target = {kernel_name}\n"
+                    "Operation = Install\n"
+                    "Operation = Upgrade\n"
+                    "\n"
+                    "[Action]\n"
+                    "Description = Updating systemd-boot kernel files\n"
+                    "When = PostTransaction\n"
+                    f"Exec = /bin/sh -c 'cp /boot/vmlinuz-{kernel_name} /boot/efi/AvalOS/vmlinuz-{kernel_name}; cp /boot/initramfs-{kernel_name}.img /boot/efi/AvalOS/initramfs-{kernel_name}.img'\n"
+                    "Depends = bash\n"
+                )
+
+                self._step("grub", "done", "systemd-boot instalado · entrada: avalos.conf")
                 avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
@@ -2736,6 +2922,7 @@ WantedBy=multi-user.target
             sudoers = MOUNT_ROOT / "etc" / "sudoers.d" / "wheel"
             sudoers.parent.mkdir(parents=True, exist_ok=True)
             sudoers.write_text("%wheel ALL=(ALL:ALL) ALL\n")
+            sudoers.chmod(0o440)
 
             self._step("user", "done", f"Usuario '{usuario}' creado")
             avanzar()
@@ -2805,7 +2992,7 @@ WantedBy=multi-user.target
                 f"<strong>Hostname:</strong> {hostname}<br>"
                 f"<strong>Timezone:</strong> {timezone}<br>"
                 f"<strong>Modo:</strong> {'USB (noatime)' if self._modo_usb else 'Disco (ext4)'}<br>"
-                f"<strong>GRUB:</strong> {'Instalado' if self._con_grub else 'Omitido'}<br>"
+                f"<strong>Bootloader:</strong> { {'grub':'GRUB','sd-boot':'systemd-boot','refind':'rEFInd','none':'Omitido'}.get(self._bootloader,'?') }<br>"
                 f"<strong>DE/WM:</strong> Hyprland · Wayland · SDDM<br>"
                 f"<strong>⚠ Contraseña:</strong> cambia requerida en el primer login"
             )
@@ -2848,8 +3035,8 @@ def _build_html() -> str:
         f"window._defaultHostname = {default_host};\n"
     )
     # Insertar justo antes del cierre </script> del bloque READY
-    html = _HTML.replace("LOGO_PLACEHOLDER", _LOGO_B64)
-    return html.replace(
+    contenido = _HTML.replace("LOGO_PLACEHOLDER", _LOGO_B64)
+    return contenido.replace(
         "window.addEventListener('pywebviewready'",
         inject + "window.addEventListener('pywebviewready'"
     )
