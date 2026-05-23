@@ -109,7 +109,7 @@ jobs:
           iso_version="${VERSION}"
           install_dir="arch"
           buildmodes=('iso')
-          bootmodes=('bios.syslinux' 'uefi.systemd-boot')
+          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
           arch="x86_64"
           pacman_conf="pacman.conf"
           airootfs_image_type="squashfs"
@@ -123,6 +123,7 @@ jobs:
             ["/usr/local/bin/avalos-gpu-env"]="0:0:755"
           )
           PROFILEEOF
+          chmod +x "$BUILD_DIR/profiledef.sh"
 
           # pacman.conf del ISO — incluye repo avalos
           cp /etc/pacman.conf "$BUILD_DIR/pacman.conf"
@@ -132,7 +133,7 @@ jobs:
             printf '\n[avalos]\nSigLevel = Optional TrustAll\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' >> "$BUILD_DIR/pacman.conf"
           fi
           # Sin nvidia
-          sed -i '/^[options]/a IgnorePkg = linux-firmware-nvidia' "$BUILD_DIR/pacman.conf"
+          sed -i '/^\[options\]/a IgnorePkg = linux-firmware-nvidia' "$BUILD_DIR/pacman.conf"
           # Habilitar multilib para paquetes lib32
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$BUILD_DIR/pacman.conf"
 
@@ -144,105 +145,54 @@ jobs:
       - name: Generar packages.x86_64
         run: |
           KERNEL="${{ steps.vars.outputs.kernel }}"
-
-          cat > "$BUILD_DIR/packages.x86_64" << PKGEOF
-          # Kernel
-          ${KERNEL}
-          linux-firmware-amdgpu
-          linux-firmware-radeon
-          linux-firmware-intel
-          linux-firmware-atheros
-          linux-firmware-realtek
-          linux-firmware-whence
-          linux-firmware-bnx2x
-          linux-firmware-qcom
-
-          # Base
-          base
-          base-devel
-          sudo
-          bash
-          bash-completion
-
-          # Entorno grafico Hyprland
-          hyprland
-          hyprpaper
-          waybar
-          wofi
-          kitty
-          sddm
-          qt5-graphicaleffects
-          plymouth
-          qt5-wayland
-          qt6-wayland
-          polkit-kde-agent
-          xdg-desktop-portal-hyprland
-          xdg-desktop-portal-gtk
-
-          # Audio
-          pipewire
-          pipewire-pulse
-          pipewire-alsa
-          wireplumber
-
-          # Drivers GPU AMD (primera clase)
-          mesa
-          vulkan-radeon
-          libva-mesa-driver
-          lib32-mesa
-          lib32-vulkan-radeon
-
-          # Drivers GPU Intel (soporte completo)
-          vulkan-intel
-          intel-media-driver
-          libva-intel-driver
-          lib32-vulkan-intel
-
-          # Fuentes y temas
-          ttf-jetbrains-mono-nerd
-          ttf-nerd-fonts-symbols
-          noto-fonts
-          noto-fonts-emoji
-
-          # Herramientas live
-          networkmanager
-          nm-connection-editor
-          git
-          curl
-          wget
-          python
-          python-pip
-          python-pywebview
-          fastfetch
-          htop
-          nano
-          vim
-          grim
-          slurp
-          wl-clipboard
-          xdg-utils
-          udisks2
-          udiskie
-          gvfs
-          thunar
-          file-roller
-          firefox
-
-          # Herramientas de instalacion
-          arch-install-scripts
-          parted
-          dosfstools
-          e2fsprogs
-          btrfs-progs
-          gptfdisk
-
-          # archiso (para el live)
-          archiso
-          syslinux
-          edk2-shell
-          PKGEOF
-
-          echo "packages.x86_64 generado"
+          python3 - "$BUILD_DIR/packages.x86_64" "$KERNEL" << 'PKGPYEOF'
+          import sys
+          dest, kernel = sys.argv[1], sys.argv[2]
+          pkgs = [
+              f"# Kernel",
+              kernel,
+              "linux-firmware-amdgpu",
+              "linux-firmware-radeon",
+              "linux-firmware-intel",
+              "linux-firmware-atheros",
+              "linux-firmware-realtek",
+              "linux-firmware-whence",
+              "linux-firmware-bnx2x",
+              "linux-firmware-qcom",
+              "# Base",
+              "base", "base-devel", "sudo", "bash", "bash-completion",
+              "# Hyprland",
+              "hyprland", "hyprpaper", "waybar", "wofi", "kitty",
+              "sddm", "qt5-graphicaleffects", "plymouth",
+              "qt5-wayland", "qt6-wayland", "polkit-kde-agent",
+              "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
+              "# Audio",
+              "pipewire", "pipewire-pulse", "pipewire-alsa", "wireplumber",
+              "# GPU AMD",
+              "mesa", "vulkan-radeon", "libva-mesa-driver",
+              "lib32-mesa", "lib32-vulkan-radeon",
+              "# GPU Intel",
+              "vulkan-intel", "intel-media-driver",
+              "libva-intel-driver", "lib32-vulkan-intel",
+              "# Fuentes",
+              "ttf-jetbrains-mono-nerd", "ttf-nerd-fonts-symbols",
+              "noto-fonts", "noto-fonts-emoji",
+              "# Live tools",
+              "networkmanager", "nm-connection-editor",
+              "git", "curl", "wget", "python", "python-pip",
+              "python-pywebview", "fastfetch", "htop", "nano", "vim",
+              "grim", "slurp", "wl-clipboard", "xdg-utils",
+              "udisks2", "udiskie", "gvfs", "thunar", "file-roller", "firefox",
+              "# Instalacion",
+              "arch-install-scripts", "parted", "dosfstools",
+              "e2fsprogs", "btrfs-progs", "gptfdisk",
+              "refind",
+              "# archiso",
+              "archiso", "syslinux", "edk2-shell",
+          ]
+          open(dest, 'w').write('\n'.join(pkgs) + '\n')
+          print(f"packages.x86_64 generado ({len([p for p in pkgs if not p.startswith('#')])} paquetes)")
+          PKGPYEOF
           wc -l "$BUILD_DIR/packages.x86_64"
 
       - name: Configurar airootfs (scripts, configs, wallpaper)
@@ -251,7 +201,6 @@ jobs:
           mkdir -p "$AIROOTFS/root/.config/hypr"
           mkdir -p "$AIROOTFS/root/.config/waybar"
           mkdir -p "$AIROOTFS/root/.config/kitty"
-          mkdir -p "$AIROOTFS/root/.config/hypr"
           mkdir -p "$AIROOTFS/etc/sddm.conf.d"
           mkdir -p "$AIROOTFS/etc/systemd/system/graphical.target.wants"
           mkdir -p "$AIROOTFS/etc/pacman.d"
@@ -281,7 +230,7 @@ jobs:
           # archiso.conf: hooks mínimos para el initramfs del live
           mkdir -p "$AIROOTFS/etc/mkinitcpio.conf.d"
           cat > "$AIROOTFS/etc/mkinitcpio.conf.d/archiso.conf" << 'ARCHISOCONF'
-          HOOKS=(base systemd keyboard sd-vconsole block filesystems)
+          HOOKS=(base systemd keyboard sd-vconsole archiso block filesystems)
           COMPRESSION="zstd"
           ARCHISOCONF
 
@@ -339,11 +288,14 @@ jobs:
               "$AIROOTFS/etc/systemd/system/graphical.target.wants/avalos-gpu-detect.service"
 
           # SDDM autologin root en live
-          cat > "$AIROOTFS/etc/sddm.conf.d/autologin.conf" << 'SDDMEOF'
-          [Autologin]
-          User=root
-          Session=hyprland
-          SDDMEOF
+          mkdir -p "$AIROOTFS/etc/sddm.conf.d"
+          printf '[Autologin]\nUser=root\nSession=hyprland\n' \
+            > "$AIROOTFS/etc/sddm.conf.d/autologin.conf"
+          # Habilitar sddm.service en el live (critical: sin esto Hyprland nunca arranca)
+          ln -sf /usr/lib/systemd/system/sddm.service \
+              "$AIROOTFS/etc/systemd/system/display-manager.service"
+          ln -sf /usr/lib/systemd/system/sddm.service \
+              "$AIROOTFS/etc/systemd/system/graphical.target.wants/sddm.service"
 
           # Wallpaper: fondo Tokyo Night sólido (el branding step lo sobreescribe con logo)
           convert -size 1920x1080 xc:"#1a1b26" "$AIROOTFS/root/.config/hypr/wallpaper.png"
