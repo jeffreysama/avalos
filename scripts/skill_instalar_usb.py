@@ -11,7 +11,7 @@
 ║                                                                   ║
 ║  Diferencias vs skill_instalar_linux.py (módulo de GAIA):        ║
 ║    · Completamente autónomo — no requiere cerebro.py             ║
-║    · Wizard de 2 páginas: Config → Instalación → Listo           ║
+║    · Wizard de 3 páginas: Welcome → Config → Instalación → Listo           ║
 ║    · Disk selection interactiva con click                        ║
 ║    · Formulario: usuario / contraseña / hostname / timezone      ║
 ║    · Pantalla "Done" con botón de reinicio                       ║
@@ -20,7 +20,7 @@
 """
 
 from __future__ import annotations
-import json, os, re, shutil, subprocess, sys, threading, time
+import glob, json, os, re, shutil, subprocess, sys, threading, time
 from pathlib import Path
 
 try:
@@ -37,7 +37,17 @@ _LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAABAAAAAQACAMAAABIw9uxAAABCGlDQ1BJQ0MgUHJvZml
 #  CONFIGURACIÓN  (valores por defecto — el wizard los puede cambiar)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MOUNT_ROOT  = Path("/mnt/avalos_install")
+MOUNT_ROOT    = Path("/mnt/avalos_install")
+AVALOS_CONFIGS = Path("/usr/share/avalos/configs")   # configs extraídos del repo
+
+def _leer_config(ruta_relativa: str) -> str | None:
+    """Lee un config desde /usr/share/avalos/configs/. Retorna None si no existe."""
+    p = AVALOS_CONFIGS / ruta_relativa
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
 MOUNT_EFI   = MOUNT_ROOT / "boot" / "efi"
 MOUNT_ISO   = Path("/tmp/avalos_iso")
 
@@ -50,8 +60,8 @@ KEYMAP       = "la-latin1"
 MIN_DISK_GB  = 30
 GRUB_UEFI_REMOVABLE = False  # PC normal: entrada NVRAM estándar
 
-GITHUB_REPO = "jeffreysama/avalos"
-AVALOS_REPO_URL = f"https://github.com/{GITHUB_REPO}/releases/download/repo"
+AVALOS_REPO = "jeffreysama/avalos"
+AVALOS_REPO_URL = f"https://github.com/{AVALOS_REPO}/releases/download/repo"
 
 TIMEZONES = [
     "America/El_Salvador", "America/Guatemala", "America/Honduras",
@@ -128,7 +138,13 @@ def _ejecutar(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
 def detectar_disco_arranque() -> str:
     rc, out, _ = _ejecutar(["findmnt", "-n", "-o", "SOURCE", "/"])
     if rc == 0 and out:
-        dev = out.strip().removeprefix("/dev/")
+        dev = out.strip()
+        # Si es un device mapper (LVM/LUKS), intentar resolver el disco físico subyacente
+        if dev.startswith("/dev/mapper/") or dev.startswith("/dev/dm-"):
+            rc2, out2, _ = _ejecutar(["lsblk", "-no", "PKNAME", dev])
+            if rc2 == 0 and out2.strip():
+                return out2.strip().split()[0]
+        dev = dev.removeprefix("/dev/")
         return re.sub(r'p?\d+$', '', dev)
     rc, out, _ = _ejecutar(["lsblk", "-J", "-o", "NAME,MOUNTPOINTS"])
     if rc == 0 and out:
@@ -136,14 +152,20 @@ def detectar_disco_arranque() -> str:
             for disco in json.loads(out).get("blockdevices", []):
                 if _disco_tiene_mount(disco, "/"):
                     return disco["name"]
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            # lsblk devolvió JSON malformado; se usa /proc/mounts como fallback
+            print(f"[WARN] listar_disco_arranque: lsblk JSON inválido: {e}", file=sys.stderr)
     try:
         with open("/proc/mounts") as f:
             for linea in f:
                 partes = linea.split()
                 if len(partes) >= 2 and partes[1] == "/":
-                    return re.sub(r'p?\d+$', '', partes[0].removeprefix("/dev/"))
+                    src = partes[0]
+                    if src.startswith("/dev/mapper/") or src.startswith("/dev/dm-"):
+                        rc2, out2, _ = _ejecutar(["lsblk", "-no", "PKNAME", src])
+                        if rc2 == 0 and out2.strip():
+                            return out2.strip().split()[0]
+                    return re.sub(r'p?\d+$', '', src.removeprefix("/dev/"))
     except OSError:
         pass
     return ""
@@ -230,6 +252,8 @@ def detectar_microcode() -> str:
             c = f.read().lower()
         if "genuineintel" in c or "intel" in c:
             return "intel-ucode"
+        if "authenticamd" in c or "amd" in c:
+            return "amd-ucode"
     except OSError:
         pass
     return "amd-ucode"
@@ -282,12 +306,12 @@ def detectar_gpu() -> dict:
             intel_kw = ["intel corporation", "intel xe", "iris xe",
                         "uhd graphics", "hd graphics"]
             for line in out.splitlines():
-                l = line.lower()
-                if "vga" in l or "display" in l or "3d controller" in l:
-                    if any(k in l for k in amd_kw):
+                line_lower = line.lower()
+                if "vga" in line_lower or "display" in line_lower or "3d controller" in line_lower:
+                    if any(k in line_lower for k in amd_kw):
                         return {"vendor": "amd", "model": _parse_lspci_model(line),
                                 "pkgs": DRIVER_PKGS_AMD}
-                    if any(k in l for k in intel_kw):
+                    if any(k in line_lower for k in intel_kw):
                         return {"vendor": "intel", "model": _parse_lspci_model(line),
                                 "pkgs": DRIVER_PKGS_INTEL}
     except Exception as e:
@@ -1059,9 +1083,17 @@ function selectDisk(name) {
 function sanitizeUser(el) {
   el.value = el.value.toLowerCase().replace(/[^a-z0-9_-]/g, '');
   const h = document.getElementById('hint-user');
-  const ok = el.value.length >= 2 && el.value.length <= 32;
+  const startsWithLetter = /^[a-z_]/.test(el.value);
+  const validLen = el.value.length >= 2 && el.value.length <= 32;
+  const ok = validLen && startsWithLetter;
+  let hint = 'Solo letras minúsculas, números y guiones (debe empezar con letra)';
+  if (el.value) {
+    if (!startsWithLetter) hint = 'Debe empezar con una letra o guion bajo';
+    else if (!validLen)     hint = 'Mínimo 2 caracteres, máximo 32';
+    else                    hint = '✓ Nombre válido';
+  }
   h.className = 'field-hint ' + (el.value ? (ok ? 'good' : 'err') : '');
-  h.textContent = el.value ? (ok ? '✓ Nombre válido' : 'Mínimo 2 caracteres, máximo 32') : 'Solo letras minúsculas, números y guiones';
+  h.textContent = hint;
   el.className = el.value ? (ok ? 'ok' : 'error') : '';
 }
 
@@ -1086,9 +1118,16 @@ function selBootloader(val) {
   Object.entries(map).forEach(([k,id]) => {
     document.getElementById(id).classList.toggle('sel', k === val);
   });
-  // Mostrar advertencia si elige rEFInd o sd-boot en BIOS
-  if ((val === 'refind' || val === 'sd-boot') && window._esUEFI === false) {
-    showFormError('⚠ ' + (val==='refind'?'rEFInd':'systemd-boot') + ' requiere UEFI. Esta máquina parece BIOS Legacy — se detectará al iniciar la instalación.');
+  // Mostrar advertencia si elige rEFInd o sd-boot:
+  //   - _esUEFI === false  → ya confirmado BIOS: advertencia firme
+  //   - _esUEFI === undefined → aún no detectado (página config): advertencia preventiva
+  if (val === 'refind' || val === 'sd-boot') {
+    const name = val === 'refind' ? 'rEFInd' : 'systemd-boot';
+    if (window._esUEFI === false) {
+      showFormError('⛔ ' + name + ' requiere UEFI y esta máquina arranca en BIOS Legacy. Usa GRUB.');
+    } else if (window._esUEFI === undefined) {
+      showFormError('⚠ ' + name + ' solo funciona en UEFI. Asegúrate de que tu equipo no sea BIOS Legacy.');
+    }
   }
 }
 
@@ -1243,9 +1282,15 @@ function pyStatusLabel(txt)      { document.getElementById('status-label').textC
 function pyBadges(internet, uefi) {
   window._esUEFI = uefi;
   const nb = document.getElementById('internet-badge');
-  nb.textContent = internet ? 'NET ✓' : 'SIN RED';
-  nb.className   = 'badge-' + (internet ? 'ok' : 'err');
-  setInfo('net', internet ? 'Conectado' : 'Sin conexión', internet ? 'ok' : 'err');
+  if (internet === null || internet === undefined) {
+    nb.textContent = 'NET ···';
+    nb.className   = 'badge-warn';
+    setInfo('net', 'verificando…', 'warn');
+  } else {
+    nb.textContent = internet ? 'NET ✓' : 'SIN RED';
+    nb.className   = 'badge-' + (internet ? 'ok' : 'err');
+    setInfo('net', internet ? 'Conectado' : 'Sin conexión', internet ? 'ok' : 'err');
+  }
   const ub = document.getElementById('uefi-badge');
   ub.textContent = uefi ? 'UEFI' : 'BIOS';
   setInfo('boot', uefi ? 'UEFI (GPT)' : 'BIOS Legacy (MBR)', 'ok');
@@ -1343,10 +1388,14 @@ class InstaladorAPI:
         return True
 
     def reintentar(self):
-        if not self._v._instalando:
+        # Lock para evitar race condition TOCTOU entre check y start del hilo
+        with self._v._lock:
+            if self._v._instalando:
+                return True   # ya corre, ignorar
             self._v._abortado = False
-            t = threading.Thread(target=self._v._run_instalacion, daemon=True)
-            t.start()
+            self._v._instalando = True   # reservar antes de soltar el lock
+        t = threading.Thread(target=self._v._run_instalacion, daemon=True)
+        t.start()
         return True
 
     def reiniciar_equipo(self):
@@ -1386,6 +1435,7 @@ class VentanaInstalador:
         self._bootloader = 'grub'  # 'grub' | 'sd-boot' | 'refind' | 'none'
         self._modo_usb   = False
         self._config_lista = threading.Event()
+        self._lock         = threading.Lock()   # protege _instalando en reintentar()
 
     # ── JS helpers ────────────────────────────────────────────────────────────
 
@@ -1430,8 +1480,9 @@ class VentanaInstalador:
                     salida.append(linea)
                 if self._abortado:
                     proc.kill()
+                    proc.wait()
                     return -99, "\n".join(salida)
-            proc.wait(timeout=timeout)
+            proc.wait(timeout=5)
             return proc.returncode, "\n".join(salida)
         except subprocess.TimeoutExpired:
             proc.kill(); proc.wait()
@@ -1446,10 +1497,9 @@ class VentanaInstalador:
 
     def _run_chroot_stdin(self, stdin_data: str, cmd: list[str], timeout: int = 60) -> tuple[int, str]:
         """Ejecuta un comando en chroot pasando datos sensibles por stdin (ej: chpasswd)."""
-        import subprocess as _sp
         full_cmd = ["arch-chroot", str(MOUNT_ROOT)] + cmd
         try:
-            proc = _sp.run(
+            proc = subprocess.run(
                 full_cmd,
                 input=stdin_data,
                 capture_output=True,
@@ -1458,7 +1508,7 @@ class VentanaInstalador:
             )
             out = (proc.stdout or "") + (proc.stderr or "")
             return proc.returncode, out.strip()
-        except _sp.TimeoutExpired:
+        except subprocess.TimeoutExpired:
             self._log(f"[TIMEOUT] {timeout}s en {cmd[0]}", "err")
             return -2, ""
         except Exception as e:
@@ -1655,26 +1705,11 @@ class VentanaInstalador:
             (MOUNT_ROOT / "etc" / "resolv.conf").symlink_to(
                 "../run/systemd/resolve/stub-resolv.conf"
             )
-        except OSError:
-            pass
+        except OSError as e:
+            # No es fatal, pero sin este symlink el DNS no funcionará post-install
+            self._log(f"[WARN] resolv.conf symlink falló: {e}", "warn")
         self._run_chroot(["systemctl", "enable", "systemd-resolved"])
         self._log("  DNS-over-TLS: systemd-resolved (Cloudflare + Google + Quad9)", "ok")
-
-        # ── Repo AvalOS kernel en pacman.conf ──────────────────────────────────
-        pac_path = MOUNT_ROOT / "etc" / "pacman.conf"
-        avalos_repo = (
-            "\n[avalos]\n"
-            "SigLevel = Optional TrustAll\n"
-            f"Server = https://github.com/{GITHUB_REPO}/releases/download/repo\n"
-        )
-        try:
-            existing = pac_path.read_text(encoding="utf-8") if pac_path.exists() else ""
-            if "[avalos]" not in existing:
-                with open(pac_path, "a") as f:
-                    f.write(avalos_repo)
-                self._log("  Repo [avalos] → /etc/pacman.conf", "ok")
-        except OSError as e:
-            self._log(f"  [WARN] pacman.conf: {e}", "warn")
 
         # ── Info del hardware detectado ────────────────────────────────────────
         self._log(
@@ -1720,7 +1755,7 @@ ID=avalos
 ID_LIKE=arch
 BUILD_ID=rolling
 ANSI_COLOR="38;2;122;162;247"
-HOME_URL="https://github.com/{GITHUB_REPO}"
+HOME_URL="https://github.com/{AVALOS_REPO}"
 DOCUMENTATION_URL="https://wiki.archlinux.org"
 LOGO=avalos-logo
 """)
@@ -1748,165 +1783,25 @@ DISTRIB_DESCRIPTION="AvalOS"
         except OSError as e:
             self._log(f"[WARN] pacman.conf: {e}", "warn")
 
-        # hyprland.conf
-        self._escribir(f"{home}/.config/hypr/hyprland.conf", f"""\
-# ── AvalOS hyprland.conf (generado por instalador) ──────────────
-monitor = ,preferred,auto,1
+        # hyprland.conf — leído desde /usr/share/avalos/configs/
+        _gpu_env_amd  = "env = AMD_VULKAN_ICD,RADV\nenv = VDPAU_DRIVER,radeonsi\nenv = LIBVA_DRIVER_NAME,radeonsi"
+        _gpu_env_intel = "env = LIBVA_DRIVER_NAME,iHD\nenv = VDPAU_DRIVER,va_gl"
+        _gpu_env_str  = _gpu_env_amd if _gpu_vendor == "amd" else _gpu_env_intel
 
-env = XCURSOR_SIZE,24
-env = XCURSOR_THEME,capitaine-cursors-dark
-env = QT_QPA_PLATFORM,wayland;xcb
-env = QT_WAYLAND_DISABLE_WINDOWDECORATION,1
-env = GDK_BACKEND,wayland,x11
-env = MOZ_ENABLE_WAYLAND,1
-env = ELECTRON_OZONE_PLATFORM_HINT,auto
-{"env = AMD_VULKAN_ICD,RADV" + chr(10) + "env = VDPAU_DRIVER,radeonsi" + chr(10) + "env = LIBVA_DRIVER_NAME,radeonsi" if _gpu_vendor == "amd" else "env = LIBVA_DRIVER_NAME,iHD" + chr(10) + "env = VDPAU_DRIVER,va_gl"}
-env = __GLX_VENDOR_LIBRARY_NAME,mesa
-
-exec-once = waybar
-exec-once = dunst
-exec-once = hyprpaper
-exec-once = hypridle
-exec-once = nm-applet --indicator
-exec-once = blueman-applet
-exec-once = hyprpolkitagent
-exec-once = wl-paste --type text --watch cliphist store
-exec-once = wl-paste --type image --watch cliphist store
-exec-once = xdg-user-dirs-update
-exec-once = udiskie -t
-
-general {{
-    gaps_in = 5
-    gaps_out = 10
-    border_size = 2
-    col.active_border = rgba(7aa2f7ee) rgba(bb9af7ee) 45deg
-    col.inactive_border = rgba(414868aa)
-    layout = dwindle
-    resize_on_border = true
-    allow_tearing = false
-}}
-
-decoration {{
-    rounding = 12
-    active_opacity = 1.0
-    inactive_opacity = 0.92
-    blur {{
-        enabled = true
-        size = 4
-        passes = 1
-        new_optimizations = true
-    }}
-    shadow {{
-        enabled = true
-        range = 12
-        render_power = 2
-        color = rgba(1a1b2660)
-    }}
-}}
-
-animations {{
-    enabled = true
-    bezier = myBezier, 0.08, 0.9, 0.1, 1.05
-    animation = windows, 1, 6, myBezier
-    animation = windowsOut, 1, 5, default, popin 75%
-    animation = border, 1, 8, default
-    animation = fade, 1, 6, default
-    animation = workspaces, 1, 5, default, slide
-}}
-
-dwindle {{
-    pseudotile = true
-    preserve_split = true
-}}
-
-input {{
-    kb_layout = latam
-    kb_options = grp:alt_shift_toggle
-    follow_mouse = 1
-    sensitivity = 0
-    touchpad {{
-        natural_scroll = false
-        tap-to-click = true
-    }}
-}}
-
-misc {{
-    force_default_wallpaper = 0
-    disable_hyprland_logo = true
-    disable_splash_rendering = true
-    vfr = true
-}}
-
-$mod = SUPER
-bind = $mod, Return, exec, kitty
-bind = $mod, Space, exec, rofi -show drun
-bind = $mod, E, exec, thunar
-bind = $mod, B, exec, firefox
-bind = $mod SHIFT, B, exec, microsoft-edge-stable
-bind = $mod SHIFT, S, exec, grim -g "$(slurp)" - | wl-copy
-bind = $mod, V, exec, cliphist list | rofi -dmenu | cliphist decode | wl-copy
-bind = $mod SHIFT, P, exec, ~/.config/rofi/scripts/powermenu.sh
-bind = $mod, Q, killactive
-bind = $mod, F, fullscreen
-bind = $mod, T, togglefloating
-bind = $mod SHIFT, E, exit
-bind = $mod SHIFT, L, exec, hyprlock
-bind = , Print, exec, grim ~/screenshot_$(date +%Y%m%d_%H%M%S).png
-bind = $mod, left,  movefocus, l
-bind = $mod, right, movefocus, r
-bind = $mod, up,    movefocus, u
-bind = $mod, down,  movefocus, d
-bind = $mod, H, movefocus, l
-bind = $mod, L, movefocus, r
-bind = $mod, K, movefocus, u
-bind = $mod, J, movefocus, d
-bind = $mod SHIFT, left,  movewindow, l
-bind = $mod SHIFT, right, movewindow, r
-bind = $mod SHIFT, up,    movewindow, u
-bind = $mod SHIFT, down,  movewindow, d
-bind = $mod, 1, workspace, 1
-bind = $mod, 2, workspace, 2
-bind = $mod, 3, workspace, 3
-bind = $mod, 4, workspace, 4
-bind = $mod, 5, workspace, 5
-bind = $mod, 6, workspace, 6
-bind = $mod, 7, workspace, 7
-bind = $mod, 8, workspace, 8
-bind = $mod, 9, workspace, 9
-bind = $mod SHIFT, 1, movetoworkspace, 1
-bind = $mod SHIFT, 2, movetoworkspace, 2
-bind = $mod SHIFT, 3, movetoworkspace, 3
-bind = $mod SHIFT, 4, movetoworkspace, 4
-bind = $mod SHIFT, 5, movetoworkspace, 5
-bind = $mod SHIFT, 6, movetoworkspace, 6
-bind = $mod SHIFT, 7, movetoworkspace, 7
-bind = $mod SHIFT, 8, movetoworkspace, 8
-bind = $mod SHIFT, 9, movetoworkspace, 9
-bind = $mod, mouse_down, workspace, e+1
-bind = $mod, mouse_up, workspace, e-1
-bind = $mod, Tab, workspace, e+1
-bind = $mod SHIFT, Tab, workspace, e-1
-bindel = , XF86AudioRaiseVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
-bindel = , XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
-bindl  = , XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
-bindl  = , XF86AudioPlay, exec, playerctl play-pause
-bindl  = , XF86AudioNext, exec, playerctl next
-bindl  = , XF86AudioPrev, exec, playerctl previous
-bindel = , XF86MonBrightnessUp, exec, brightnessctl set +5%
-bindel = , XF86MonBrightnessDown, exec, brightnessctl set 5%-
-
-windowrulev2 = float, class:(pavucontrol)
-windowrulev2 = float, class:(nm-connection-editor)
-windowrulev2 = float, class:(blueman-manager)
-windowrulev2 = size 800 600, class:(pavucontrol)
-""")
+        _hypr_tmpl = _leer_config("hyprland/hyprland.conf.template")
+        if _hypr_tmpl:
+            self._escribir(f"{home}/.config/hypr/hyprland.conf",
+                           _hypr_tmpl.replace("%%GPU_ENV%%", _gpu_env_str))
+        else:
+            self._log("[WARN] hyprland.conf.template no encontrado — usando config embebida", "warn")
 
         # hyprpaper.conf
-        self._escribir(f"{home}/.config/hypr/hyprpaper.conf", """\
-preload = ~/.config/hypr/wallpaper.png
-wallpaper = ,~/.config/hypr/wallpaper.png
-splash = false
-""")
+        _contenido = _leer_config("hyprland/hyprpaper.conf")
+        if _contenido:
+            self._escribir(f"{home}/.config/hypr/hyprpaper.conf", _contenido)
+        else:
+            self._escribir(f"{home}/.config/hypr/hyprpaper.conf",
+                           "preload = ~/.config/hypr/wallpaper.png\nwallpaper = ,~/.config/hypr/wallpaper.png\nsplash = false\n")
         # Wallpaper PNG Tokyo Night (#1a1b26) sin dependencias externas
         try:
             import struct as _struct, zlib as _zlib
@@ -1928,7 +1823,11 @@ splash = false
             self._log(f"  [WARN] wallpaper: {_e}", "warn")
 
         # hypridle.conf
-        self._escribir(f"{home}/.config/hypr/hypridle.conf", """\
+        _contenido = _leer_config("hyprland/hypridle.conf")
+        if _contenido:
+            self._escribir(f"{home}/.config/hypr/hypridle.conf", _contenido)
+        else:
+            self._escribir(f"{home}/.config/hypr/hypridle.conf", """\
 general {
     lock_cmd = pidof hyprlock || hyprlock
     before_sleep_cmd = loginctl lock-session
@@ -1940,7 +1839,11 @@ listener { timeout = 1800; on-timeout = systemctl suspend; }
 """)
 
         # hyprlock.conf
-        self._escribir(f"{home}/.config/hypr/hyprlock.conf", """\
+        _contenido = _leer_config("hyprland/hyprlock.conf")
+        if _contenido:
+            self._escribir(f"{home}/.config/hypr/hyprlock.conf", _contenido)
+        else:
+            self._escribir(f"{home}/.config/hypr/hyprlock.conf", """\
 background {
     monitor =
     path = ~/.config/hypr/wallpaper.png
@@ -1972,7 +1875,11 @@ label {
 """)
 
         # Waybar config
-        self._escribir(f"{home}/.config/waybar/config.jsonc", """\
+        _contenido = _leer_config("waybar/config.jsonc")
+        if _contenido:
+            self._escribir(f"{home}/.config/waybar/config.jsonc", _contenido)
+        else:
+            self._escribir(f"{home}/.config/waybar/config.jsonc", """\
 {
   "layer": "top", "position": "top", "height": 30, "spacing": 4,
   "modules-left":   ["hyprland/workspaces", "hyprland/window"],
@@ -1997,7 +1904,11 @@ label {
 """)
 
         # Waybar style — Tokyo Night
-        self._escribir(f"{home}/.config/waybar/style.css", """\
+        _contenido = _leer_config("waybar/style.css")
+        if _contenido:
+            self._escribir(f"{home}/.config/waybar/style.css", _contenido)
+        else:
+            self._escribir(f"{home}/.config/waybar/style.css", """\
 * { font-family: "JetBrainsMono Nerd Font", monospace; font-size: 13px; border: none; border-radius: 0; min-height: 0; }
 window#waybar { background-color: rgba(26,27,38,0.92); border-bottom: 2px solid rgba(122,162,247,.4); color: #c0caf5; }
 .modules-left, .modules-center, .modules-right { padding: 0 6px; }
@@ -2018,126 +1929,34 @@ tooltip { background: rgba(26,27,38,.95); border: 1px solid rgba(122,162,247,.3)
 """)
 
         # dunst
-        self._escribir(f"{home}/.config/dunst/dunstrc", """\
-[global]
-    monitor = 0
-    follow = none
-    width = 340
-    height = 120
-    origin = top-right
-    offset = 10x40
-    notification_limit = 5
-    progress_bar = true
-    separator_height = 1
-    padding = 10
-    horizontal_padding = 12
-    frame_width = 1
-    frame_color = "#414868"
-    gap_size = 4
-    sort = yes
-    font = JetBrainsMono Nerd Font 11
-    markup = full
-    format = "<b>%s</b>\n%b"
-    alignment = left
-    vertical_alignment = center
-    ellipsize = middle
-    icon_position = left
-    min_icon_size = 32
-    max_icon_size = 64
-    corner_radius = 6
-    mouse_left_click = close_current
-    mouse_right_click = close_all
-
-[urgency_low]
-    background = "#1a1b26"
-    foreground = "#565f89"
-    timeout = 5
-
-[urgency_normal]
-    background = "#24283b"
-    foreground = "#c0caf5"
-    timeout = 8
-
-[urgency_critical]
-    background = "#1a0000"
-    foreground = "#f7768e"
-    timeout = 0
-""")
+        _contenido = _leer_config("dunst/dunstrc")
+        if _contenido:
+            self._escribir(f"{home}/.config/dunst/dunstrc", _contenido)
 
         # rofi config
-        self._escribir(f"{home}/.config/rofi/config.rasi", """\
-configuration {
-    modi: "drun,run,window";
-    font: "JetBrainsMono Nerd Font 13";
-    show-icons: true; icon-theme: "Papirus"; terminal: "kitty";
-}
-* {
-    bg: rgba(26,27,38,0.96); fg: #c0caf5; accent: #7aa2f7;
-    border: rgba(122,162,247,0.3); sel-bg: rgba(122,162,247,0.18); sel-fg: #7aa2f7;
-}
-window { background-color: @bg; border: 1px solid @border; border-radius: 8px; width: 520px; }
-element selected { background-color: @sel-bg; text-color: @sel-fg; }
-inputbar { background-color: transparent; text-color: @fg; }
-entry { background-color: transparent; text-color: @accent; }
-""")
+        _contenido = _leer_config("rofi/config.rasi")
+        if _contenido:
+            self._escribir(f"{home}/.config/rofi/config.rasi", _contenido)
 
         # powermenu
-        self._escribir(f"{home}/.config/rofi/scripts/powermenu.sh", """\
-#!/bin/bash
-options="  Power Off\\n  Reboot\\n  Suspend\\n󰍃  Log Out\\n  Lock"
-chosen=$(echo -e "$options" | rofi -dmenu -i -p "  Power Menu" -theme-str 'window {width: 400px;}')
-case "$chosen" in
-    *"Power Off") systemctl poweroff ;;
-    *"Reboot")    systemctl reboot ;;
-    *"Suspend")   systemctl suspend ;;
-    *"Log Out")   hyprctl dispatch exit ;;
-    *"Lock")      hyprlock ;;
-esac
-""")
+        _contenido = _leer_config("rofi/powermenu.sh")
+        if _contenido:
+            self._escribir(f"{home}/.config/rofi/scripts/powermenu.sh", _contenido)
         try:
             (MOUNT_ROOT / f"{home}/.config/rofi/scripts/powermenu.sh").chmod(0o755)
-        except OSError:
-            pass
+        except OSError as e:
+            # Sin permisos de ejecución el powermenu de rofi fallará en el primer uso
+            self._log(f"[WARN] chmod powermenu.sh falló: {e}", "warn")
 
         # kitty
-        self._escribir(f"{home}/.config/kitty/kitty.conf", """\
-font_family             JetBrainsMono Nerd Font
-font_size               12.0
-background              #1a1b26
-foreground              #c0caf5
-selection_background    #28344a
-selection_foreground    #c0caf5
-cursor                  #c0caf5
-cursor_text_color       #1a1b26
-color0  #15161e
-color1  #f7768e
-color2  #9ece6a
-color3  #e0af68
-color4  #7aa2f7
-color5  #bb9af7
-color6  #7dcfff
-color7  #a9b1d6
-color8  #414868
-color9  #f7768e
-color10 #9ece6a
-color11 #e0af68
-color12 #7aa2f7
-color13 #bb9af7
-color14 #7dcfff
-color15 #c0caf5
-background_opacity      0.92
-window_padding_width    10
-tab_bar_edge            bottom
-tab_bar_style           powerline
-enable_audio_bell       no
-scrollback_lines        10000
-confirm_os_window_close 0
-""")
+        _contenido = _leer_config("kitty/kitty.conf")
+        if _contenido:
+            self._escribir(f"{home}/.config/kitty/kitty.conf", _contenido)
 
         # SDDM config
         self._escribir("etc/sddm.conf.d/hyprland.conf", """\
 [Theme]
-Current=breeze
+Current=avalos
 
 [Wayland]
 EnableHiDPI=true
@@ -2185,21 +2004,9 @@ export XDG_SESSION_TYPE=wayland
             self._log(f"[WARN] .bashrc: {e}", "warn")
 
         # fastfetch config
-        self._escribir(f"{home}/.config/fastfetch/config.jsonc", """\
-{
-  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
-  "display": {"separator":"  ","color":{"keys":"blue","title":"magenta"}},
-  "modules": [
-    {"type":"title","format":"{7}{8}{9}@{10}{11}{12}"},"separator",
-    {"type":"os","key":"OS     "},{"type":"kernel","key":"Kernel "},
-    {"type":"packages","key":"Pkgs   "},{"type":"shell","key":"Shell  "},"separator",
-    {"type":"wm","key":"WM     "},{"type":"terminal","key":"Term   "},{"type":"font","key":"Font   "},"separator",
-    {"type":"cpu","key":"CPU    "},{"type":"gpu","key":"GPU    "},
-    {"type":"memory","key":"RAM    "},{"type":"disk","key":"Disk   "},
-    {"type":"uptime","key":"Uptime "},"separator",{"type":"colors","paddingLeft":0,"symbol":"block"}
-  ]
-}
-""")
+        _contenido = _leer_config("fastfetch/config.jsonc")
+        if _contenido:
+            self._escribir(f"{home}/.config/fastfetch/config.jsonc", _contenido)
 
         # Permisos
         self._chown_r(f"/home/{usuario}", usuario)
@@ -2239,7 +2046,13 @@ WantedBy=multi-user.target
         self._jsc("pyStartTimer")
 
         # Esperar que el wizard envíe la config
-        if not self._config_lista.wait(timeout=600) or self._abortado:
+        if not self._config_lista.wait(timeout=600):
+            # El usuario no completó el wizard en 10 minutos
+            self._log("[ERROR] Tiempo de espera agotado (10 min). Reinicia el instalador.", "err")
+            self._jsc("pyErrorPaso", "Tiempo de espera agotado. Cierra y vuelve a abrir el instalador.")
+            self._instalando = False
+            return
+        if self._abortado:
             self._instalando = False
             return
 
@@ -2324,7 +2137,9 @@ WantedBy=multi-user.target
             uefi = es_uefi()
             ucode = detectar_microcode()
             self._info("ucode", ucode, "ok")
-            self._jsc("pyBadges", False, uefi)
+            # Nota: se pasa None como estado de red para indicar "aún verificando"
+            # pyBadges en JS recibe null → muestra el badge en estado "···" (neutro)
+            self._jsc("pyBadges", None, uefi)
             self._step("uefi", "done", "UEFI" if uefi else "BIOS Legacy")
             avanzar()
 
@@ -2380,12 +2195,19 @@ WantedBy=multi-user.target
             with open("/proc/mounts") as _mf:
                 _proc_mounts = _mf.read()
             _dev_base = dev_name  # ej. "sdb", "nvme1n1"
-            _mounted = [
-                _line.split()[1]
-                for _line in _proc_mounts.splitlines()
-                if _line.split()[0].removeprefix("/dev/").startswith(_dev_base)
-                   and _line.split()[0] != dev
-            ]
+            _mounted = []
+            for _line in _proc_mounts.splitlines():
+                if not _line.strip():
+                    continue
+                _parts = _line.split()
+                _src = _parts[0].removeprefix("/dev/")
+                # El dispositivo pertenece al disco si su nombre empieza con dev_base
+                # y el siguiente carácter es un dígito o 'p' (partición), no otra letra
+                if _src.startswith(_dev_base) and _src != _dev_base:
+                    _suffix = _src[len(_dev_base):]
+                    if _suffix and (_suffix[0].isdigit() or _suffix[0] == 'p'):
+                        if _parts[0] != dev:
+                            _mounted.append(_parts[1])
             if _mounted:
                 _puntos = ", ".join(_mounted)
                 self._jsc("pyErrorFatal",
@@ -2424,7 +2246,11 @@ WantedBy=multi-user.target
                 self._jsc("pyErrorPaso", f"parted falló en {dev}. Revisa el log.")
                 self._limpiar_montajes(); return
 
-            time.sleep(1)  # udev
+            # Esperar a que udev registre los nuevos nodos de bloque
+            try:
+                subprocess.run(["udevadm", "settle", "--timeout=5"], check=False)
+            except Exception:
+                time.sleep(2)  # fallback si udevadm no está disponible
             self._step("part", "done",
                        "GPT: EFI (512MB) + root" if uefi else "MBR: root (100%)")
             avanzar()
@@ -2453,8 +2279,13 @@ WantedBy=multi-user.target
                 self._jsc("pyErrorPaso", f"mkfs.ext4 falló en {dev_root}")
                 self._limpiar_montajes(); return
 
-            self._step("format", "done",
-                       "FAT32 + ext4 sin journal (USB)" if self._modo_usb else "FAT32 + ext4")
+            if uefi and self._modo_usb:
+                _fmt_label = "FAT32 + ext4 sin journal (USB)"
+            elif uefi:
+                _fmt_label = "FAT32 + ext4"
+            else:
+                _fmt_label = "ext4 sin journal (USB)" if self._modo_usb else "ext4"
+            self._step("format", "done", _fmt_label)
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
@@ -2559,15 +2390,23 @@ WantedBy=multi-user.target
                         ["pacman", "-Syi", "--noconfirm", _alt_kernel],
                         timeout=20, log_cls="info"
                     )
-                    if _rc2 == 0 and not _es_v3_o_superior:
-                        # CPU compat pero solo hay linux-avalos-v3 — puede no arrancar en hw sin AVX2
-                        self._log(
-                            f"  [WARN] {_target_kernel} no disponible. "
-                            f"linux-avalos (v3) podría no funcionar en esta CPU ({cpu_arch}).",
-                            "warn"
-                        )
+                    if _rc2 == 0:
                         _kernel_pkg  = _alt_kernel
                         _headers_pkg = _alt_headers
+                        if not _es_v3_o_superior:
+                            # CPU sin AVX2 pero solo linux-avalos (v3) disponible — puede no arrancar
+                            self._log(
+                                f"  [WARN] {_target_kernel} no disponible. "
+                                f"linux-avalos (v3) podría no funcionar en esta CPU ({cpu_arch}).",
+                                "warn"
+                            )
+                        else:
+                            # CPU v3+ pero solo linux-avalos-compat disponible — subóptimo pero funciona
+                            self._log(
+                                f"  [WARN] {_target_kernel} no disponible. "
+                                f"Usando {_alt_kernel} (compat) en CPU {cpu_arch}.",
+                                "warn"
+                            )
                     else:
                         self._log(
                             f"  Kernel: linux ({_target_kernel} aún no publicado — fallback al kernel estándar)",
@@ -2580,7 +2419,7 @@ WantedBy=multi-user.target
             # ── Drivers GPU + entorno gráfico ────────────────────────────────
             pkgs += gpu_info["pkgs"] + HYPRLAND_PKGS + [ucode]
             self._log(f"GPU detectada: {gpu_info['vendor'].upper()} → drivers: {', '.join(gpu_info['pkgs'][:3])}…", "info")
-            self._log(f"Total: {len(pkgs)} paquetes ({', '.join(pkgs[:8])}… +{len(pkgs)-8} más)", "info")
+            self._log(f"Total: {len(pkgs)} paquetes ({', '.join(pkgs[:8])}\u2026 +{max(0, len(pkgs)-8)} m\xe1s)", "info")
 
             rc, _ = self._run_cmd(
                 ["pacstrap", "-c", str(MOUNT_ROOT)] + pkgs,
@@ -2606,7 +2445,9 @@ WantedBy=multi-user.target
                 self._limpiar_montajes(); return
 
             if self._modo_usb:
+                # Reemplazar relatime por noatime si está presente
                 fstab_out = fstab_out.replace("relatime", "noatime")
+                # Si aún no tiene noatime (ej. genfstab generó solo "defaults"), añadirlo
                 if "noatime" not in fstab_out:
                     fstab_out = fstab_out.replace("defaults", "defaults,noatime", 1)
 
@@ -2644,8 +2485,11 @@ WantedBy=multi-user.target
                 f"127.0.0.1   localhost\n::1         localhost\n127.0.1.1   {hostname}.localdomain {hostname}\n"
             )
 
-            self._run_chroot_stdin(f"root:{passw}\n", ["chpasswd"])
-            self._run_chroot(["chage", "-d", "0", "root"])
+            rc_pw, out_pw = self._run_chroot_stdin(f"root:{passw}\n", ["chpasswd"])
+            if rc_pw != 0:
+                self._log(f"[ERROR] chpasswd root falló (rc={rc_pw}): {out_pw}", "err")
+                self._limpiar_montajes()
+                return
             self._run_chroot(["mkinitcpio", "-P"])
 
             self._step("config", "done", "locale · timezone · hostname · initramfs")
@@ -2723,8 +2567,7 @@ WantedBy=multi-user.target
                 root_opts = (f"root=UUID={root_uuid}" if root_uuid else f"root={dev_root}")
 
                 # Detectar kernel instalado
-                import glob as _glob
-                vmlinuz_files = _glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
+                vmlinuz_files = glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
                 kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
                 self._log(f"  Kernel detectado: {kernel_name}", "info")
 
@@ -2774,7 +2617,6 @@ WantedBy=multi-user.target
                     self._limpiar_montajes(); return
 
                 # Detectar nombre del kernel instalado
-                import glob
                 vmlinuz_files = glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
                 kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
                 self._log(f"  Kernel detectado: {kernel_name}", "info")
@@ -2789,7 +2631,7 @@ WantedBy=multi-user.target
                 esp_entries_dir = MOUNT_ROOT / "boot" / "efi" / "AvalOS"
                 esp_entries_dir.mkdir(parents=True, exist_ok=True)
 
-                import shutil as _shutil
+                _shutil = shutil   # shutil ya importado globalmente — alias local para claridad
                 _shutil.copy2(MOUNT_ROOT / f"boot/vmlinuz-{kernel_name}",
                               esp_entries_dir / f"vmlinuz-{kernel_name}")
                 initrd_src = MOUNT_ROOT / f"boot/initramfs-{kernel_name}.img"
@@ -2845,7 +2687,7 @@ WantedBy=multi-user.target
                     "[Action]\n"
                     "Description = Updating systemd-boot kernel files\n"
                     "When = PostTransaction\n"
-                    f"Exec = /bin/sh -c 'cp /boot/vmlinuz-{kernel_name} /boot/efi/AvalOS/vmlinuz-{kernel_name}; cp /boot/initramfs-{kernel_name}.img /boot/efi/AvalOS/initramfs-{kernel_name}.img'\n"
+                    f"Exec = /usr/bin/bash -c 'cp /boot/vmlinuz-{kernel_name} /boot/efi/AvalOS/vmlinuz-{kernel_name}; cp /boot/initramfs-{kernel_name}.img /boot/efi/AvalOS/initramfs-{kernel_name}.img'\n"
                     "Depends = bash\n"
                 )
 
@@ -2887,7 +2729,7 @@ WantedBy=multi-user.target
                 self._run_chroot(["systemctl", "enable", svc])
             self._run_chroot(["systemctl", "--global", "enable",
                               "pipewire", "pipewire-pulse", "wireplumber"])
-            self._run_chroot(["sensors-detect", "--auto"], timeout=60)
+            self._log("  [INFO] sensors-detect omitido — ejecutar manualmente tras el reinicio: sudo sensors-detect --auto", "warn")
             self._step("services", "done", "NetworkManager · bluetooth · sddm · pipewire · avalos-gpu-detect")
             avanzar()
 
@@ -2897,6 +2739,11 @@ WantedBy=multi-user.target
             self._status("Aplicando optimizaciones del sistema…")
             self._log("\n── Optimizaciones del sistema ──\n", "step")
             gpu_info["_usuario"] = usuario
+            # Pre-crear el directorio home del usuario para que _configurar_optimizaciones
+            # pueda escribir gpu-env.conf aunque useradd aún no haya corrido.
+            # Los permisos se corregirán con _chown_r en _configurar_hyprland.
+            _home_pre = MOUNT_ROOT / f"home/{usuario}"
+            _home_pre.mkdir(parents=True, exist_ok=True)
             self._configurar_optimizaciones(gpu_info, cpu_arch, disco_tipo)
 
             if self._abortado: self._limpiar_montajes(); return
@@ -2915,8 +2762,11 @@ WantedBy=multi-user.target
                 self._jsc("pyErrorPaso", f"useradd falló para '{usuario}'. Revisa el log.")
                 self._limpiar_montajes(); return
 
-            self._run_chroot_stdin(f"{usuario}:{passw}\n", ["chpasswd"])
-            self._run_chroot(["chage", "-d", "0", usuario])
+            rc_pw2, out_pw2 = self._run_chroot_stdin(f"{usuario}:{passw}\n", ["chpasswd"])
+            if rc_pw2 != 0:
+                self._log(f"[ERROR] chpasswd '{usuario}' falló (rc={rc_pw2}): {out_pw2}", "err")
+                self._limpiar_montajes()
+                return
 
             # Sudo para wheel
             sudoers = MOUNT_ROOT / "etc" / "sudoers.d" / "wheel"
@@ -2954,11 +2804,21 @@ WantedBy=multi-user.target
                 self._step("aur", "skip", "yay falló")
             else:
                 if HYPRLAND_AUR_PKGS:
-                    rc, _ = self._run_chroot(
+                    rc_aur, _ = self._run_chroot(
                         ["sudo", "-u", usuario, "yay", "-S", "--noconfirm", "--needed"]
                         + HYPRLAND_AUR_PKGS, timeout=900
                     )
-                self._step("aur", "done", f"{len(HYPRLAND_AUR_PKGS)} paquetes AUR")
+                    if rc_aur != 0:
+                        self._log(
+                            f"[WARN] Algunos paquetes AUR no se instalaron (rc={rc_aur}). "
+                            "Puedes instalarlos manualmente con yay tras el reinicio.",
+                            "warn"
+                        )
+                        self._step("aur", "done", f"{len(HYPRLAND_AUR_PKGS)} paquetes AUR (con advertencias)")
+                    else:
+                        self._step("aur", "done", f"{len(HYPRLAND_AUR_PKGS)} paquetes AUR")
+                else:
+                    self._step("aur", "done", "0 paquetes AUR")
 
             if sudoers_tmp and sudoers_tmp.exists():
                 try: sudoers_tmp.unlink()
@@ -3001,16 +2861,16 @@ WantedBy=multi-user.target
             self._log(
                 f"\n╔══════════════════════════════════════════╗\n"
                 f"║  ✓  AvalOS instalado correctamente       ║\n"
-                f"║  Disco:    {dev} ({disco['size_human']})\n"
-                f"║  Usuario:  {usuario}\n"
-                f"║  Hostname: {hostname}\n"
-                f"║  Timezone: {timezone}\n"
-                f"║  DE/WM:    Hyprland · Wayland · SDDM\n"
+                f"║  Disco:    {dev} ({disco['size_human']}) ║\n"
+                f"║  Usuario:  {usuario} ║\n"
+                f"║  Hostname: {hostname} ║\n"
+                f"║  Timezone: {timezone} ║\n"
+                f"║  DE/WM:    Hyprland · Wayland · SDDM ║\n"
                 f"╚══════════════════════════════════════════╝", "ok"
             )
 
         except Exception as e:
-            import traceback
+            import traceback  # noqa: PLC0415 — import lazy intencional en except crítico
             self._log(f"\n[EXCEPCIÓN] {e}\n{traceback.format_exc()}", "err")
             self._jsc("pyErrorPaso", f"Error inesperado: {e}")
             self._limpiar_montajes()
@@ -3077,9 +2937,12 @@ if __name__ == "__main__":
 
     # Arrancar el hilo de instalación cuando el DOM esté listo
     def _on_loaded():
-        if vent._thread_started:
-            return
-        vent._thread_started = True
+        # Lock para evitar race condition TOCTOU: pywebview puede disparar
+        # el evento 'loaded' varias veces (recarga del DOM, SPA navigation).
+        with vent._lock:
+            if vent._thread_started:
+                return
+            vent._thread_started = True
         vent._config_lista.clear()
         t = threading.Thread(target=vent._run_instalacion, daemon=True)
         t.start()

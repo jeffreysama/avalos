@@ -15,6 +15,7 @@ arch=(x86_64)
 url="https://github.com/jeffreysama/avalos"
 license=(GPL2)
 makedepends=(bc bison flex python clang llvm lld pahole cpio perl tar xz zstd git libelf)
+install=linux-avalos.install
 options=(!strip)
 
 # ── Fuentes ───────────────────────────────────────────────────────────────────
@@ -28,10 +29,6 @@ sha256sums=(
     'SKIP'
     'SKIP'
 )
-
-# ── CachyOS patches opcionales (se omiten si no aplican, no rompen el build) ──
-_minorver=${pkgver#*.}; _minorver=${_minorver%.*}
-_cachyos_base="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${_majorver}.${_minorver}"
 
 prepare() {
     cd "linux-${pkgver}"
@@ -217,7 +214,11 @@ package_linux-avalos-headers() {
     cp -t "${builddir}" -a scripts
 
     # objtool (requerido por algunos módulos DKMS)
-    install -Dt "${builddir}/tools/objtool" -m755 tools/objtool/objtool
+    if [[ -f tools/objtool/objtool ]]; then
+        install -Dt "${builddir}/tools/objtool" -m755 tools/objtool/objtool
+    else
+        echo "  ⚠ tools/objtool/objtool no encontrado — omitiendo (puede afectar algunos módulos DKMS)"
+    fi
 
     # Todos los Kconfig y headers (.h)
     find . -name 'Kconfig*' -exec install -Dm644 {} "${builddir}/{}" \;

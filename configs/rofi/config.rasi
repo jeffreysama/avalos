@@ -1,0 +1,85 @@
+/* AvalOS Rofi — Tokyo Night */
+
+configuration {
+  modi: "drun,run,window";
+  font: "JetBrainsMono Nerd Font 12";
+  show-icons: true;
+  icon-theme: "Papirus-Dark";
+  drun-display-format: "{name}";
+  display-drun: "󰍉 Apps";
+  display-run: " Run";
+  display-window: " Windows";
+  kb-cancel: "Escape";
+}
+
+* {
+  background:     #1a1b26;
+  background-alt: #24283b;
+  foreground:     #c0caf5;
+  selected:       #7aa2f7;
+  active:         #9ece6a;
+  urgent:         #f7768e;
+  border-color:   #7aa2f7;
+  text-color:     @foreground;
+}
+
+window {
+  background-color: @background;
+  border:           2px solid @border-color;
+  border-radius:    10px;
+  width:            480px;
+}
+
+mainbox {
+  background-color: @background;
+  children: [inputbar, listview];
+  padding: 12px;
+  spacing: 8px;
+}
+
+inputbar {
+  background-color: @background-alt;
+  border-radius:    8px;
+  padding:          8px 12px;
+  children:         [prompt, entry];
+}
+
+prompt {
+  background-color: transparent;
+  text-color:       @selected;
+  padding:          0 6px 0 0;
+}
+
+entry {
+  background-color: transparent;
+  text-color:       @foreground;
+  placeholder:      "Buscar...";
+  placeholder-color: #565f89;
+}
+
+listview {
+  background-color: transparent;
+  lines:            8;
+  spacing:          4px;
+}
+
+element {
+  background-color: transparent;
+  border-radius:    6px;
+  padding:          8px 10px;
+}
+
+element selected {
+  background-color: @selected;
+  text-color:       #1a1b26;
+}
+
+element-text {
+  background-color: transparent;
+  text-color:       inherit;
+}
+
+element-icon {
+  background-color: transparent;
+  size:             1.2em;
+}

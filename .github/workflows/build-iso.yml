@@ -7,23 +7,22 @@ on:
         description: "Version (vacio = fecha actual YYYY.MM.DD)"
         required: false
         default: ""
-      kernel:
-        description: "Kernel a usar (linux-avalos / linux-avalos-compat / linux)"
-        required: false
-        default: "linux-avalos-compat"
       upload:
         description: "Subir ISO a GitHub Releases"
         type: boolean
         default: true
 
 env:
-  GITHUB_REPO: jeffreysama/avalos
+  AVALOS_REPO: jeffreysama/avalos
   AVALOS_REPO_URL: https://github.com/jeffreysama/avalos/releases/download/repo
+  BUILD_DIR: /tmp/avalos-iso-profile
 
 jobs:
   build-iso:
     name: Construir AvalOS ISO
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # necesario para gh release create/upload
     container:
       image: archlinux:latest
       options: --privileged
@@ -49,6 +48,8 @@ jobs:
 
       - name: Checkout del repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # historial completo necesario para git describe --tags
 
       - name: Configurar repo [avalos] en pacman
         run: |
@@ -63,7 +64,7 @@ jobs:
           echo "Repo avalos configurado:"
           pacman -Si linux-avalos | grep -E "Name|Version" || echo "[WARN] linux-avalos no disponible aun"
 
-      - name: Determinar version y kernel
+      - name: Determinar version
         id: vars
         run: |
           # Version
@@ -77,23 +78,15 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
-          # Kernel
-          KERNEL="${{ github.event.inputs.kernel }}"
-          [[ -z "$KERNEL" ]] && KERNEL="linux-avalos"
-
-          # Verificar disponibilidad del kernel elegido
-          if ! pacman -Si "$KERNEL" &>/dev/null; then
-            echo "[WARN] $KERNEL no disponible en repos - usando linux como fallback"
-            KERNEL="linux"
-          fi
-          echo "kernel=$KERNEL" >> "$GITHUB_OUTPUT"
-          echo "Kernel: $KERNEL"
+          # Ambos kernels siempre incluidos — se selecciona automáticamente al bootear.
+          # El instalador detecta el hardware y elige el correcto durante la instalación.
+          echo "kernel=linux-avalos+linux-avalos-compat" >> "$GITHUB_OUTPUT"
+          echo "Kernels: linux-avalos (v3) + linux-avalos-compat (baseline)"
 
       - name: Preparar perfil archiso
         run: |
+          set -u
           VERSION="${{ steps.vars.outputs.version }}"
-          KERNEL="${{ steps.vars.outputs.kernel }}"
-          BUILD_DIR="/tmp/avalos-iso-build"
           AIROOTFS="$BUILD_DIR/airootfs"
 
           mkdir -p "$BUILD_DIR"
@@ -103,7 +96,7 @@ jobs:
           cat > "$BUILD_DIR/profiledef.sh" << PROFILEEOF
           #!/usr/bin/env bash
           iso_name="avalos-${VERSION}"
-          iso_label="AVLS_${VERSION//./_}"
+          iso_label="AVLS$(date +%y%m%d)"
           iso_publisher="AvalOS <https://github.com/jeffreysama/avalos>"
           iso_application="AvalOS — Arch-based · Hyprland · Tokyo Night"
           iso_version="${VERSION}"
@@ -132,10 +125,13 @@ jobs:
           if ! grep -q '\[avalos\]' "$BUILD_DIR/pacman.conf"; then
             printf '\n[avalos]\nSigLevel = Optional TrustAll\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' >> "$BUILD_DIR/pacman.conf"
           fi
-          # Sin nvidia
-          sed -i '/^\[options\]/a IgnorePkg = linux-firmware-nvidia' "$BUILD_DIR/pacman.conf"
+          # Sin nvidia — AvalOS es AMD/Intel only.
+          # Usuarios de NVIDIA deberán instalar drivers manualmente post-instalación.
+          # (No se bloquea vía IgnorePkg porque ese mecanismo es para upgrades, no installs)
           # Habilitar multilib para paquetes lib32
-          printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$BUILD_DIR/pacman.conf"
+          if ! grep -q '^\[multilib\]' "$BUILD_DIR/pacman.conf"; then
+            printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$BUILD_DIR/pacman.conf"
+          fi
 
           echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_ENV"
           echo "AIROOTFS=$AIROOTFS" >> "$GITHUB_ENV"
@@ -144,21 +140,21 @@ jobs:
 
       - name: Generar packages.x86_64
         run: |
+          set -u
           KERNEL="${{ steps.vars.outputs.kernel }}"
           python3 - "$BUILD_DIR/packages.x86_64" "$KERNEL" << 'PKGPYEOF'
           import sys
           dest, kernel = sys.argv[1], sys.argv[2]
           pkgs = [
-              f"# Kernel",
-              kernel,
-              "linux-firmware-amdgpu",
-              "linux-firmware-radeon",
-              "linux-firmware-intel",
-              "linux-firmware-atheros",
-              "linux-firmware-realtek",
-              "linux-firmware-whence",
-              "linux-firmware-bnx2x",
-              "linux-firmware-qcom",
+              f"# Kernel — ambos siempre incluidos para detección automática de hardware",
+              "linux-avalos",
+              "linux-avalos-headers",
+              "linux-avalos-compat",
+              "linux-avalos-compat-headers",
+              "# Firmware — cubre AMD, Intel, WiFi, Ethernet, Bluetooth y demás",
+              "linux-firmware",
+              "intel-ucode",
+              "amd-ucode",
               "# Base",
               "base", "base-devel", "sudo", "bash", "bash-completion",
               "# Hyprland",
@@ -180,7 +176,7 @@ jobs:
               "# Live tools",
               "networkmanager", "nm-connection-editor",
               "git", "curl", "wget", "python", "python-pip",
-              "python-pywebview", "fastfetch", "htop", "nano", "vim",
+              "fastfetch", "htop", "nano", "vim",
               "grim", "slurp", "wl-clipboard", "xdg-utils",
               "udisks2", "udiskie", "gvfs", "thunar", "file-roller", "firefox",
               "# Instalacion",
@@ -190,13 +186,15 @@ jobs:
               "# archiso",
               "archiso", "syslinux", "edk2-shell",
           ]
-          open(dest, 'w').write('\n'.join(pkgs) + '\n')
+          with open(dest, 'w') as f:
+              f.write('\n'.join(pkgs) + '\n')
           print(f"packages.x86_64 generado ({len([p for p in pkgs if not p.startswith('#')])} paquetes)")
           PKGPYEOF
           wc -l "$BUILD_DIR/packages.x86_64"
 
       - name: Configurar airootfs (scripts, configs, wallpaper)
         run: |
+          set -u
           mkdir -p "$AIROOTFS/usr/local/bin"
           mkdir -p "$AIROOTFS/root/.config/hypr"
           mkdir -p "$AIROOTFS/root/.config/waybar"
@@ -204,6 +202,22 @@ jobs:
           mkdir -p "$AIROOTFS/etc/sddm.conf.d"
           mkdir -p "$AIROOTFS/etc/systemd/system/graphical.target.wants"
           mkdir -p "$AIROOTFS/etc/pacman.d"
+
+          # ── Copiar configs al live Y a /usr/share/avalos/configs (para el instalador) ──
+          # El instalador (skill_instalar_usb.py) lee desde /usr/share/avalos/configs/
+          # en lugar de tener todo hardcodeado. Así solo hay un lugar donde editar configs.
+          mkdir -p "$AIROOTFS/usr/share/avalos/configs"
+          cp -r configs/. "$AIROOTFS/usr/share/avalos/configs/"
+
+          # Copiar al live también (sesión en vivo del USB)
+          [[ -f "configs/hyprland/hyprpaper.conf" ]] && \
+            cp configs/hyprland/hyprpaper.conf "$AIROOTFS/root/.config/hypr/hyprpaper.conf"
+          [[ -f "configs/kitty/kitty.conf" ]] && \
+            cp configs/kitty/kitty.conf "$AIROOTFS/root/.config/kitty/kitty.conf"
+          [[ -f "configs/waybar/config.jsonc" ]] && \
+            cp configs/waybar/config.jsonc "$AIROOTFS/root/.config/waybar/config.jsonc"
+          [[ -f "configs/waybar/style.css" ]] && \
+            cp configs/waybar/style.css "$AIROOTFS/root/.config/waybar/style.css"
 
           # Preset de mkinitcpio para linux-avalos con soporte archiso
           # Sobrescribe el preset instalado por el paquete para:
@@ -238,21 +252,51 @@ jobs:
           mkdir -p "$AIROOTFS/efi/EFI/Linux"
           mkdir -p "$AIROOTFS/boot"
 
-          # Symlink: mkarchiso espera /boot/vmlinuz-linux para el preset archiso
-          # Apuntarlo al kernel linux-avalos
+          # Preset de mkinitcpio para linux-avalos-compat
+          cat > "$AIROOTFS/etc/mkinitcpio.d/linux-avalos-compat.preset" << 'PRESETEOF2'
+          ALL_config='/etc/mkinitcpio.conf'
+          ALL_kver='/boot/vmlinuz-linux-avalos-compat'
+          PRESETS=('default' 'fallback' 'archiso')
+
+          default_image='/boot/initramfs-linux-avalos-compat.img'
+          fallback_image='/boot/initramfs-linux-avalos-compat-fallback.img'
+          fallback_options='-S autodetect'
+
+          archiso_config='/etc/mkinitcpio.conf.d/archiso.conf'
+          archiso_image='/boot/initramfs-linux-avalos-compat.img'
+          PRESETEOF2
+
+          # Symlinks: mkarchiso necesita encontrar los kernels por sus rutas en el preset archiso
+          # linux-avalos (v3, hardware moderno)
           ln -sf vmlinuz-linux-avalos "$AIROOTFS/boot/vmlinuz-linux" 2>/dev/null || true
+          # linux-avalos-compat (baseline, hardware antiguo/Celeron N)
+          ln -sf vmlinuz-linux-avalos-compat "$AIROOTFS/boot/vmlinuz-linux-compat" 2>/dev/null || true
 
           # pacman.conf dentro del airootfs
           cp "$BUILD_DIR/pacman.conf" "$AIROOTFS/etc/pacman.conf"
 
           # Copiar instalador si existe en el repo
-          if [[ -f "skill_instalar_usb.py" ]]; then
-            cp skill_instalar_usb.py "$AIROOTFS/usr/local/bin/avalos-install"
+          if [[ -f "scripts/skill_instalar_usb.py" ]]; then
+            cp scripts/skill_instalar_usb.py "$AIROOTFS/usr/local/bin/avalos-install"
             chmod 755 "$AIROOTFS/usr/local/bin/avalos-install"
             echo "Instalador copiado"
           else
-            echo "[WARN] skill_instalar_usb.py no encontrado — live sin instalador grafico"
+            echo "[WARN] scripts/skill_instalar_usb.py no encontrado — live sin instalador grafico"
           fi
+
+          # customize_airootfs.sh — mkarchiso lo ejecuta dentro del chroot
+          # Se usa para instalar paquetes que no están en repos (ej: python-pywebview via pip)
+          cat > "$AIROOTFS/root/customize_airootfs.sh" << 'CUSTOMEOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          echo "[AvalOS] Ejecutando customize_airootfs.sh..."
+
+          # python-pywebview no está en repos oficiales ni en [avalos] — instalar via pip
+          pip install pywebview --break-system-packages --quiet \
+            && echo "[AvalOS] python-pywebview instalado OK" \
+            || echo "[WARN] python-pywebview falló — el instalador gráfico no funcionará"
+          CUSTOMEOF
+          chmod 755 "$AIROOTFS/root/customize_airootfs.sh"
 
           # avalos-gpu-env
           cat > "$AIROOTFS/usr/local/bin/avalos-gpu-env" << 'GPUEOF'
@@ -300,60 +344,44 @@ jobs:
           # Wallpaper: fondo Tokyo Night sólido (el branding step lo sobreescribe con logo)
           convert -size 1920x1080 xc:"#1a1b26" "$AIROOTFS/root/.config/hypr/wallpaper.png"
 
-          # hyprpaper.conf
-          cat > "$AIROOTFS/root/.config/hypr/hyprpaper.conf" << 'HYPRPAPEREOF'
-          preload = ~/.config/hypr/wallpaper.png
-          wallpaper = ,~/.config/hypr/wallpaper.png
-          splash = false
-          HYPRPAPEREOF
+          # hyprpaper.conf — desde configs/ del repo
+          if [[ -f "configs/hyprland/hyprpaper.conf" ]]; then
+            cp configs/hyprland/hyprpaper.conf "$AIROOTFS/root/.config/hypr/hyprpaper.conf"
+          else
+            printf 'preload = ~/.config/hypr/wallpaper.png\nwallpaper = ,~/.config/hypr/wallpaper.png\nsplash = false\n' \
+              > "$AIROOTFS/root/.config/hypr/hyprpaper.conf"
+          fi
+
+          # waybar — desde configs/ del repo
+          mkdir -p "$AIROOTFS/root/.config/waybar"
+          if [[ -f "configs/waybar/config.jsonc" ]]; then
+            cp configs/waybar/config.jsonc "$AIROOTFS/root/.config/waybar/config.jsonc"
+          fi
+          if [[ -f "configs/waybar/style.css" ]]; then
+            cp configs/waybar/style.css "$AIROOTFS/root/.config/waybar/style.css"
+          fi
+
+          # rofi — desde configs/ del repo
+          mkdir -p "$AIROOTFS/root/.config/rofi"
+          if [[ -f "configs/rofi/config.rasi" ]]; then
+            cp configs/rofi/config.rasi "$AIROOTFS/root/.config/rofi/config.rasi"
+          fi
 
           # gpu-env.conf vacio (se sobreescribe por el servicio antes de Hyprland)
           touch "$AIROOTFS/root/.config/hypr/gpu-env.conf"
 
-          # hyprland.conf del live
-          cat > "$AIROOTFS/root/.config/hypr/hyprland.conf" << 'HYPREOF'
-          # AvalOS Live — Hyprland config
-          source = ~/.config/hypr/gpu-env.conf
-
-          monitor = ,preferred,auto,1
-
-          exec-once = /usr/local/bin/avalos-gpu-env
-          exec-once = hyprpaper
-          exec-once = waybar
-          exec-once = python /usr/local/bin/avalos-install
-
-          general {
-              gaps_in = 4
-              gaps_out = 8
-              border_size = 2
-              col.active_border = rgba(7aa2f7ff)
-              col.inactive_border = rgba(1a1b26ff)
-          }
-
-          decoration {
-              rounding = 8
-              blur { enabled = true; size = 6; passes = 3 }
-          }
-
-          input {
-              kb_layout = latam
-              follow_mouse = 1
-              touchpad { natural_scroll = true }
-          }
-
-          bind = SUPER, Return, exec, kitty
-          bind = SUPER, Q, killactive
-          bind = SUPER, Space, exec, wofi --show drun
-          bind = SUPER SHIFT, E, exit
-          HYPREOF
-
-          # kitty.conf minimal
-          cat > "$AIROOTFS/root/.config/kitty/kitty.conf" << 'KITTYEOF'
-          font_family JetBrainsMono Nerd Font
-          font_size 12.0
-          background #1a1b26
-          foreground #c0caf5
-          KITTYEOF
+          # hyprland.conf — desde configs/ del repo
+          if [[ -f "configs/hyprland/hyprland.conf" ]]; then
+            cp configs/hyprland/hyprland.conf "$AIROOTFS/root/.config/hypr/hyprland.conf"
+          else
+            echo "[WARN] configs/hyprland/hyprland.conf no encontrado"
+          fi
+          # kitty.conf — desde configs/ del repo
+          if [[ -f "configs/kitty/kitty.conf" ]]; then
+            cp configs/kitty/kitty.conf "$AIROOTFS/root/.config/kitty/kitty.conf"
+          else
+            echo "[WARN] configs/kitty/kitty.conf no encontrado"
+          fi
 
           # sysctl BBR
           mkdir -p "$AIROOTFS/etc/sysctl.d"
@@ -371,7 +399,8 @@ jobs:
           def w(p, c, raw=False):
               os.makedirs(os.path.dirname(p), exist_ok=True)
               txt = c if raw else textwrap.dedent(c).lstrip('\n')
-              open(p, 'w').write(txt)
+              with open(p, 'w') as f:
+                  f.write(txt)
           w(f"{A}/etc/fastfetch/avalos.txt",
             "$1                          \u028c\n"
             "$1                         /#\\\n"
@@ -416,7 +445,7 @@ jobs:
                   { "type": "terminal", "key": " Terminal" },
                   "separator",
                   { "type": "cpu",    "key": " CPU",   "showPeCoreCount": true, "temp": true },
-                  { "type": "gpu",    "key": "\ufffd GPU",  "temp": true },
+                  { "type": "gpu",    "key": "\\uf43f GPU",  "temp": true },
                   { "type": "memory", "key": "\uf55b RAM" },
                   { "type": "disk",   "key": "\uf4cb Disco", "folders": "/" },
                   "separator",
@@ -433,13 +462,24 @@ jobs:
 
       - name: Branding completo (logo, os-release, wallpaper, SDDM, Plymouth)
         run: |
+          set -u
           AIROOTFS="$BUILD_DIR/airootfs"
-          LOGO_URL="https://raw.githubusercontent.com/${{ env.GITHUB_REPO }}/main/AvalOS-logo.png"
+          LOGO_URL="https://raw.githubusercontent.com/${{ env.AVALOS_REPO }}/main/assets/AvalOS-logo.png"
 
           # ── Logo: descargar al airootfs ───────────────────────────────────
           mkdir -p "$AIROOTFS/usr/share/pixmaps"
-          curl -fsSL "$LOGO_URL" -o "$AIROOTFS/usr/share/pixmaps/avalos-logo.png"
-          echo "Logo: $(wc -c < "$AIROOTFS/usr/share/pixmaps/avalos-logo.png") bytes"
+          if curl -fsSL "$LOGO_URL" -o "$AIROOTFS/usr/share/pixmaps/avalos-logo.png"; then
+            echo "Logo: $(wc -c < "$AIROOTFS/usr/share/pixmaps/avalos-logo.png") bytes"
+          else
+            echo "[WARN] Logo no encontrado en repo — generando placeholder Tokyo Night..."
+            convert -size 256x256 xc:"#1a1b26" \
+              -fill "#7aa2f7" -gravity center \
+              -font DejaVu-Sans -pointsize 80 -annotate 0 "A" \
+              "$AIROOTFS/usr/share/pixmaps/avalos-logo.png" \
+              || convert -size 256x256 xc:"#1a1b26" \
+                   "$AIROOTFS/usr/share/pixmaps/avalos-logo.png"
+            echo "Logo placeholder generado"
+          fi
 
           # ── Wallpaper: Tokyo Night 1920x1080 + logo centrado ──────────────
           convert -size 1920x1080 xc:"#1a1b26" \
@@ -637,8 +677,69 @@ jobs:
           BRANDPYEOF
 
 
-      - name: Construir ISO con mkarchiso
+      - name: Inyectar entradas de boot para ambos kernels
         run: |
+          set -u
+          # ── systemd-boot entries (UEFI) ────────────────────────────────────
+          LOADER_DIR="$BUILD_DIR/efiboot/loader/entries"
+          mkdir -p "$LOADER_DIR"
+
+          # Entrada principal: linux-avalos (x86-64-v3, hardware moderno)
+          cat > "$LOADER_DIR/01-avalos-v3.conf" << 'ENTRYEOF'
+          title   AvalOS — Hardware moderno (x86-64-v3)
+          linux   /arch/boot/x86_64/vmlinuz-linux-avalos
+          initrd  /arch/boot/x86_64/initramfs-linux-avalos.img
+          options archisobasedir=arch archisolabel=%ARCHISO_LABEL% quiet splash
+          ENTRYEOF
+
+          # Entrada compat: linux-avalos-compat (x86-64 baseline, Celeron N / hardware antiguo)
+          cat > "$LOADER_DIR/02-avalos-compat.conf" << 'ENTRYEOF2'
+          title   AvalOS — Hardware antiguo / Celeron N (x86-64)
+          linux   /arch/boot/x86_64/vmlinuz-linux-avalos-compat
+          initrd  /arch/boot/x86_64/initramfs-linux-avalos-compat.img
+          options archisobasedir=arch archisolabel=%ARCHISO_LABEL% quiet splash nomodeset
+          ENTRYEOF2
+
+          # loader.conf: arrancar compat por default (compatible con más hardware)
+          cat > "$BUILD_DIR/efiboot/loader/loader.conf" << 'LOADEREOF'
+          default 02-avalos-compat.conf
+          timeout 8
+          console-mode auto
+          editor  no
+          LOADEREOF
+
+          # ── syslinux entries (BIOS legacy) ─────────────────────────────────
+          SYSLINUX_DIR="$BUILD_DIR/syslinux"
+          mkdir -p "$SYSLINUX_DIR"
+
+          # Copiar config base de archiso si existe
+          [[ -f /usr/share/archiso/configs/releng/syslinux/archiso_sys-linux.cfg ]] &&             cp /usr/share/archiso/configs/releng/syslinux/*.cfg "$SYSLINUX_DIR/" 2>/dev/null || true
+
+          # Escribir archiso_sys.cfg con ambas entradas
+          cat > "$SYSLINUX_DIR/archiso_sys.cfg" << 'SYSEOF'
+          DEFAULT avalos-compat
+          PROMPT 1
+          TIMEOUT 80
+
+          LABEL avalos-compat
+            MENU LABEL AvalOS — Hardware antiguo / Celeron N (x86-64)
+            LINUX /arch/boot/x86_64/vmlinuz-linux-avalos-compat
+            INITRD /arch/boot/x86_64/initramfs-linux-avalos-compat.img
+            APPEND archisobasedir=arch archisolabel=%ARCHISO_LABEL% nomodeset quiet splash
+
+          LABEL avalos-v3
+            MENU LABEL AvalOS — Hardware moderno (x86-64-v3)
+            LINUX /arch/boot/x86_64/vmlinuz-linux-avalos
+            INITRD /arch/boot/x86_64/initramfs-linux-avalos.img
+            APPEND archisobasedir=arch archisolabel=%ARCHISO_LABEL% quiet splash
+          SYSEOF
+
+          echo "Entradas de boot inyectadas (UEFI + BIOS)"
+
+      - name: Construir ISO con mkarchiso
+        timeout-minutes: 60
+        run: |
+          set -u
           BUILD_WORK="/tmp/avalos-iso-work"
           OUTPUT_DIR="/tmp/avalos-iso-output"
           mkdir -p "$BUILD_WORK" "$OUTPUT_DIR"
@@ -662,8 +763,9 @@ jobs:
           echo "sha_file=${ISO_FILE}.sha256" >> "$GITHUB_ENV"
 
       - name: Publicar en GitHub Releases
-        if: github.event.inputs.upload != 'false'
+        if: github.event.inputs.upload == 'true'
         run: |
+          set -u
           VERSION="${{ steps.vars.outputs.version }}"
           TAG="v${VERSION}"
 
@@ -686,21 +788,21 @@ jobs:
           $(cat "$sha_file")
           \`\`\`"
 
-          if gh release view "$TAG" --repo "${{ env.GITHUB_REPO }}" &>/dev/null; then
+          if gh release view "$TAG" --repo "${{ env.AVALOS_REPO }}" &>/dev/null; then
             echo "Actualizando release $TAG..."
             gh release upload "$TAG" "$iso_file" "$sha_file" \
-              --repo "${{ env.GITHUB_REPO }}" --clobber
+              --repo "${{ env.AVALOS_REPO }}" --clobber
           else
             echo "Creando release $TAG..."
             gh release create "$TAG" "$iso_file" "$sha_file" \
-              --repo "${{ env.GITHUB_REPO }}" \
+              --repo "${{ env.AVALOS_REPO }}" \
               --title "AvalOS ${VERSION}" \
               --notes "$NOTES"
           fi
 
           echo ""
           echo "Publicado en:"
-          echo "https://github.com/${{ env.GITHUB_REPO }}/releases/tag/${TAG}"
+          echo "https://github.com/${{ env.AVALOS_REPO }}/releases/tag/${TAG}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -714,5 +816,5 @@ jobs:
           echo "| Kernel | ${{ steps.vars.outputs.kernel }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Tamano | ${iso_size:-desconocido} |" >> "$GITHUB_STEP_SUMMARY"
           if [[ -n "${iso_file:-}" ]]; then
-            echo "Publicado en: https://github.com/${{ env.GITHUB_REPO }}/releases/tag/v${{ steps.vars.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Publicado en: https://github.com/${{ env.AVALOS_REPO }}/releases/tag/v${{ steps.vars.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           fi
