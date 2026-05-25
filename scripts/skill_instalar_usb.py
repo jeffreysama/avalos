@@ -119,6 +119,46 @@ HYPRLAND_PKGS = [
 
 HYPRLAND_AUR_PKGS = ["microsoft-edge-stable-bin"]
 
+# ── Gaming — máxima compatibilidad Steam, Epic, GOG, etc. ─────────────────────
+GAMING_PKGS = [
+    # Steam + runtime 32-bit
+    "steam",
+    # Wine (para Epic via Heroic/Lutris, GOG, juegos no-Steam)
+    "wine-staging",           # Wine con parches de rendimiento
+    "wine-gecko", "wine-mono",
+    "winetricks",
+    # Libs 32-bit esenciales para juegos (DXVK, VKD3D, etc.)
+    "lib32-gnutls", "lib32-libpulse", "lib32-alsa-plugins",
+    "lib32-libx11", "lib32-libxext", "lib32-libxcomposite",
+    "lib32-libxrandr", "lib32-libxinerama", "lib32-libxi",
+    "lib32-sdl2", "lib32-freetype2",
+    "lib32-gst-plugins-base", "lib32-gst-plugins-good",
+    # VKD3D-Proton (DirectX 12 → Vulkan)
+    "vkd3d",
+    # DXVK (DirectX 9/10/11 → Vulkan) — incluido en Proton-GE, pero lo ponemos standalone
+    "dxvk",
+    # GameMode — optimiza CPU/GPU al lanzar juegos
+    "gamemode", "lib32-gamemode",
+    # MangoHUD — overlay de FPS/temps/RAM en juegos
+    "mangohud", "lib32-mangohud",
+    # Lutris — launcher universal (Epic, GOG, itch.io, emuladores, etc.)
+    "lutris",
+    # Flatpak — para Heroic Games Launcher y Bottles
+    "flatpak",
+    # Audio
+    "lib32-pipewire", "lib32-wireplumber",
+    # Codecs multimedia
+    "gst-plugins-bad", "gst-plugins-ugly", "gst-libav",
+]
+
+GAMING_AUR_PKGS = [
+    # Proton-GE: mejor compatibilidad que Proton oficial (parches FSR, fixes exclusivos)
+    "proton-ge-custom-bin",
+    # Heroic Games Launcher — Epic Games + GOG en Linux
+    "heroic-games-launcher-bin",
+]
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  DETECCIÓN DE HARDWARE Y DISCOS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1773,13 +1813,26 @@ DISTRIB_DESCRIPTION="AvalOS"
             "SigLevel = Optional TrustAll\n"
             f"Server = {AVALOS_REPO_URL}\n"
         )
+        # Multilib (necesario para Steam y libs 32-bit de juegos)
+        multilib_repo = "\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n"
+
         pac_path = MOUNT_ROOT / "etc" / "pacman.conf"
         try:
             existing = pac_path.read_text(encoding="utf-8") if pac_path.exists() else ""
+            to_append = ""
             if "[avalos]" not in existing:
-                with open(pac_path, "a") as f:
-                    f.write(avalos_repo)
-                self._log("  repo [avalos] → pacman.conf", "ok")
+                to_append += avalos_repo
+            if "[multilib]" not in existing:
+                # Habilitar multilib descomentándolo si está comentado
+                existing = existing.replace(
+                    "#[multilib]\n#Include = /etc/pacman.d/mirrorlist",
+                    "[multilib]\nInclude = /etc/pacman.d/mirrorlist"
+                )
+                if "[multilib]" not in existing:
+                    to_append += multilib_repo
+            if to_append:
+                pac_path.write_text(existing + to_append, encoding="utf-8")
+            self._log("  repos [avalos] + [multilib] → pacman.conf", "ok")
         except OSError as e:
             self._log(f"[WARN] pacman.conf: {e}", "warn")
 
@@ -2416,10 +2469,10 @@ WantedBy=multi-user.target
                 self._log(f"  Kernel: linux (error al consultar repo [avalos]: {_e})", "warn")
 
             pkgs += [_kernel_pkg, _headers_pkg]
-            # ── Drivers GPU + entorno gráfico ────────────────────────────────
-            pkgs += gpu_info["pkgs"] + HYPRLAND_PKGS + [ucode]
+            # ── Drivers GPU + entorno gráfico + gaming ───────────────────────
+            pkgs += gpu_info["pkgs"] + HYPRLAND_PKGS + GAMING_PKGS + [ucode]
             self._log(f"GPU detectada: {gpu_info['vendor'].upper()} → drivers: {', '.join(gpu_info['pkgs'][:3])}…", "info")
-            self._log(f"Total: {len(pkgs)} paquetes ({', '.join(pkgs[:8])}\u2026 +{max(0, len(pkgs)-8)} m\xe1s)", "info")
+            self._log(f"Total: {len(pkgs)} paquetes ({', '.join(pkgs[:8])}… +{max(0, len(pkgs)-8)} más)", "info")
 
             rc, _ = self._run_cmd(
                 ["pacstrap", "-c", str(MOUNT_ROOT)] + pkgs,
@@ -2803,10 +2856,11 @@ WantedBy=multi-user.target
                 self._log("[WARN] yay no se instaló — paquetes AUR omitidos.", "warn")
                 self._step("aur", "skip", "yay falló")
             else:
-                if HYPRLAND_AUR_PKGS:
+                all_aur = HYPRLAND_AUR_PKGS + GAMING_AUR_PKGS
+                if all_aur:
                     rc_aur, _ = self._run_chroot(
                         ["sudo", "-u", usuario, "yay", "-S", "--noconfirm", "--needed"]
-                        + HYPRLAND_AUR_PKGS, timeout=900
+                        + all_aur, timeout=1800  # Proton-GE es grande, más tiempo
                     )
                     if rc_aur != 0:
                         self._log(
@@ -2814,11 +2868,54 @@ WantedBy=multi-user.target
                             "Puedes instalarlos manualmente con yay tras el reinicio.",
                             "warn"
                         )
-                        self._step("aur", "done", f"{len(HYPRLAND_AUR_PKGS)} paquetes AUR (con advertencias)")
+                        self._step("aur", "done", f"{len(all_aur)} paquetes AUR (con advertencias)")
                     else:
-                        self._step("aur", "done", f"{len(HYPRLAND_AUR_PKGS)} paquetes AUR")
+                        self._step("aur", "done", f"{len(all_aur)} paquetes AUR")
                 else:
                     self._step("aur", "done", "0 paquetes AUR")
+
+                # ── Gaming post-install ───────────────────────────────────────
+                # Agregar usuario al grupo gamemode
+                self._run_chroot(["usermod", "-aG", "gamemode", usuario])
+
+                # GameMode config
+                gamemode_conf = (
+                    "[general]\n"
+                    "reaper_freq=5\n"
+                    "defaultgov=performance\n"
+                    "desiredgov=performance\n"
+                    "softrealtime=auto\n"
+                    "renice=-10\n\n"
+                    "[gpu]\n"
+                    "apply_gpu_optimisations=accept-responsibility\n"
+                    "gpu_device=0\n"
+                    "amd_performance_level=high\n\n"
+                    "[filter]\n"
+                    "whitelist=steam\nwhitelist=lutris\nwhitelist=heroic\n"
+                )
+                try:
+                    gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
+                    gm_path.write_text(gamemode_conf, encoding="utf-8")
+                    self._log("  gamemode.ini configurado", "ok")
+                except OSError as e:
+                    self._log(f"[WARN] gamemode.ini: {e}", "warn")
+
+                # MangoHUD config global
+                _contenido_mango = _leer_config("mangohud/MangoHud.conf")
+                if _contenido_mango:
+                    mango_dir = MOUNT_ROOT / "etc" / "MangoHud"
+                    mango_dir.mkdir(parents=True, exist_ok=True)
+                    (mango_dir / "MangoHud.conf").write_text(_contenido_mango, encoding="utf-8")
+                    self._log("  MangoHud.conf configurado", "ok")
+
+                # Flatpak: instalar Heroic si no entró por AUR
+                self._run_chroot(
+                    ["sudo", "-u", usuario, "flatpak", "remote-add",
+                     "--if-not-exists", "flathub",
+                     "https://dl.flathub.org/repo/flathub.flatpakrepo"],
+                    timeout=120
+                )
+                self._log("  Flathub configurado", "ok")
 
             if sudoers_tmp and sudoers_tmp.exists():
                 try: sudoers_tmp.unlink()
