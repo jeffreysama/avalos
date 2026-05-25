@@ -1,5 +1,4 @@
 # Maintainer: AvalOS <https://github.com/jeffreysama/avalos>
-# Basado en linux-cachyos (CachyOS team) — patches moderados
 # Target: x86-64-v3 · Clang/LLVM · ThinLTO · EEVDF
 #
 # Este PKGBUILD vive en pkgs/linux-avalos/ del repo de AvalOS.
@@ -10,7 +9,7 @@ pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
 pkgver=6.12.30        # ← GitHub Actions actualiza esta línea automáticamente
 pkgrel=1
-pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
+pkgdesc="AvalOS Linux Kernel — x86-64, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
 url="https://github.com/jeffreysama/avalos"
 license=(GPL2)
@@ -39,6 +38,7 @@ prepare() {
         -e CONFIG_X86_FEATURE_NAMES \
         -e CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE \
         -d CONFIG_CC_OPTIMIZE_FOR_SIZE
+        -e CONFIG_EFI_STUB \
 
     # ── Scheduler: EEVDF tuneado (default Linux 6.6+, estable, sin parches) ──
     # Por qué EEVDF y no BORE aquí: EEVDF está en el kernel mainline, no necesita
