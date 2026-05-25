@@ -1,13 +1,43 @@
-                                                -----------AvalOS----------
-First: i'm doing this because i wanted to create my own linux distro, and i'm using AI to help me,
-but i'm also doing things by my own, i want this distro to be minimalist, good-looking, easy to use,
-but mostly of all ARCH-BASED, just because
-Second: DO NOT use the current ISOs that are on releases, these are EXPERIMENTAL-ONLY, download and use at your own risk
-I will be updating this README file every-week if there are updates and/or advances of the project
-And if the ISOs are truly ready to be downloaded by users
-Right now I'm very focused on this project, and I will be forever, since I'm truly a lover of technology
-and much more of Arch Linux
-I have lots of plans and ideas for this OS, like, adding Copilot 365 or even Office 2016 tools to it
-so the user can use them for free, or even including an AI like copilot by default and help new users
-to understand their desktop enviroment, and others more, from now, stay tuned
-in just a few days maybe, the first downloadable and usable ISO will be released
+# AvalOS
+
+![AvalOS Logo](assets/AvalOS-logo.png)
+
+**AvalOS** is a minimalist, beautiful, and performant Arch-based Linux distribution focused on **gaming** and **daily productivity**.
+
+It features **Hyprland** (Wayland) as the default desktop environment, delivering a modern, lightweight, and **highly** customizable experience.
+
+---
+
+## ✨ Features
+
+- **Base**: Arch Linux (Rolling Release)
+- **Desktop Environment**: Hyprland (Wayland)
+- **Philosophy**: Minimalism, performance, and ease of use
+- **Target Users**: Gamers, developers, and power users who want something clean and fast
+- **Custom Kernel**: `linux-avalos` (optimized for desktop/gaming)
+- **Pre-configured Rice**: Beautiful and functional Hyprland setup out of the box
+
+---
+
+## ⚠️ Current Status
+
+> **Project in very early development**
+
+The current ISOs in Releases are **highly experimental**. Use them only for testing and at your own risk. A stable and usable ISO is planned for release soon.
+
+---
+
+## 📥 Installation
+
+(Instructions will be added once the first stable ISO is ready)
+
+For now, you can:
+1. Download the latest experimental ISO from [Releases](https://github.com/jeffreysama/avalos/releases)
+2. Use the included USB maker scripts
+
+---
+
+## 🛠️ Building from Source
+
+```bash
+# Coming soon...
