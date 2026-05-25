@@ -192,6 +192,12 @@ jobs:
               f.write('\n'.join(pkgs) + '\n')
           print(f"packages.x86_64 generado ({len([p for p in pkgs if not p.startswith('#')])} paquetes)")
           PKGPYEOF
+          # pacman.conf del ISO — IgnorePkg evita que linux-avalos (v3) entre como
+          # dependencia transitiva; el live solo necesita linux-avalos-compat
+          sed -i 's/^#IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-headers/' \
+            "$BUILD_DIR/pacman.conf" 2>/dev/null || \
+            echo "IgnorePkg = linux-avalos linux-avalos-headers" >> "$BUILD_DIR/pacman.conf"
+
           wc -l "$BUILD_DIR/packages.x86_64"
 
       - name: Configurar airootfs (scripts, configs, wallpaper)
