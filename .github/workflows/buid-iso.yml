@@ -727,6 +727,29 @@ jobs:
           OUTPUT_DIR="/tmp/avalos-iso-output"
           mkdir -p "$BUILD_WORK" "$OUTPUT_DIR"
 
+          # ── Limpieza definitiva antes de mkarchiso ────────────────────────
+          # Eliminar linux-avalos (sin -compat) de packages.x86_64 por si entró
+          # desde el releng template o como dependencia resuelta
+          sed -i '/^linux-avalos$/d' "$BUILD_DIR/packages.x86_64"
+          sed -i '/^linux-avalos-headers$/d' "$BUILD_DIR/packages.x86_64"
+
+          # Verificar que solo queda linux-avalos-compat
+          echo "=== Kernels en packages.x86_64 ==="
+          grep "linux-avalos" "$BUILD_DIR/packages.x86_64" || echo "(ninguno extra)"
+
+          # Asegurar IgnorePkg en pacman.conf para bloquear linux-avalos como dep
+          if grep -q "^IgnorePkg" "$BUILD_DIR/pacman.conf"; then
+            sed -i 's/^IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-headers/' \
+              "$BUILD_DIR/pacman.conf"
+          elif grep -q "^#IgnorePkg" "$BUILD_DIR/pacman.conf"; then
+            sed -i 's/^#IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-headers/' \
+              "$BUILD_DIR/pacman.conf"
+          else
+            echo "IgnorePkg = linux-avalos linux-avalos-headers" >> "$BUILD_DIR/pacman.conf"
+          fi
+          echo "=== IgnorePkg en pacman.conf ==="
+          grep "IgnorePkg" "$BUILD_DIR/pacman.conf"
+
           echo "Iniciando mkarchiso..."
           mkarchiso -v -w "$BUILD_WORK" -o "$OUTPUT_DIR" "$BUILD_DIR"
 

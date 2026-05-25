@@ -152,7 +152,7 @@ package_linux-avalos() {
         'linux-firmware: firmware para hardware adicional'
     )
     provides=("linux=${pkgver}")
-    conflicts=("linux-avalos-compat" "linux-avalos-bore")
+    conflicts=("linux-avalos-compat" "linux-avalos-compat-headers" "linux-avalos-bore" "linux-avalos-bore-headers")
     backup=("etc/mkinitcpio.d/${pkgbase}.preset")
 
     cd "linux-${pkgver}"

@@ -214,6 +214,8 @@ jobs:
           sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-compat|' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-compat linux-avalos-compat-headers)|' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|provides=("linux=${pkgver}")|provides=("linux-avalos-compat=${pkgver}" "linux=${pkgver}")|' "$COMPAT_DIR/PKGBUILD"
+          # conflicts: compat no puede coexistir con linux-avalos (misma ruta de módulos)
+          sed -i '/provides=.*linux-avalos-compat/a\          conflicts=("linux-avalos" "linux-avalos-bore" "linux-avalos-headers")' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|^package_linux-avalos-headers()|package_linux-avalos-compat-headers()|' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|^package_linux-avalos()|package_linux-avalos-compat()|' "$COMPAT_DIR/PKGBUILD"
           # Actualizar pkgdesc
