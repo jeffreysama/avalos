@@ -136,7 +136,7 @@ jobs:
           echo "BUILD_DIR=$BUILD_DIR" >> "$GITHUB_ENV"
           echo "AIROOTFS=$AIROOTFS" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "KERNEL=$KERNEL" >> "$GITHUB_ENV"
+          echo "KERNEL=${{ steps.vars.outputs.kernel }}" >> "$GITHUB_ENV"
 
       - name: Generar packages.x86_64
         run: |
