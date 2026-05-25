@@ -148,9 +148,9 @@ jobs:
           pkgs = [
               f"# Kernel — ambos siempre incluidos para detección automática de hardware",
               "linux-avalos",
-              "linux-avalos-headers",
+              # headers omitidos del live — no se necesitan en el USB
+              # (son para DKMS, solo van en el sistema instalado)
               "linux-avalos-compat",
-              "linux-avalos-compat-headers",
               "# Firmware — cubre AMD, Intel, WiFi, Ethernet, Bluetooth y demás",
               "linux-firmware",
               "intel-ucode",
