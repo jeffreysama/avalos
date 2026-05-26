@@ -57,7 +57,9 @@ prepare() {
         -e CONFIG_LD_IS_LLD \
         -e CONFIG_LTO_CLANG_THIN \
         -d CONFIG_LTO_NONE \
-        -e CONFIG_FORTIFY_SOURCE
+        -e CONFIG_FORTIFY_SOURCE \
+        -e CONFIG_EFI_STUB \
+        -e CONFIG_EFI_MIXED
 
     # ── AMD GPU — primera clase ────────────────────────────────────────────
     scripts/config \

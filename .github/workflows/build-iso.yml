@@ -152,7 +152,7 @@ jobs:
               # El instalador detecta el CPU y pone el kernel correcto:
               #   x86-64-v3/v4 → linux-avalos (optimizado AVX2)
               #   x86-64/v2    → linux-avalos-compat (se queda con este)
-              "linux-avalos-compat",
+              "linux",  # kernel estándar Arch para el live (EFI stub garantizado)
               "# Firmware — cubre AMD, Intel, WiFi, Ethernet, Bluetooth y demás",
               "linux-firmware",
               "intel-ucode",
@@ -194,9 +194,9 @@ jobs:
           PKGPYEOF
           # pacman.conf del ISO — IgnorePkg evita que linux-avalos (v3) entre como
           # dependencia transitiva; el live solo necesita linux-avalos-compat
-          sed -i 's/^#IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-headers/' \
+          sed -i 's/^#IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-compat linux-avalos-headers linux-avalos-compat-headers/' \
             "$BUILD_DIR/pacman.conf" 2>/dev/null || \
-            echo "IgnorePkg = linux-avalos linux-avalos-headers" >> "$BUILD_DIR/pacman.conf"
+            echo "IgnorePkg = linux-avalos linux-avalos-compat linux-avalos-headers linux-avalos-compat-headers" >> "$BUILD_DIR/pacman.conf"
 
           wc -l "$BUILD_DIR/packages.x86_64"
 
@@ -227,15 +227,15 @@ jobs:
           [[ -f "configs/waybar/style.css" ]] && \
             cp configs/waybar/style.css "$AIROOTFS/root/.config/waybar/style.css"
 
-          # Preset de mkinitcpio para linux-avalos-compat (único kernel del live)
+          # Preset de mkinitcpio para linux estándar (live)
           mkdir -p "$AIROOTFS/etc/mkinitcpio.d"
-          cat > "$AIROOTFS/etc/mkinitcpio.d/linux-avalos-compat.preset" << 'PRESETEOF'
+          cat > "$AIROOTFS/etc/mkinitcpio.d/linux.preset" << 'PRESETEOF'
           ALL_config='/etc/mkinitcpio.conf'
-          ALL_kver='/boot/vmlinuz-linux-avalos-compat'
+          ALL_kver='/boot/vmlinuz-linux'
           PRESETS=('default' 'fallback' 'archiso')
 
-          default_image='/boot/initramfs-linux-avalos-compat.img'
-          fallback_image='/boot/initramfs-linux-avalos-compat-fallback.img'
+          default_image='/boot/initramfs-linux.img'
+          fallback_image='/boot/initramfs-linux-fallback.img'
           fallback_options='-S autodetect'
 
           archiso_config='/etc/mkinitcpio.conf.d/archiso.conf'
@@ -257,7 +257,7 @@ jobs:
           mkdir -p "$AIROOTFS/boot"
 
           # Symlink: mkarchiso necesita vmlinuz-linux en /boot
-          ln -sf vmlinuz-linux-avalos-compat "$AIROOTFS/boot/vmlinuz-linux" 2>/dev/null || true
+          # linux estándar ya instala vmlinuz-linux — no necesita symlink 2>/dev/null || true
 
           # pacman.conf dentro del airootfs
           cp "$BUILD_DIR/pacman.conf" "$AIROOTFS/etc/pacman.conf"
@@ -673,14 +673,14 @@ jobs:
 
           cat > "$LOADER_DIR/01-avalos.conf" << 'ENTRYEOF'
           title   AvalOS Live
-          linux   /arch/boot/x86_64/vmlinuz-linux-avalos-compat
+          linux   /arch/boot/x86_64/vmlinuz-linux
           initrd  /arch/boot/x86_64/initramfs-linux.img
           options archisobasedir=arch archisolabel=%ARCHISO_LABEL% quiet splash
           ENTRYEOF
 
           cat > "$LOADER_DIR/02-avalos-nomodeset.conf" << 'ENTRYEOF2'
           title   AvalOS Live (nomodeset — GPU con problemas)
-          linux   /arch/boot/x86_64/vmlinuz-linux-avalos-compat
+          linux   /arch/boot/x86_64/vmlinuz-linux
           initrd  /arch/boot/x86_64/initramfs-linux.img
           options archisobasedir=arch archisolabel=%ARCHISO_LABEL% nomodeset quiet splash
           ENTRYEOF2
@@ -706,13 +706,13 @@ jobs:
 
           LABEL avalos
             MENU LABEL AvalOS Live
-            LINUX /arch/boot/x86_64/vmlinuz-linux-avalos-compat
+            LINUX /arch/boot/x86_64/vmlinuz-linux
             INITRD /arch/boot/x86_64/initramfs-linux.img
             APPEND archisobasedir=arch archisolabel=%ARCHISO_LABEL% quiet splash
 
           LABEL avalos-nomodeset
             MENU LABEL AvalOS Live (nomodeset)
-            LINUX /arch/boot/x86_64/vmlinuz-linux-avalos-compat
+            LINUX /arch/boot/x86_64/vmlinuz-linux
             INITRD /arch/boot/x86_64/initramfs-linux.img
             APPEND archisobasedir=arch archisolabel=%ARCHISO_LABEL% nomodeset quiet splash
           SYSEOF
@@ -730,7 +730,7 @@ jobs:
           # ── Limpieza definitiva antes de mkarchiso ────────────────────────
           # Eliminar linux-avalos (sin -compat) de packages.x86_64 por si entró
           # desde el releng template o como dependencia resuelta
-          sed -i '/^linux-avalos$/d' "$BUILD_DIR/packages.x86_64"
+          sed -i '/^linux-avalos/d' "$BUILD_DIR/packages.x86_64"
           sed -i '/^linux-avalos-headers$/d' "$BUILD_DIR/packages.x86_64"
 
           # Verificar que solo queda linux-avalos-compat
@@ -739,13 +739,13 @@ jobs:
 
           # Asegurar IgnorePkg en pacman.conf para bloquear linux-avalos como dep
           if grep -q "^IgnorePkg" "$BUILD_DIR/pacman.conf"; then
-            sed -i 's/^IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-headers/' \
+            sed -i 's/^IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-compat linux-avalos-headers linux-avalos-compat-headers/' \
               "$BUILD_DIR/pacman.conf"
           elif grep -q "^#IgnorePkg" "$BUILD_DIR/pacman.conf"; then
-            sed -i 's/^#IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-headers/' \
+            sed -i 's/^#IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-compat linux-avalos-headers linux-avalos-compat-headers/' \
               "$BUILD_DIR/pacman.conf"
           else
-            echo "IgnorePkg = linux-avalos linux-avalos-headers" >> "$BUILD_DIR/pacman.conf"
+            echo "IgnorePkg = linux-avalos linux-avalos-compat linux-avalos-headers linux-avalos-compat-headers" >> "$BUILD_DIR/pacman.conf"
           fi
           echo "=== IgnorePkg en pacman.conf ==="
           grep "IgnorePkg" "$BUILD_DIR/pacman.conf"
