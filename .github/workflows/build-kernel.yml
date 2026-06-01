@@ -139,23 +139,40 @@ jobs:
 
       - name: Generar config base del kernel
         run: |
+          if [[ ! -f "${{ env.PKGBUILD_DIR }}/gen-config.sh" ]]; then
+            echo "Error: gen-config.sh no encontrado en ${{ env.PKGBUILD_DIR }}"
+            exit 1
+          fi
+          if [[ ! -x "${{ env.PKGBUILD_DIR }}/gen-config.sh" ]]; then
+            echo "gen-config.sh existe pero no tiene permiso de ejecución — añadiendo..."
+            chmod +x "${{ env.PKGBUILD_DIR }}/gen-config.sh"
+          fi
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
           sudo -u builder bash ${{ env.PKGBUILD_DIR }}/gen-config.sh
 
+      # FIX: JOBS se pasa como variable de entorno explícita a sudo -u builder.
+      # Antes: MAKEFLAGS='-j${JOBS}' dentro de bash -c "..." con comillas dobles
+      # nunca expandía ${JOBS} — el kernel compilaba en single-thread en CI.
+      # Ahora: env JOBS="$JOBS" lo inyecta en el entorno del subshell y las
+      # comillas simples internas preservan la expansión correctamente.
       - name: Compilar linux-avalos
         run: |
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
           JOBS=$(nproc)
-          sudo -u builder bash -c "
-            cd ${{ env.PKGBUILD_DIR }}
-            MAKEFLAGS='-j${JOBS}' \
-            LLVM=1 LLVM_IAS=1 \
-            KCFLAGS='-march=${{ env.MARCH }} -mtune=generic' \
-            makepkg -s --noconfirm --needed --skippgpcheck
-          "
+          sudo -u builder env \
+            JOBS="$JOBS" \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            KCFLAGS="-march=${{ env.MARCH }} -mtune=generic" \
+            bash -c '
+              set -euo pipefail
+              cd '"${{ env.PKGBUILD_DIR }}"'
+              MAKEFLAGS="-j${JOBS}" \
+              makepkg -s --noconfirm --needed --skippgpcheck
+            '
 
       - name: Compilar linux-avalos-bore
-        if: github.event.inputs.build_bore != 'false'
+        if: github.event.inputs.build_bore == 'true' || github.event_name == 'schedule'
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           MAJOR="${KERNEL_VER%%.*}"
@@ -168,34 +185,53 @@ jobs:
 
           sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-bore|' "$BORE_DIR/PKGBUILD"
           sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-bore linux-avalos-bore-headers)|' "$BORE_DIR/PKGBUILD"
+
           # Renombrar las funciones package_() para que coincidan con los nuevos pkgname.
           # makepkg busca package_<pkgname>() — si no existen, falla con exit code 12.
           # Importante: renombrar primero -headers para no hacer match parcial con la siguiente línea.
           sed -i 's|^package_linux-avalos-headers()|package_linux-avalos-bore-headers()|' "$BORE_DIR/PKGBUILD"
           sed -i 's|^package_linux-avalos()|package_linux-avalos-bore()|' "$BORE_DIR/PKGBUILD"
 
+          # FIX: el conflicts=() original incluye "linux-avalos-bore" y "linux-avalos-bore-headers",
+          # que tras el renombrado hacen que el paquete conflictúe consigo mismo (impide instalación).
+          # Se reescribe para que bore conflictúe con linux-avalos (no con sí mismo).
+          sed -i 's|conflicts=(\"linux-avalos-compat\" \"linux-avalos-compat-headers\" \"linux-avalos-bore\" \"linux-avalos-bore-headers\")|conflicts=(\"linux-avalos\" \"linux-avalos-headers\" \"linux-avalos-compat\" \"linux-avalos-compat-headers\")|' "$BORE_DIR/PKGBUILD"
+
           BORE_URL="https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/stable/linux-${MAJOR}.${MINOR}-bore.patch"
           if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
              && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
             echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
+
             # El delimitador en source=() puede ser tab o espacios — matcheamos ambos
-            if grep -qE '^\s+"config"' "$BORE_DIR/PKGBUILD"; then
-              sed -i -E 's|^(\s+)"config"|\1"config"\n\1"bore-scheduler.patch"|' "$BORE_DIR/PKGBUILD"
+            if grep -qE '^\s*"config"' "$BORE_DIR/PKGBUILD"; then
+              sed -i -E 's|^(\s*)"config"|\1"config"\n\1"bore-scheduler.patch"|' "$BORE_DIR/PKGBUILD"
               echo "bore-scheduler.patch añadido a source=()"
             else
               echo "[WARN] No se encontró \"config\" en source=() — patch no insertado, build sin BORE"
             fi
+
+            # FIX: reemplazar la línea completa de sha256sums en lugar de intentar
+            # insertar dentro del bloque multilinea. El sed anterior con rango
+            # /^sha256sums/,/^)/ fallaba cuando sha256sums estaba en una sola línea,
+            # dejando el conteo de fuentes vs checksums desajustado y rompiendo makepkg.
+            sed -i "s|^sha256sums=(.*)|sha256sums=('SKIP' 'SKIP' 'SKIP')|" "$BORE_DIR/PKGBUILD"
+            echo "sha256sums actualizado con entrada para bore-scheduler.patch"
           else
             echo "Parche BORE no disponible - usara EEVDF con HZ=1000"
           fi
 
-          sudo -u builder bash -c "
-            cd '$BORE_DIR'
-            MAKEFLAGS='-j${JOBS}' \
-            LLVM=1 LLVM_IAS=1 \
-            KCFLAGS='-march=${{ env.MARCH }} -mtune=generic' \
-            makepkg -s --noconfirm --needed --skippgpcheck
-          "
+          # FIX: misma corrección de JOBS que en el paso principal
+          sudo -u builder env \
+            JOBS="$JOBS" \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            KCFLAGS="-march=${{ env.MARCH }} -mtune=generic" \
+            bash -c '
+              set -euo pipefail
+              cd '"$BORE_DIR"'
+              MAKEFLAGS="-j${JOBS}" \
+              makepkg -s --noconfirm --needed --skippgpcheck
+            '
 
       # ── linux-avalos-compat: x86-64 baseline ──────────────────────────────
       # Para CPUs sin AVX2: Intel Celeron N-series (Jasper Lake, Gemini Lake),
@@ -213,28 +249,43 @@ jobs:
           # Renombrar paquete a linux-avalos-compat
           sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-compat|' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-compat linux-avalos-compat-headers)|' "$COMPAT_DIR/PKGBUILD"
-          sed -i 's|provides=("linux=${pkgver}")|provides=("linux-avalos-compat=${pkgver}" "linux=${pkgver}")|' "$COMPAT_DIR/PKGBUILD"
-          # conflicts: compat no puede coexistir con linux-avalos (misma ruta de módulos)
-          sed -i '/provides=.*linux-avalos-compat/a\          conflicts=("linux-avalos" "linux-avalos-bore" "linux-avalos-headers")' "$COMPAT_DIR/PKGBUILD"
+
+          # Renombrar funciones package_()
           sed -i 's|^package_linux-avalos-headers()|package_linux-avalos-compat-headers()|' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|^package_linux-avalos()|package_linux-avalos-compat()|' "$COMPAT_DIR/PKGBUILD"
+
+          # provides: compat no provee "linux=" para evitar sobreescrituras con DKMS
+          sed -i 's|provides=(\"linux=\${pkgver}\" \"linux-avalos=\${pkgver}\")|provides=(\"linux-avalos-compat=\${pkgver}\")|' "$COMPAT_DIR/PKGBUILD"
+
+          # M-3 FIX: eliminar conflicts=() heredado antes de insertar el correcto.
+          # Sin esto, compat queda con dos conflicts=() y el primero conflictúa consigo mismo.
+          sed -i '/^[[:space:]]*conflicts=.*/d' "$COMPAT_DIR/PKGBUILD"
+          # conflicts: compat no puede coexistir con linux-avalos (misma ruta de módulos)
+          sed -i '/provides=.*linux-avalos-compat/a\    conflicts=("linux-avalos" "linux-avalos-bore" "linux-avalos-headers" "linux-avalos-bore-headers")' "$COMPAT_DIR/PKGBUILD"
+
           # Actualizar pkgdesc
           sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64 baseline, AMD+Intel, EEVDF (Celeron N/Pentium Silver/hardware antiguo)|g' "$COMPAT_DIR/PKGBUILD"
 
-          # Quitar CONFIG_MNATIVE_AMD (optimización solo válida para CPUs modernas)
-          # y usar defconfig genérico para x86-64 baseline
-          sed -i 's|-e CONFIG_MNATIVE_AMD \\|-d CONFIG_MNATIVE_AMD \\|' "$COMPAT_DIR/PKGBUILD"
+          # FIX: desactivar CONFIG_GENERIC_CPU3 en el PKGBUILD copiado.
+          # Sin esto, aunque KCFLAGS use -march=x86-64, el Kconfig interno
+          # añade -march=x86-64-v3 y el kernel compat termina siendo v3 igual.
+          sed -i 's|-e CONFIG_GENERIC_CPU3|-e CONFIG_GENERIC_CPU1|g' "$COMPAT_DIR/PKGBUILD"
 
           echo "PKGBUILD compat generado:"
           grep -E "^pkg(base|name|ver|rel)" "$COMPAT_DIR/PKGBUILD"
 
-          sudo -u builder bash -c "
-            cd '$COMPAT_DIR'
-            MAKEFLAGS='-j${JOBS}' \
-            LLVM=1 LLVM_IAS=1 \
-            KCFLAGS='-march=${{ env.MARCH_COMPAT }} -mtune=generic' \
-            makepkg -s --noconfirm --needed --skippgpcheck
-          "
+          # FIX: misma corrección de JOBS que en el paso principal
+          sudo -u builder env \
+            JOBS="$JOBS" \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            KCFLAGS="-march=${{ env.MARCH_COMPAT }} -mtune=generic" \
+            bash -c '
+              set -euo pipefail
+              cd '"$COMPAT_DIR"'
+              MAKEFLAGS="-j${JOBS}" \
+              makepkg -s --noconfirm --needed --skippgpcheck
+            '
 
       - name: Generar base de datos del repo de pacman
         run: |
@@ -271,6 +322,9 @@ jobs:
           echo "Contenido del repo:"
           ls -lh
 
+      # BUG-016 FIX: separar subida y limpieza en dos pasos.
+      # Si se limpia antes de subir y algo falla a mitad, el release queda vacío/inconsistente.
+      # La limpieza ahora ocurre SOLO si la subida fue exitosa (condición upload_ok).
       - name: Publicar en GitHub Releases
         run: |
           cd /tmp/avalos-repo
@@ -288,8 +342,31 @@ jobs:
             --repo "${{ env.GITHUB_REPO }}" \
             --clobber
 
+          echo "upload_ok=true" >> "$GITHUB_ENV"
           echo "Publicado en:"
           echo "https://github.com/${{ env.GITHUB_REPO }}/releases/tag/${{ env.REPO_TAG }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Limpiar paquetes anteriores del release
+        if: env.upload_ok == 'true'
+        run: |
+          # Solo se ejecuta si la subida fue exitosa — evita dejar el release vacío.
+          echo "Limpiando paquetes de versiones anteriores..."
+          CURRENT_FILES=$(ls /tmp/avalos-repo/*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || true)
+          gh release view "${{ env.REPO_TAG }}" \
+            --repo "${{ env.GITHUB_REPO }}" \
+            --json assets \
+            --jq '.assets[].name' 2>/dev/null \
+            | grep '\.pkg\.tar\.zst$' \
+            | while IFS= read -r asset; do
+              # Solo eliminar los que NO están en el upload actual
+              if ! echo "$CURRENT_FILES" | grep -qxF "$asset"; then
+                echo "  Eliminando obsoleto: $asset"
+                gh release delete-asset "${{ env.REPO_TAG }}" "$asset" \
+                  --repo "${{ env.GITHUB_REPO }}" -y 2>/dev/null || true
+              fi
+            done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

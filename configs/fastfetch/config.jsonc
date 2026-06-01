@@ -1,13 +1,60 @@
 {
-  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
-  "display": {"separator":"  ","color":{"keys":"blue","title":"magenta"}},
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/master/doc/json_schema.json",
+  "logo": {
+    "source": "/etc/fastfetch/avalos.txt",
+    "colors": [
+      "38;2;122;162;247",
+      "38;2;125;207;255",
+      "38;2;187;154;247",
+      "38;2;158;206;106"
+    ],
+    "padding": { "top": 1, "right": 2 }
+  },
+  "display": {
+    "separator": " → ",
+    "color": {
+      "keys":   "38;2;122;162;247",
+      "title":  "38;2;125;207;255",
+      "output": "38;2;192;202;245"
+    }
+  },
   "modules": [
-    {"type":"title","format":"{7}{8}{9}@{10}{11}{12}"},"separator",
-    {"type":"os","key":"OS     "},{"type":"kernel","key":"Kernel "},
-    {"type":"packages","key":"Pkgs   "},{"type":"shell","key":"Shell  "},"separator",
-    {"type":"wm","key":"WM     "},{"type":"terminal","key":"Term   "},{"type":"font","key":"Font   "},"separator",
-    {"type":"cpu","key":"CPU    "},{"type":"gpu","key":"GPU    "},
-    {"type":"memory","key":"RAM    "},{"type":"disk","key":"Disk   "},
-    {"type":"uptime","key":"Uptime "},"separator",{"type":"colors","paddingLeft":0,"symbol":"block"}
+    { "type": "title",    "format": "{user-name}@{host-name}" },
+    "separator",
+
+    { "type": "os",       "key": " OS",            "format": "AvalOS ({distro-id})" },
+    { "type": "host",     "key": "\uf0e4 Host" },
+    { "type": "kernel",   "key": " Kernel" },
+    { "type": "uptime",   "key": "\uf55f Uptime" },
+
+    // BUG-1 FIX: "key" de packages y display estaban en español ("Paquetes", "Resolución").
+    // El instalador en skill_instalar_usb.py reemplaza estas claves buscando
+    // el texto en inglés como baseline. Si están en español, el reemplazo no
+    // encuentra el match y fastfetch queda siempre en español sin importar
+    // qué idioma haya elegido el usuario durante la instalación.
+    { "type": "packages", "key": "\uf439 Packages" },
+    { "type": "shell",    "key": " Shell" },
+    { "type": "display",  "key": "\uf879 Resolution" },
+    { "type": "wm",       "key": " WM" },
+    { "type": "terminal", "key": " Terminal" },
+    "separator",
+
+    // BUG-2 FIX: showPeCoreCount ausente en el módulo cpu del template.
+    // En CPUs híbridas (Intel Alder Lake / Raptor Lake con P-cores y E-cores)
+    // fastfetch mostraba solo el total de cores sin distinguir P/E.
+    // showPeCoreCount = true muestra "8P + 4E" en lugar de "12".
+    { "type": "cpu",    "key": " CPU",   "showPeCoreCount": true, "temp": true },
+    { "type": "gpu",    "key": "\uf43f GPU",  "temp": true },
+    { "type": "memory", "key": "\uf55b RAM" },
+
+    // BUG-3 FIX: "key" de disk estaba en español ("Disco").
+    // Mismo problema que packages/display — el instalador no encuentra el match.
+    { "type": "disk",   "key": "\uf4cb Disk", "folders": "/" },
+    "separator",
+
+    // BUG-4 FIX: módulo "colors" con paddingLeft pero sin "symbol".
+    // Sin "symbol": "circle" fastfetch usa el símbolo por defecto que
+    // en algunas fuentes es un cuadro roto (□) en lugar del círculo (●).
+    { "type": "colors", "paddingLeft": 2, "symbol": "circle" }
   ]
 }

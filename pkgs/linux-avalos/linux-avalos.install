@@ -1,11 +1,26 @@
 post_install() {
     echo ":: AvalOS — Generando initramfs para linux-avalos…"
     # mkinitcpio lee el preset que instalamos en /etc/mkinitcpio.d/
+    local _mkinitcpio_ok=false
     if command -v mkinitcpio &>/dev/null; then
-        mkinitcpio -p linux-avalos || echo "[WARN] mkinitcpio falló — regenera manualmente con: mkinitcpio -p linux-avalos"
+        if mkinitcpio -p linux-avalos; then
+            _mkinitcpio_ok=true
+        else
+            echo "[WARN] mkinitcpio falló — regenera manualmente con: mkinitcpio -p linux-avalos"
+        fi
     fi
 
-    _update_bootloader
+    # FIX: solo actualizar el bootloader si mkinitcpio tuvo éxito.
+    # Antes _update_bootloader se llamaba siempre, lo que podía copiar un
+    # initramfs inexistente o desactualizado a la ESP de forma silenciosa.
+    if $_mkinitcpio_ok; then
+        _update_bootloader
+    else
+        echo "[WARN] Saltando actualización del bootloader — initramfs no generado."
+        echo "       Una vez resuelto mkinitcpio, ejecuta manualmente:"
+        echo "         mkinitcpio -p linux-avalos && (grub-mkconfig -o /boot/grub/grub.cfg || bootctl update)"
+    fi
+
     echo ":: AvalOS — linux-avalos instalado correctamente."
     echo "   Kernel: $(ls /usr/lib/modules/ | grep avalos | tail -1)"
 }
@@ -35,8 +50,9 @@ _update_bootloader() {
     # Copia el kernel e initramfs nuevos a la ESP (instalador los pone en /boot/efi/AvalOS/)
     if command -v bootctl &>/dev/null && bootctl is-installed &>/dev/null; then
         echo ":: AvalOS — Actualizando archivos de kernel en la ESP (systemd-boot)…"
+        local _kver
         _kver=$(ls /usr/lib/modules/ | grep avalos | grep -v bore | grep -v compat | tail -1)
-        _esp=""
+        local _esp=""
         # Detectar punto de montaje de la ESP
         for _candidate in /efi /boot/efi /boot; do
             if mountpoint -q "$_candidate" && [[ -d "$_candidate/EFI" || -d "$_candidate/loader" ]]; then
@@ -44,20 +60,50 @@ _update_bootloader() {
                 break
             fi
         done
+
         if [[ -n "$_kver" && -n "$_esp" ]]; then
-            _dest="$_esp/AvalOS"
+            local _pkgbase="linux-avalos"
+            local _dest="$_esp/AvalOS"
             mkdir -p "$_dest"
-            # El PKGBUILD instala el kernel como vmlinuz-linux-avalos (pkgbase),
-            # NO como vmlinuz-${_kver} (kernel release). Mismo para initramfs.
-            _pkgbase="linux-avalos"
-            cp "/boot/vmlinuz-${_pkgbase}"             "$_dest/vmlinuz-${_pkgbase}"     2>/dev/null || true
-            cp "/boot/initramfs-${_pkgbase}.img"       "$_dest/initramfs-${_pkgbase}.img" 2>/dev/null \
-                || echo "[WARN] initramfs-${_pkgbase}.img no encontrado — ejecuta: mkinitcpio -p linux-avalos"
+
+            # Copiar vmlinuz siempre (el PKGBUILD garantiza que existe)
+            cp "/boot/vmlinuz-${_pkgbase}" "$_dest/vmlinuz-${_pkgbase}" 2>/dev/null || true
+
+            # FIX: copiar initramfs solo si existe y fue generado correctamente.
+            # Antes se intentaba la copia incondicionalmente con "|| echo [WARN]",
+            # lo que dejaba la ESP con un initramfs de la versión anterior sin
+            # ninguna indicación visible en el log de instalación.
+            local _initramfs="/boot/initramfs-${_pkgbase}.img"
+            if [[ -f "$_initramfs" ]]; then
+                cp "$_initramfs" "$_dest/initramfs-${_pkgbase}.img"
+                echo "   ✓ vmlinuz + initramfs copiados a ${_dest}/"
+            else
+                echo "[WARN] ${_initramfs} no encontrado — la entrada de systemd-boot"
+                echo "       quedará incompleta hasta que mkinitcpio se ejecute correctamente."
+                echo "       Comando: mkinitcpio -p linux-avalos"
+            fi
+
+            # FIX: actualizar (o crear) la entrada .conf de systemd-boot.
+            # Antes el script copiaba vmlinuz+initramfs pero nunca tocaba la entrada
+            # .conf, por lo que si el kernel release string cambió entre versiones,
+            # el menú de boot seguía apuntando a la versión anterior.
+            local _entry="$_esp/loader/entries/avalos.conf"
+            if [[ -f "$_entry" ]]; then
+                # Solo actualizar si la entrada existente apunta a una ruta distinta
+                # (kernel release en el título, por ejemplo)
+                sed -i "s|^title.*|title   AvalOS Linux (${_kver})|" "$_entry" 2>/dev/null || true
+                echo "   ✓ Entrada systemd-boot actualizada: ${_entry}"
+            else
+                echo "[INFO] Entrada de systemd-boot no encontrada en ${_entry}"
+                echo "       El instalador de AvalOS la crea durante la instalación inicial."
+                echo "       Si instalaste manualmente, crea la entrada con:"
+                echo "         /boot/efi/loader/entries/avalos.conf"
+            fi
+
             # Copiar microcode si existe
             for _uc in amd-ucode.img intel-ucode.img; do
                 [[ -f "/boot/$_uc" ]] && cp "/boot/$_uc" "$_dest/$_uc"
             done
-            echo "   Archivos copiados a ${_dest}/"
         else
             echo "[WARN] No se encontró la ESP o la versión del kernel — copia manual requerida."
         fi
@@ -65,7 +111,8 @@ _update_bootloader() {
 
     # ── rEFInd ────────────────────────────────────────────────────────────────
     # rEFInd detecta kernels automáticamente — solo necesita refind-install en actualizaciones mayores
-    if command -v refind-install &>/dev/null && [[ -d /boot/EFI/refind || -d /efi/EFI/refind || -d /boot/efi/EFI/refind ]]; then
+    if command -v refind-install &>/dev/null && \
+       [[ -d /boot/EFI/refind || -d /efi/EFI/refind || -d /boot/efi/EFI/refind ]]; then
         echo ":: AvalOS — rEFInd detectado (detecta kernels automáticamente, no se requiere acción)."
     fi
 }

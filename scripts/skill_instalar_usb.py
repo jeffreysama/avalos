@@ -54,9 +54,52 @@ MOUNT_ISO   = Path("/tmp/avalos_iso")
 DEFAULT_HOSTNAME = "avalos-pc"
 DEFAULT_TIMEZONE = "America/El_Salvador"
 
-LOCALE_GEN   = ["en_US.UTF-8 UTF-8"]
-LOCALE_CONF  = "LANG=en_US.UTF-8"
-KEYMAP       = "la-latin1"
+# ── Locales disponibles en el wizard ─────────────────────────────────────────
+LOCALES = [
+    ("es_SV.UTF-8", "Español — El Salvador"),
+    ("es_GT.UTF-8", "Español — Guatemala"),
+    ("es_HN.UTF-8", "Español — Honduras"),
+    ("es_NI.UTF-8", "Español — Nicaragua"),
+    ("es_CR.UTF-8", "Español — Costa Rica"),
+    ("es_PA.UTF-8", "Español — Panamá"),
+    ("es_MX.UTF-8", "Español — México"),
+    ("es_CO.UTF-8", "Español — Colombia"),
+    ("es_PE.UTF-8", "Español — Perú"),
+    ("es_CL.UTF-8", "Español — Chile"),
+    ("es_AR.UTF-8", "Español — Argentina"),
+    ("es_UY.UTF-8", "Español — Uruguay"),
+    ("es_BO.UTF-8", "Español — Bolivia"),
+    ("es_VE.UTF-8", "Español — Venezuela"),
+    ("es_ES.UTF-8", "Español — España"),
+    ("en_US.UTF-8", "English — United States"),
+    ("en_GB.UTF-8", "English — United Kingdom"),
+    ("pt_BR.UTF-8", "Português — Brasil"),
+    ("pt_PT.UTF-8", "Português — Portugal"),
+    ("fr_FR.UTF-8", "Français — France"),
+    ("de_DE.UTF-8", "Deutsch — Deutschland"),
+    ("it_IT.UTF-8", "Italiano — Italia"),
+    ("ja_JP.UTF-8", "日本語 — Japan"),
+    ("zh_CN.UTF-8", "中文 — China"),
+]
+DEFAULT_LOCALE = "es_SV.UTF-8"
+
+# ── Distribuciones de teclado (vconsole) ──────────────────────────────────────
+KEYMAPS = [
+    ("la-latin1",  "Español Latinoamérica (la-latin1)"),
+    ("es",         "Español España (es)"),
+    ("latam",      "Español Latam — variante (latam)"),
+    ("us",         "Inglés EE.UU. (us)"),
+    ("uk",         "English UK (uk)"),
+    ("br-abnt2",   "Português Brasil (br-abnt2)"),
+    ("de",         "Deutsch (de)"),
+    ("de-latin1",  "Deutsch Latin-1 (de-latin1)"),
+    ("fr",         "Français (fr)"),
+    ("it",         "Italiano (it)"),
+    ("ru",         "Русский (ru)"),
+    ("dvorak",     "Dvorak (dvorak)"),
+    ("colemak",    "Colemak (colemak)"),
+]
+DEFAULT_KEYMAP = "la-latin1"
 MIN_DISK_GB  = 30
 GRUB_UEFI_REMOVABLE = False  # PC normal: entrada NVRAM estándar
 
@@ -101,7 +144,7 @@ DRIVER_PKGS_INTEL = [
 
 HYPRLAND_PKGS = [
     "hyprland", "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
-    "xdg-user-dirs", "kitty", "waybar", "rofi-wayland", "dunst",
+    "xdg-user-dirs", "kitty", "waybar", "rofi-wayland", "mako",
     "hyprpaper", "hyprlock", "hypridle", "hyprpicker",
     "grim", "slurp", "wl-clipboard", "cliphist",
     "pipewire", "pipewire-alsa", "pipewire-pulse", "pipewire-jack",
@@ -109,9 +152,9 @@ HYPRLAND_PKGS = [
     "qt5-wayland", "qt6-wayland", "gtk3", "gtk4", "hyprpolkitagent",
     "thunar", "gvfs", "brightnessctl",
     "ttf-font-awesome", "ttf-jetbrains-mono-nerd", "ttf-nerd-fonts-symbols",
-    "noto-fonts", "noto-fonts-emoji",
+    "noto-fonts", "noto-fonts-emoji", "noto-fonts-cjk",  # CJK: chino, japonés, coreano
     "sddm", "network-manager-applet", "blueman",
-    "playerctl", "firefox", "bluez", "bluez-utils", "libnotify",
+    "playerctl", "firefox", "chromium", "bluez", "bluez-utils", "libnotify",
     "file-roller", "thunar-archive-plugin", "thunar-volman",
     "gvfs-mtp", "gvfs-smb", "nwg-look", "papirus-icon-theme",
     "lm_sensors", "acpi", "capitaine-cursors",
@@ -296,12 +339,17 @@ def detectar_microcode() -> str:
             return "amd-ucode"
     except OSError:
         pass
-    return "amd-ucode"
+    return ""  # fallback seguro: no instalar microcode incorrecto si no se detecta CPU
 
 
 def verificar_internet() -> bool:
-    rc, _, _ = _ejecutar(["ping", "-c", "1", "-W", "3", "8.8.8.8"], timeout=6)
-    return rc == 0
+    # BUG-010 FIX: probar IPv4 primero; si no hay, intentar IPv6.
+    # Sistemas con solo IPv6 (frecuente en redes modernas) fallarían con solo 8.8.8.8.
+    rc4, _, _ = _ejecutar(["ping", "-c", "1", "-W", "3", "8.8.8.8"], timeout=6)
+    if rc4 == 0:
+        return True
+    rc6, _, _ = _ejecutar(["ping6", "-c", "1", "-W", "3", "2001:4860:4860::8888"], timeout=6)
+    return rc6 == 0
 
 
 def verificar_herramientas() -> dict[str, bool]:
@@ -560,6 +608,40 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 .field-hint.err  { color: var(--tn-red); }
 .field-hint.good { color: var(--tn-green); }
 
+/* ── PASSWORD STRENGTH ──────────────────────────────────────────────── */
+.pass-wrap { position: relative; }
+.pass-wrap input { padding-right: 32px; }
+.pass-toggle {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--tn-dim); cursor: pointer;
+  font-size: 13px; padding: 0; line-height: 1;
+  transition: color var(--trans);
+}
+.pass-toggle:hover { color: var(--tn-text); }
+
+.strength-bar-wrap {
+  height: 3px; background: var(--tn-border); border-radius: 2px;
+  margin-top: 5px; overflow: hidden;
+}
+.strength-bar {
+  height: 100%; width: 0%; border-radius: 2px;
+  transition: width 0.25s ease, background 0.25s ease;
+}
+.strength-bar.s0 { width: 0%; }
+.strength-bar.s1 { width: 25%; background: var(--tn-red); }
+.strength-bar.s2 { width: 50%; background: var(--tn-orange); }
+.strength-bar.s3 { width: 75%; background: var(--tn-yellow); }
+.strength-bar.s4 { width: 100%; background: var(--tn-green); }
+
+.strength-reqs {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 5px;
+}
+.req {
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--tn-dim);
+  transition: color var(--trans);
+}
+.req.ok { color: var(--tn-green); }
+
 .opts-row { display: flex; gap: 8px; }
 .opt-btn {
   flex: 1; padding: 8px 10px; font-family: var(--font-mono); font-size: 11px;
@@ -777,9 +859,57 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 <body>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     PAGE 0 — LANGUAGE SELECTION
+═══════════════════════════════════════════════════════════════════ -->
+<div id="pg-lang" class="page active" style="display:flex;flex-direction:column;
+     align-items:center;justify-content:center;height:100%;gap:0;">
+  <div style="font-size:32px;font-weight:700;color:#c0caf5;letter-spacing:0.04em;
+              margin-bottom:6px;">AvalOS</div>
+  <div style="font-size:12px;color:#565f89;letter-spacing:0.14em;margin-bottom:40px;">
+    INSTALLER · INSTALADOR · 安装程序
+  </div>
+  <div style="display:flex;flex-direction:column;gap:12px;width:260px;">
+    <button onclick="chooseLang('en')"
+      style="padding:14px 0;font-size:15px;background:#24283b;color:#c0caf5;
+             border:1.5px solid #414868;border-radius:8px;cursor:pointer;
+             transition:border-color .15s,background .15s;"
+      onmouseover="this.style.borderColor='#7aa2f7';this.style.background='#1e2035'"
+      onmouseout="this.style.borderColor='#414868';this.style.background='#24283b'">
+      🇺🇸&nbsp; English
+    </button>
+    <button onclick="chooseLang('es')"
+      style="padding:14px 0;font-size:15px;background:#24283b;color:#c0caf5;
+             border:1.5px solid #414868;border-radius:8px;cursor:pointer;
+             transition:border-color .15s,background .15s;"
+      onmouseover="this.style.borderColor='#7aa2f7';this.style.background='#1e2035'"
+      onmouseout="this.style.borderColor='#414868';this.style.background='#24283b'">
+      🇪🇸&nbsp; Español
+    </button>
+    <button onclick="chooseLang('zh')"
+      style="padding:14px 0;font-size:15px;background:#24283b;color:#c0caf5;
+             border:1.5px solid #414868;border-radius:8px;cursor:pointer;
+             transition:border-color .15s,background .15s;"
+      onmouseover="this.style.borderColor='#7aa2f7';this.style.background='#1e2035'"
+      onmouseout="this.style.borderColor='#414868';this.style.background='#24283b'">
+      🇨🇳&nbsp; 中文简体
+    </button>
+  </div>
+  <div id="lang-warning-box"
+    style="margin-top:28px;max-width:340px;text-align:center;padding:10px 14px;
+           background:rgba(224,175,104,0.08);border:1px solid rgba(224,175,104,0.25);
+           border-radius:8px;">
+    <span data-i18n="lang-warning"
+      style="font-size:11px;color:#e0af68;line-height:1.6;">
+      ⚠  UI language pack only · Mirrors optimized for US, MX &amp; GT
+      — may be slow for mainland China or distant regions.
+    </span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      PAGE 1 — WELCOME
 ═══════════════════════════════════════════════════════════════════ -->
-<div id="pg-welcome" class="page active">
+<div id="pg-welcome" class="page">
   <img id="avalos-logo" src="data:image/png;base64,LOGO_PLACEHOLDER"
        style="width:110px;height:110px;object-fit:contain;margin-bottom:-8px;
               filter:drop-shadow(0 0 18px rgba(122,162,247,.35));border-radius:16px;">
@@ -789,10 +919,9 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
    / _ \ \ / / _` | | | | \___ \
   / ___ \ V / (_| | | |_| |___) |
  /_/   \_\_/ \__,_|_|\___/|____/</pre>
-  <div class="welcome-sub">Arch Linux · Hyprland · Wayland · Tokyo Night</div>
+  <div class="welcome-sub" data-i18n="welcome-sub">Arch Linux · Hyprland · Wayland · Tokyo Night</div>
   <div class="welcome-desc">
-    Bienvenido al instalador de <strong>AvalOS</strong>.<br>
-    Este asistente configurará e instalará el sistema en el disco de tu elección.
+    <span data-i18n="welcome-desc">Bienvenido al instalador de <strong>AvalOS</strong>.<br>Este asistente configurará e instalará el sistema en el disco de tu elección.</span>
   </div>
   <div class="welcome-badges">
     <span class="badge badge-blue">Arch Linux (rolling)</span>
@@ -801,7 +930,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     <span class="badge badge-cyan">Tokyo Night</span>
     <span class="badge badge-blue">SDDM · PipeWire · AMD GPU</span>
   </div>
-  <button class="btn-primary" onclick="showPage('config')">Comenzar instalación →</button>
+  <button class="btn-primary" onclick="showPage('config')" data-i18n="btn-start">Comenzar instalación →</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -809,14 +938,14 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 ═══════════════════════════════════════════════════════════════════ -->
 <div id="pg-config" class="page">
   <div class="cfg-topbar">
-    <span class="cfg-topbar-title">● AvalOS Installer</span>
-    <span id="cfg-step-hint" class="cfg-topbar-step">Selecciona disco y configura el sistema</span>
+    <span class="cfg-topbar-title" data-i18n="topbar">● AvalOS Installer</span>
+    <span id="cfg-step-hint" class="cfg-topbar-step" data-i18n="step-hint">Selecciona disco y configura el sistema</span>
   </div>
   <div class="cfg-body">
 
     <!-- LEFT: discos -->
     <div class="cfg-left">
-      <div class="cfg-section-title">▸ Disco de destino</div>
+      <div class="cfg-section-title" data-i18n="sec-disk">▸ Disco de destino</div>
       <div id="live-disk-banner" style="
         font-family:var(--font-mono); font-size:10px; padding:8px 12px;
         background:rgba(224,175,104,.07); border-bottom:1px solid rgba(224,175,104,.2);
@@ -835,7 +964,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     <div class="cfg-right">
       <div class="cfg-form-wrap">
 
-        <div class="form-section-title">▸ Cuenta de usuario</div>
+        <div class="form-section-title" data-i18n="sec-user">▸ Cuenta de usuario</div>
 
         <div class="form-row">
           <div class="form-group">
@@ -849,17 +978,31 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         <div class="form-row">
           <div class="form-group">
             <label>Contraseña</label>
-            <input id="f-pass" type="password" placeholder="••••••••" oninput="checkPass()">
+            <div class="pass-wrap">
+              <input id="f-pass" type="password" placeholder="••••••••" oninput="checkPass()">
+              <button class="pass-toggle" type="button" onclick="togglePass('f-pass','pt-1')" id="pt-1" title="Mostrar/ocultar">👁</button>
+            </div>
+            <div class="strength-bar-wrap"><div class="strength-bar s0" id="strength-bar"></div></div>
+            <div class="strength-reqs" id="strength-reqs">
+              <span class="req" id="req-len">✗ 8+ caracteres</span>
+              <span class="req" id="req-upper">✗ mayúscula</span>
+              <span class="req" id="req-lower">✗ minúscula</span>
+              <span class="req" id="req-num">✗ número</span>
+              <span class="req" id="req-sym">✗ símbolo</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Confirmar contraseña</label>
-            <input id="f-pass2" type="password" placeholder="••••••••" oninput="checkPass()">
+            <label data-i18n="lbl-confirm-pass">Confirmar contraseña</label>
+            <div class="pass-wrap">
+              <input id="f-pass2" type="password" placeholder="••••••••" oninput="checkPass()">
+              <button class="pass-toggle" type="button" onclick="togglePass('f-pass2','pt-2')" id="pt-2" title="Mostrar/ocultar">👁</button>
+            </div>
+            <span class="field-hint" id="hint-pass"></span>
           </div>
         </div>
-        <span class="field-hint" id="hint-pass"></span>
 
         <hr class="divider">
-        <div class="form-section-title">▸ Nombre del equipo</div>
+        <div class="form-section-title" data-i18n="sec-host">▸ Nombre del equipo</div>
 
         <div class="form-row">
           <div class="form-group">
@@ -875,7 +1018,23 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         </div>
 
         <hr class="divider">
-        <div class="form-section-title">▸ Opciones avanzadas</div>
+        <div class="form-section-title" data-i18n="sec-lang">▸ Idioma y teclado</div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Locale del sistema</label>
+            <select id="f-locale"></select>
+            <span class="field-hint">Idioma de mensajes, fechas y formatos del sistema</span>
+          </div>
+          <div class="form-group">
+            <label>Distribución de teclado</label>
+            <select id="f-keymap"></select>
+            <span class="field-hint">Mapa de teclas para la consola y sesión</span>
+          </div>
+        </div>
+
+        <hr class="divider">
+        <div class="form-section-title" data-i18n="sec-advanced">▸ Opciones avanzadas</div>
 
         <div class="form-group">
           <label>Bootloader</label>
@@ -893,18 +1052,18 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
               <span class="opt-desc">Solo UEFI. Detecta kernels automáticamente, bonito menú gráfico.</span>
             </button>
             <button class="opt-btn" id="opt-bl-none" onclick="selBootloader('none')">
-              <span class="opt-title">Sin bootloader</span>
+              <span class="opt-title" data-i18n="opt-no-boot">Sin bootloader</span>
               <span class="opt-desc">Omitir. Ya tengo un gestor de arranque instalado.</span>
             </button>
           </div>
         </div>
 
         <div class="form-group" style="margin-top:10px;">
-          <label>Tipo de instalación</label>
+          <label data-i18n="lbl-install-type">Tipo de instalación</label>
           <div class="opts-row">
             <button class="opt-btn sel" id="opt-modo-disco" onclick="selModo('disco', true)">
               <span class="opt-title">💾 PC / HDD / SSD</span>
-              <span class="opt-desc">ext4 con journal — instalación estándar en PC.</span>
+              <span class="opt-desc" data-i18n="opt-pc-desc">ext4 con journal — instalación estándar en PC.</span>
             </button>
             <button class="opt-btn" id="opt-modo-usb" onclick="selModo('usb', true)">
               <span class="opt-title">🔌 USB Persistente</span>
@@ -914,7 +1073,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         </div>
 
         <button id="btn-instalar" onclick="validarEIniciar()">
-          ▶ Instalar AvalOS
+          <span data-i18n="btn-install">▶ Instalar AvalOS</span>
         </button>
         <div id="form-error"></div>
       </div>
@@ -955,14 +1114,14 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
       <div class="ph-section">▸ Progreso</div>
       <div id="steps-panel"></div>
       <div id="btn-area">
-        <button class="action-btn" id="btn-abort" onclick="abortar()">⛔ Abortar</button>
-        <button class="action-btn" id="btn-retry" onclick="reintentar()">↺ Reintentar</button>
+        <button class="action-btn" id="btn-abort" onclick="abortar()" data-i18n="btn-abort">⛔ Abortar</button>
+        <button class="action-btn" id="btn-retry" onclick="reintentar()" data-i18n="btn-retry">↺ Reintentar</button>
       </div>
     </div>
 
     <div id="inst-right">
       <div id="log-header">
-        <span id="log-title">▸ Log de instalación</span>
+        <span id="log-title" data-i18n="log-title">▸ Log de instalación</span>
         <span id="log-lines-count">0 líneas</span>
       </div>
       <div id="log-wrap"><pre id="log"></pre></div>
@@ -981,7 +1140,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 ═══════════════════════════════════════════════════════════════════ -->
 <div id="ov-countdown" class="overlay">
   <div class="box">
-    <div id="cd-title">⚠ ZONA DE NO RETORNO</div>
+    <div id="cd-title" data-i18n="cd-title">⚠ ZONA DE NO RETORNO</div>
     <div id="cd-body">A punto de borrar <span id="cd-dev" style="color:var(--ph-red);font-weight:700;"></span><br>
     <span id="cd-info" style="color:var(--ph-yellow);"></span><br>
     Todos los datos serán eliminados permanentemente.</div>
@@ -995,10 +1154,10 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 ═══════════════════════════════════════════════════════════════════ -->
 <div id="ov-error" class="overlay">
   <div class="box">
-    <div id="err-title">⛔ Error crítico</div>
+    <div id="err-title" data-i18n="err-title">⛔ Error crítico</div>
     <div id="err-msg"></div>
     <div id="err-hint">Cierra esta ventana o presiona <kbd>Ctrl+C</kbd> en terminal</div>
-    <button id="btn-err-close" onclick="window.pywebview.api.cerrar()">Cerrar</button>
+    <button id="btn-err-close" onclick="window.pywebview.api.cerrar()" data-i18n="btn-close">Cerrar</button>
   </div>
 </div>
 
@@ -1008,13 +1167,13 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 <div id="ov-done" class="overlay">
   <div class="box">
     <div id="done-icon">✓</div>
-    <div id="done-title">AvalOS instalado correctamente</div>
+    <div id="done-title" data-i18n="done-title">AvalOS instalado correctamente</div>
     <div id="done-sub">Retira el USB y reinicia el equipo.<br>
       SDDM te pedirá iniciar sesión → selecciona <strong>Hyprland</strong>.</div>
     <div id="done-info"></div>
     <div class="done-btns">
-      <button id="btn-reboot" onclick="window.pywebview.api.reiniciar_equipo()">⟳ Reiniciar ahora</button>
-      <button id="btn-close-done" onclick="window.pywebview.api.cerrar()">Cerrar</button>
+      <button id="btn-reboot" onclick="window.pywebview.api.reiniciar_equipo()" data-i18n="btn-reboot">⟳ Reiniciar ahora</button>
+      <button id="btn-close-done" onclick="window.pywebview.api.cerrar()" data-i18n="btn-close">Cerrar</button>
     </div>
   </div>
 </div>
@@ -1023,10 +1182,192 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 'use strict';
 
 // ══════════════════════════════════════════════════════════════════
+//  INTERNACIONALIZACIÓN (i18n)
+//  Añadir idioma: copiar un bloque en STRINGS y traducir los valores.
+// ══════════════════════════════════════════════════════════════════
+const STRINGS = {
+  en: {
+    "title":"AvalOS — Installer","topbar":"● AvalOS Installer",
+    "step-hint":"Select disk and configure the system",
+    "welcome-sub":"Arch Linux · Hyprland · Wayland · Tokyo Night",
+    "welcome-desc":"Welcome to the <strong>AvalOS</strong> installer.<br>This wizard will configure and install the system on your chosen disk.",
+    "btn-start":"Start installation →",
+    "sec-disk":"▸ Destination disk","sec-user":"▸ User account",
+    "sec-host":"▸ Computer name","sec-lang":"▸ Language & keyboard","sec-advanced":"▸ Advanced options",
+    "lbl-user":"Username","lbl-pass":"Password","lbl-confirm-pass":"Confirm password",
+    "lbl-show-hide":"Show/hide","lbl-hostname":"Hostname","lbl-timezone":"Time zone",
+    "lbl-locale":"Locale","lbl-keymap":"Keyboard layout","lbl-bootloader":"Bootloader",
+    "lbl-install-type":"Installation type",
+    "btn-install":"▶ Install AvalOS","btn-abort":"⛔ Abort","btn-retry":"↺ Retry",
+    "btn-reboot":"⟳ Reboot now","btn-close":"Close",
+    "opt-no-boot":"No bootloader","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 Persistent USB",
+    "opt-pc-desc":"ext4 with journal — standard PC installation.",
+    "log-title":"▸ Installation log","cd-title":"⚠ POINT OF NO RETURN",
+    "err-title":"⛔ Critical error","done-title":"AvalOS installed successfully",
+    "val-select-disk":"Select a destination disk",
+    "val-invalid-user":"Enter a valid username (minimum 2 characters)",
+    "val-min-user":"Minimum 2 characters, maximum 32",
+    "val-pass-short":"Password must be at least 8 characters",
+    "val-pass-weak":"Password is too weak — add uppercase letters, numbers or symbols",
+    "val-pass-mismatch":"✗ Passwords do not match","val-pass-ok":"✓ Passwords match",
+    "val-reserved-user":"That username is reserved by the system",
+    "val-uefi-req":"requires UEFI and this machine boots in BIOS Legacy. Use GRUB.",
+    "val-uefi-warn":"only works on UEFI. Make sure your computer is not BIOS Legacy.",
+    "status-error":"Error — check the log or press Retry",
+    "err-timeout":"Timeout expired. Close and reopen the installer.",
+    "step-uefi":"Detecting boot mode","step-uefi-d":"UEFI / BIOS Legacy",
+    "step-net":"Verifying internet connection","step-net-d":"Required for pacstrap",
+    "step-tools":"Verifying tools","step-tools-d":"parted, mkfs, pacstrap…",
+    "step-part":"Partitioning target disk","step-part-d":"",
+    "step-format":"Formatting partitions","step-format-d":"FAT32 (EFI) + ext4 (root)",
+    "step-mount":"Mounting filesystem","step-mount-d":"",
+    "step-mirrors":"Optimizing mirrors with reflector","step-mirrors-d":"Selecting fastest mirrors",
+    "step-pacstrap":"Installing base system","step-pacstrap-d":"pacstrap — may take several minutes",
+    "step-fstab":"Generating fstab","step-fstab-d":"",
+    "step-config":"Configuring system","step-config-d":"locale · hostname · timezone · initramfs",
+    "step-grub":"Installing bootloader","step-grub-d":"",
+    "step-services":"Enabling services","step-services-d":"NetworkManager · bluetooth · SDDM",
+    "step-user":"Creating system user","step-user-d":"",
+    "step-aur":"Installing AUR packages (yay)","step-aur-d":"microsoft-edge-stable-bin",
+    "step-hypr":"Configuring Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.conf",
+    "step-umount":"Unmounting and finalizing","step-umount-d":"",
+    "lang-warning":"⚠  UI language pack only · Mirrors are optimized for US, MX & GT — downloads may be slow for mainland China or regions far from these countries.",
+  },
+  es: {
+    "title":"AvalOS — Instalador","topbar":"● AvalOS Installer",
+    "step-hint":"Selecciona disco y configura el sistema",
+    "welcome-sub":"Arch Linux · Hyprland · Wayland · Tokyo Night",
+    "welcome-desc":"Bienvenido al instalador de <strong>AvalOS</strong>.<br>Este asistente configurará e instalará el sistema en el disco de tu elección.",
+    "btn-start":"Comenzar instalación →",
+    "sec-disk":"▸ Disco de destino","sec-user":"▸ Cuenta de usuario",
+    "sec-host":"▸ Nombre del equipo","sec-lang":"▸ Idioma y teclado","sec-advanced":"▸ Opciones avanzadas",
+    "lbl-user":"Usuario","lbl-pass":"Contraseña","lbl-confirm-pass":"Confirmar contraseña",
+    "lbl-show-hide":"Mostrar/ocultar","lbl-hostname":"Nombre del equipo","lbl-timezone":"Zona horaria",
+    "lbl-locale":"Configuración regional","lbl-keymap":"Distribución de teclado",
+    "lbl-bootloader":"Cargador de arranque","lbl-install-type":"Tipo de instalación",
+    "btn-install":"▶ Instalar AvalOS","btn-abort":"⛔ Abortar","btn-retry":"↺ Reintentar",
+    "btn-reboot":"⟳ Reiniciar ahora","btn-close":"Cerrar",
+    "opt-no-boot":"Sin bootloader","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 USB Persistente",
+    "opt-pc-desc":"ext4 con journal — instalación estándar en PC.",
+    "log-title":"▸ Log de instalación","cd-title":"⚠ ZONA DE NO RETORNO",
+    "err-title":"⛔ Error crítico","done-title":"AvalOS instalado correctamente",
+    "val-select-disk":"Selecciona un disco de destino",
+    "val-invalid-user":"Escribe un nombre de usuario válido (mínimo 2 caracteres)",
+    "val-min-user":"Mínimo 2 caracteres, máximo 32",
+    "val-pass-short":"La contraseña debe tener al menos 8 caracteres",
+    "val-pass-weak":"La contraseña es demasiado débil — añade letras mayúsculas, números o símbolos",
+    "val-pass-mismatch":"✗ Las contraseñas no coinciden","val-pass-ok":"✓ Las contraseñas coinciden",
+    "val-reserved-user":"Ese nombre de usuario está reservado por el sistema",
+    "val-uefi-req":"requiere UEFI y esta máquina arranca en BIOS Legacy. Usa GRUB.",
+    "val-uefi-warn":"solo funciona en UEFI. Asegúrate de que tu equipo no sea BIOS Legacy.",
+    "status-error":"Error — revisa el log o pulsa Reintentar",
+    "err-timeout":"Tiempo de espera agotado. Cierra y vuelve a abrir el instalador.",
+    "step-uefi":"Detectando modo de arranque","step-uefi-d":"UEFI / BIOS Legacy",
+    "step-net":"Verificando conexión a internet","step-net-d":"Requerida para pacstrap",
+    "step-tools":"Verificando herramientas","step-tools-d":"parted, mkfs, pacstrap…",
+    "step-part":"Particionando disco destino","step-part-d":"",
+    "step-format":"Formateando particiones","step-format-d":"FAT32 (EFI) + ext4 (root)",
+    "step-mount":"Montando sistema de archivos","step-mount-d":"",
+    "step-mirrors":"Optimizando mirrors con reflector","step-mirrors-d":"Seleccionando mirrors más rápidos",
+    "step-pacstrap":"Instalando sistema base","step-pacstrap-d":"pacstrap — puede tardar varios minutos",
+    "step-fstab":"Generando fstab","step-fstab-d":"",
+    "step-config":"Configurando sistema","step-config-d":"locale · hostname · timezone · initramfs",
+    "step-grub":"Instalando bootloader","step-grub-d":"",
+    "step-services":"Habilitando servicios","step-services-d":"NetworkManager · bluetooth · SDDM",
+    "step-user":"Creando usuario del sistema","step-user-d":"",
+    "step-aur":"Instalando paquetes AUR (yay)","step-aur-d":"microsoft-edge-stable-bin",
+    "step-hypr":"Configurando Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.conf",
+    "step-umount":"Desmontando y finalizando","step-umount-d":"",
+    "lang-warning":"⚠  Solo paquete de idioma · Los mirrors están optimizados para US, MX y GT — las descargas pueden ser lentas para China continental o regiones alejadas de estos países.",
+  },
+  zh: {
+    "title":"AvalOS — 安装程序","topbar":"● AvalOS 安装程序",
+    "step-hint":"选择磁盘并配置系统",
+    "welcome-sub":"Arch Linux · Hyprland · Wayland · Tokyo Night",
+    "welcome-desc":"欢迎使用 <strong>AvalOS</strong> 安装程序。<br>此向导将在您选择的磁盘上配置并安装系统。",
+    "btn-start":"开始安装 →",
+    "sec-disk":"▸ 目标磁盘","sec-user":"▸ 用户账户",
+    "sec-host":"▸ 计算机名","sec-lang":"▸ 语言与键盘","sec-advanced":"▸ 高级选项",
+    "lbl-user":"用户名","lbl-pass":"密码","lbl-confirm-pass":"确认密码",
+    "lbl-show-hide":"显示/隐藏","lbl-hostname":"主机名","lbl-timezone":"时区",
+    "lbl-locale":"区域设置","lbl-keymap":"键盘布局","lbl-bootloader":"引导程序",
+    "lbl-install-type":"安装类型",
+    "btn-install":"▶ 安装 AvalOS","btn-abort":"⛔ 中止","btn-retry":"↺ 重试",
+    "btn-reboot":"⟳ 立即重启","btn-close":"关闭",
+    "opt-no-boot":"无引导程序","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 持久化 USB",
+    "opt-pc-desc":"ext4 带日志 — 标准 PC 安装。",
+    "log-title":"▸ 安装日志","cd-title":"⚠ 不可回头点",
+    "err-title":"⛔ 严重错误","done-title":"AvalOS 安装成功",
+    "val-select-disk":"请选择目标磁盘",
+    "val-invalid-user":"请输入有效的用户名（至少 2 个字符）",
+    "val-min-user":"最少 2 个字符，最多 32 个",
+    "val-pass-short":"密码至少需要 8 个字符",
+    "val-pass-weak":"密码过于简单 — 请添加大写字母、数字或符号",
+    "val-pass-mismatch":"✗ 两次密码不一致","val-pass-ok":"✓ 密码一致",
+    "val-reserved-user":"该用户名已被系统保留",
+    "val-uefi-req":"需要 UEFI，而此机器以 BIOS Legacy 模式启动。请使用 GRUB。",
+    "val-uefi-warn":"仅支持 UEFI。请确认您的电脑不是 BIOS Legacy 模式。",
+    "status-error":"出错 — 请查看日志或点击重试",
+    "err-timeout":"等待超时，请关闭并重新打开安装程序。",
+    "step-uefi":"检测启动模式","step-uefi-d":"UEFI / BIOS Legacy",
+    "step-net":"验证网络连接","step-net-d":"pacstrap 所需",
+    "step-tools":"验证工具","step-tools-d":"parted, mkfs, pacstrap…",
+    "step-part":"分区目标磁盘","step-part-d":"",
+    "step-format":"格式化分区","step-format-d":"FAT32 (EFI) + ext4 (root)",
+    "step-mount":"挂载文件系统","step-mount-d":"",
+    "step-mirrors":"使用 reflector 优化镜像","step-mirrors-d":"选择最快的镜像源",
+    "step-pacstrap":"安装基础系统","step-pacstrap-d":"pacstrap — 可能需要几分钟",
+    "step-fstab":"生成 fstab","step-fstab-d":"",
+    "step-config":"配置系统","step-config-d":"locale · hostname · timezone · initramfs",
+    "step-grub":"安装引导程序","step-grub-d":"",
+    "step-services":"启用服务","step-services-d":"NetworkManager · bluetooth · SDDM",
+    "step-user":"创建系统用户","step-user-d":"",
+    "step-aur":"安装 AUR 包 (yay)","step-aur-d":"microsoft-edge-stable-bin",
+    "step-hypr":"配置 Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.conf",
+    "step-umount":"卸载并完成","step-umount-d":"",
+    "lang-warning":"⚠  仅界面语言包 · 镜像源已针对美国、墨西哥及危地马拉优化——中国大陆及其他较远地区的下载速度可能较慢。",
+  },
+};
+
+let _lang = 'en';
+
+function t(key) {
+  return (STRINGS[_lang] || STRINGS.en)[key] || STRINGS.en[key] || key;
+}
+
+function applyLang(code) {
+  _lang = code;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    const val = t(key);
+    if (val) el.innerHTML = val;
+  });
+  // Update install steps with translated labels
+  if (typeof _steps !== 'undefined') {
+    _steps.forEach(s => {
+      const lbl  = t('step-' + s.id);
+      const det  = t('step-' + s.id + '-d');
+      if (lbl) s.label  = lbl;
+      if (det !== undefined) s.detail = det;
+    });
+  }
+  document.title = t('title');
+}
+
+function chooseLang(code) {
+  applyLang(code);
+  if (window.pywebview && window.pywebview.api) {
+    window.pywebview.api.set_language(code);
+  }
+  // 600ms: permite leer la advertencia traducida antes de continuar
+  setTimeout(() => showPage('welcome'), 600);
+}
+
+// ══════════════════════════════════════════════════════════════════
 //  NAVIGATION
 // ══════════════════════════════════════════════════════════════════
 function showPage(name) {
-  ['welcome','config','install'].forEach(p => {
+  ['lang','welcome','config','install'].forEach(p => {
     const el = document.getElementById('pg-' + p);
     el.classList.toggle('active', p === name);
   });
@@ -1046,6 +1387,28 @@ let _modoUsb  = false;
     const opt = document.createElement('option');
     opt.value = tz; opt.textContent = tz;
     if (tz === window._defaultTZ) opt.selected = true;
+    sel.appendChild(opt);
+  });
+})();
+
+// populate locale select
+(function initLocale() {
+  const sel = document.getElementById('f-locale');
+  window._localeList.forEach(([code, label]) => {
+    const opt = document.createElement('option');
+    opt.value = code; opt.textContent = label;
+    if (code === window._defaultLocale) opt.selected = true;
+    sel.appendChild(opt);
+  });
+})();
+
+// populate keymap select
+(function initKeymap() {
+  const sel = document.getElementById('f-keymap');
+  window._keymapList.forEach(([code, label]) => {
+    const opt = document.createElement('option');
+    opt.value = code; opt.textContent = label;
+    if (code === window._defaultKeymap) opt.selected = true;
     sel.appendChild(opt);
   });
 })();
@@ -1121,16 +1484,18 @@ function selectDisk(name) {
 
 // ── Form helpers ─────────────────────────────────────────────────
 function sanitizeUser(el) {
-  el.value = el.value.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  el.value = el.value.toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '')
+    .replace(/^[-]+/, '');  // BUG-008: '-hola' como argumento en useradd puede interpretarse como flag
   const h = document.getElementById('hint-user');
   const startsWithLetter = /^[a-z_]/.test(el.value);
   const validLen = el.value.length >= 2 && el.value.length <= 32;
   const ok = validLen && startsWithLetter;
-  let hint = 'Solo letras minúsculas, números y guiones (debe empezar con letra)';
+  let hint = t('val-invalid-user');
   if (el.value) {
-    if (!startsWithLetter) hint = 'Debe empezar con una letra o guion bajo';
-    else if (!validLen)     hint = 'Mínimo 2 caracteres, máximo 32';
-    else                    hint = '✓ Nombre válido';
+    if (!startsWithLetter) hint = t('val-invalid-user');
+    else if (!validLen)     hint = t('val-min-user');
+    else                    hint = '✓';
   }
   h.className = 'field-hint ' + (el.value ? (ok ? 'good' : 'err') : '');
   h.textContent = hint;
@@ -1141,15 +1506,78 @@ function sanitizeHost(el) {
   el.value = el.value.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+/, '');
 }
 
+// ── Password toggle (show/hide) ───────────────────────────────────
+function togglePass(inputId, btnId) {
+  const inp = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    btn.style.opacity = '1';
+    btn.textContent = '🙈';
+  } else {
+    inp.type = 'password';
+    btn.style.opacity = '0.45';
+    btn.textContent = '👁';
+  }
+}
+
+// ── Password strength checker ─────────────────────────────────────
+function _passStrength(p) {
+  const checks = {
+    len:   p.length >= 8,
+    upper: /[A-Z]/.test(p),
+    lower: /[a-z]/.test(p),
+    num:   /[0-9]/.test(p),
+    sym:   /[^A-Za-z0-9]/.test(p),
+  };
+  const score = Object.values(checks).filter(Boolean).length;
+  return { checks, score };
+}
+
 function checkPass() {
   const p1 = document.getElementById('f-pass').value;
   const p2 = document.getElementById('f-pass2').value;
   const h  = document.getElementById('hint-pass');
-  if (!p1) { h.textContent = ''; h.className = 'field-hint'; return; }
-  if (p1.length < 8)  { h.textContent = 'Mínimo 8 caracteres'; h.className = 'field-hint err'; return; }
-  if (!p2)            { h.textContent = ''; h.className = 'field-hint'; return; }
-  if (p1 === p2)      { h.textContent = '✓ Contraseñas coinciden'; h.className = 'field-hint good'; }
-  else                { h.textContent = '✗ Las contraseñas no coinciden'; h.className = 'field-hint err'; }
+  const bar = document.getElementById('strength-bar');
+
+  // -- strength requirements (left field)
+  if (p1) {
+    const { checks, score } = _passStrength(p1);
+    // update req indicators
+    const map = { len: 'req-len', upper: 'req-upper', lower: 'req-lower', num: 'req-num', sym: 'req-sym' };
+    const labels = { len: '✓ 8+ caracteres', upper: '✓ mayúscula', lower: '✓ minúscula', num: '✓ número', sym: '✓ símbolo' };
+    const labelsX = { len: '✗ 8+ caracteres', upper: '✗ mayúscula', lower: '✗ minúscula', num: '✗ número', sym: '✗ símbolo' };
+    Object.entries(map).forEach(([k, id]) => {
+      const el = document.getElementById(id);
+      el.className = 'req' + (checks[k] ? ' ok' : '');
+      el.textContent = checks[k] ? labels[k] : labelsX[k];
+    });
+    // update bar
+    bar.className = 'strength-bar s' + score;
+    // update left input border
+    const inp1 = document.getElementById('f-pass');
+    inp1.className = score >= 3 ? 'ok' : 'error';
+  } else {
+    bar.className = 'strength-bar s0';
+    ['req-len','req-upper','req-lower','req-num','req-sym'].forEach(id => {
+      const el = document.getElementById(id);
+      el.className = 'req';
+    });
+    document.getElementById('f-pass').className = '';
+  }
+
+  // -- confirm match (right field)
+  if (!p1) { h.textContent = ''; h.className = 'field-hint'; document.getElementById('f-pass2').className = ''; return; }
+  if (!p2)  { h.textContent = ''; h.className = 'field-hint'; document.getElementById('f-pass2').className = ''; return; }
+  if (p1 === p2) {
+    h.textContent = t('val-pass-ok');
+    h.className = 'field-hint good';
+    document.getElementById('f-pass2').className = 'ok';
+  } else {
+    h.textContent = t('val-pass-mismatch');
+    h.className = 'field-hint err';
+    document.getElementById('f-pass2').className = 'error';
+  }
 }
 
 function selBootloader(val) {
@@ -1164,9 +1592,9 @@ function selBootloader(val) {
   if (val === 'refind' || val === 'sd-boot') {
     const name = val === 'refind' ? 'rEFInd' : 'systemd-boot';
     if (window._esUEFI === false) {
-      showFormError('⛔ ' + name + ' requiere UEFI y esta máquina arranca en BIOS Legacy. Usa GRUB.');
+      showFormError('⛔ ' + name + ' ' + t('val-uefi-req'));
     } else if (window._esUEFI === undefined) {
-      showFormError('⚠ ' + name + ' solo funciona en UEFI. Asegúrate de que tu equipo no sea BIOS Legacy.');
+      showFormError('⚠ ' + name + ' ' + t('val-uefi-warn'));
     }
   }
 }
@@ -1185,22 +1613,25 @@ function showFormError(msg) {
 }
 
 function validarEIniciar() {
-  const user = document.getElementById('f-user').value.trim();
-  const pass  = document.getElementById('f-pass').value;
-  const pass2 = document.getElementById('f-pass2').value;
-  const host  = document.getElementById('f-host').value.trim() || window._defaultHostname;
-  const tz    = document.getElementById('f-tz').value;
+  const user   = document.getElementById('f-user').value.trim();
+  const pass   = document.getElementById('f-pass').value;
+  const pass2  = document.getElementById('f-pass2').value;
+  const host   = document.getElementById('f-host').value.trim() || window._defaultHostname;
+  const tz     = document.getElementById('f-tz').value;
+  const locale = document.getElementById('f-locale').value;
+  const keymap = document.getElementById('f-keymap').value;
 
-  if (!_selDisco)                   return showFormError('Selecciona un disco de destino');
-  if (!user || user.length < 2)     return showFormError('Escribe un nombre de usuario válido (mínimo 2 caracteres)');
-  if (pass.length < 8)              return showFormError('La contraseña debe tener al menos 8 caracteres');
-  if (pass !== pass2)               return showFormError('Las contraseñas no coinciden');
+  if (!_selDisco)                   return showFormError(t('val-select-disk'));
+  if (!user || user.length < 2)     return showFormError(t('val-invalid-user'));
+  if (pass.length < 8)              return showFormError(t('val-pass-short'));
+  if (_passStrength(pass).score < 2) return showFormError(t('val-pass-weak'));
+  if (pass !== pass2)               return showFormError(t('val-pass-mismatch'));
   if (['root','daemon','bin','sys','nobody'].includes(user))
-                                    return showFormError('Ese nombre de usuario está reservado por el sistema');
+                                    return showFormError(t('val-reserved-user'));
 
   // Pasar a la página de instalación y avisar a Python
   showPage('install');
-  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb);
+  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1339,19 +1770,21 @@ function pyBadges(internet, uefi) {
 function pyIniciarCountdown(dev, modelo, size) {
   document.getElementById('cd-dev').textContent = dev;
   document.getElementById('cd-info').textContent = modelo + ' · ' + size;
+  const el = document.getElementById('cd-num');
+  if (el) el.textContent = 10;
   document.getElementById('ov-countdown').classList.add('show');
-  let n = 10;
-  const iv = setInterval(() => {
-    n--; const el = document.getElementById('cd-num');
-    if (el) el.textContent = n;
-    if (n <= 0) clearInterval(iv);
-  }, 1000);
-  document.getElementById('ov-countdown')._iv = iv;
+  // BUG-009 FIX: el countdown ya no corre de forma independiente con setInterval.
+  // Python controla el tiempo real y llama pyActualizarCountdown() en cada tick,
+  // garantizando que la acción destructiva no ocurre antes de que el contador llegue a 0.
+}
+
+function pyActualizarCountdown(n) {
+  const el = document.getElementById('cd-num');
+  if (el) el.textContent = n;
 }
 
 function pyCerrarCountdown() {
   const ov = document.getElementById('ov-countdown');
-  if (ov._iv) clearInterval(ov._iv);
   ov.classList.remove('show');
 }
 
@@ -1378,7 +1811,7 @@ function pyErrorPaso(msg) {
   stopTimer();
   document.getElementById('btn-retry').style.display = 'block';
   appendLog('\n[ERROR] ' + msg, 'err');
-  setStatus('Error — revisa el log o pulsa Reintentar');
+  setStatus(t('status-error'));
   document.getElementById('status-label').textContent = '✗ error';
 }
 
@@ -1404,6 +1837,15 @@ class InstaladorAPI:
     def __init__(self, ventana: "VentanaInstalador"):
         self._v = ventana
 
+    def set_language(self, code: str) -> bool:
+        """Llamado desde JS al elegir idioma. Guarda el código para
+        usarlo al generar archivos de configuración (fastfetch, etc.)."""
+        allowed = ("en", "es", "zh")
+        if code in allowed:
+            self._v._lang = code
+            return True
+        return False
+
     def on_ready(self):
         """DOM listo: poblar discos y mostrar bienvenida."""
         discos = listar_discos()
@@ -1411,12 +1853,23 @@ class InstaladorAPI:
         return True
 
     def iniciar_instalacion(self, username: str, password: str, hostname: str,
-                             timezone: str, disco: str, bootloader: str, usb: bool):
+                             timezone: str, disco: str, bootloader: str, usb: bool,
+                             locale: str = "", keymap: str = ""):
         """El usuario pulsó 'Instalar AvalOS' con configuración válida."""
-        self._v._username = username.strip()
+        _username = username.strip()
+        if not _username:
+            # Guard Python-side: el JS ya valida, pero por si acaso
+            return False
+        self._v._username = _username
         self._v._password = password
         self._v._hostname = hostname.strip() or DEFAULT_HOSTNAME
         self._v._timezone = timezone or DEFAULT_TIMEZONE
+        # Validar locale: debe estar en la lista o usar el default
+        _valid_locales = {lc for lc, _ in LOCALES}
+        self._v._locale  = locale if locale in _valid_locales else DEFAULT_LOCALE
+        # Validar keymap: debe estar en la lista o usar el default
+        _valid_keymaps = {km for km, _ in KEYMAPS}
+        self._v._keymap  = keymap if keymap in _valid_keymaps else DEFAULT_KEYMAP
         self._v._disco_destino = disco
         self._v._bootloader = bootloader if bootloader in ('grub','sd-boot','refind','none') else 'grub'
         self._v._modo_usb  = bool(usb)
@@ -1467,10 +1920,13 @@ class VentanaInstalador:
         self._instalando     = False
         self._thread_started  = False   # guard anti double-fire
         # Configuración del wizard (se puebla en iniciar_instalacion)
+        self._lang       = "en"   # elegido en la pantalla de idioma
         self._username   = ""
         self._password   = ""
         self._hostname   = DEFAULT_HOSTNAME
         self._timezone   = DEFAULT_TIMEZONE
+        self._locale     = DEFAULT_LOCALE
+        self._keymap     = DEFAULT_KEYMAP
         self._disco_destino: str | None = None
         self._bootloader = 'grub'  # 'grub' | 'sd-boot' | 'refind' | 'none'
         self._modo_usb   = False
@@ -1507,29 +1963,53 @@ class VentanaInstalador:
     def _run_cmd(self, cmd: list[str], timeout: int = 300,
                  log_cls: str = "info") -> tuple[int, str]:
         self._log(f"$ {' '.join(cmd)}", "cmd")
-        salida = []
+        salida: list[str] = []
+        proc: "subprocess.Popen[str] | None" = None
+        _timed_out = False
+
+        def _kill_on_timeout():
+            nonlocal _timed_out
+            _timed_out = True
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1)
             if proc.stdout is None:
                 return -1, "No stdout"
-            for linea in proc.stdout:
-                linea = linea.rstrip('\n')
-                if linea:
-                    self._log(linea, log_cls)
-                    salida.append(linea)
-                if self._abortado:
-                    proc.kill()
-                    proc.wait()
-                    return -99, "\n".join(salida)
-            proc.wait(timeout=5)
+
+            timer = threading.Timer(timeout, _kill_on_timeout)
+            timer.start()
+            try:
+                for linea in proc.stdout:
+                    linea = linea.rstrip('\n')
+                    if linea:
+                        self._log(linea, log_cls)
+                        salida.append(linea)
+                    if self._abortado:
+                        proc.kill()
+                        proc.wait()
+                        return -99, "\n".join(salida)
+                proc.wait(timeout=5)
+            finally:
+                timer.cancel()
+
+            if _timed_out:
+                self._log(f"[TIMEOUT] {timeout}s — proceso terminado", "err")
+                return -2, "\n".join(salida)
+
             return proc.returncode, "\n".join(salida)
-        except subprocess.TimeoutExpired:
-            proc.kill(); proc.wait()
-            self._log(f"[TIMEOUT] {timeout}s", "err")
-            return -2, ""
         except Exception as e:
             self._log(f"[EXCEPCIÓN] {e}", "err")
+            if proc is not None:
+                try:
+                    proc.kill(); proc.wait()
+                except Exception:
+                    pass
             return -3, ""
 
     def _run_chroot(self, cmd: list[str], timeout: int = 300) -> tuple[int, str]:
@@ -1561,9 +2041,11 @@ class VentanaInstalador:
             str(MOUNT_EFI),
             str(MOUNT_ROOT / "boot"),
             str(MOUNT_ROOT / "proc"),
+            str(MOUNT_ROOT / "sys" / "firmware" / "efi" / "efivars"),
             str(MOUNT_ROOT / "sys"),
-            str(MOUNT_ROOT / "dev/pts"),
+            str(MOUNT_ROOT / "dev" / "pts"),
             str(MOUNT_ROOT / "dev"),
+            str(MOUNT_ROOT / "run"),
             str(MOUNT_ROOT),
             str(MOUNT_ISO),
         ]
@@ -1603,7 +2085,10 @@ class VentanaInstalador:
         _gpu_env_bin.write_text(
             "#!/bin/bash\n"
             "# AvalOS: detecta GPU y escribe gpu-env.conf para Hyprland\n"
-            "HYPR_CFG=\"$HOME/.config/hypr/gpu-env.conf\"\n"
+            "# BUG FIX: los servicios systemd corren como root, $HOME apunta a /root,\n"
+            "# no al home del usuario. Se usa /etc/hypr/gpu-env.conf como ruta fija;\n"
+            "# hyprland.conf hace source desde ahí para la detección dinámica de GPU.\n"
+            "HYPR_CFG=\"/etc/hypr/gpu-env.conf\"\n"
             "mkdir -p \"$(dirname \"$HYPR_CFG\")\"\n\n"
             "if lspci 2>/dev/null | grep -qiE 'amd|radeon|amdgpu'; then\n"
             "    cat > \"$HYPR_CFG\" << 'EOF'\n"
@@ -1625,10 +2110,11 @@ class VentanaInstalador:
         self._log("  /usr/local/bin/avalos-gpu-env instalado (chmod 755)", "ok")
 
         # Crear gpu-env.conf vacío por defecto (se sobreescribe por el servicio)
-        # para que el `source` en hyprland.conf no falle en caso extremo
+        # BUG-005 FIX: gpu_info no tiene '_usuario'; usar self._username (usuario real).
+        # Sin este fix la ruta era "…/home//.config/…" (doble barra, directorio inexistente).
         try:
-            _default_cfg = MOUNT_ROOT / f"home/{gpu_info.get('_usuario','')}"/ ".config/hypr/gpu-env.conf"
-            if gpu_info.get('_usuario'):
+            if self._username:
+                _default_cfg = MOUNT_ROOT / f"home/{self._username}" / ".config/hypr/gpu-env.conf"
                 _default_cfg.parent.mkdir(parents=True, exist_ok=True)
                 if not _default_cfg.exists():
                     _default_cfg.touch()
@@ -1773,7 +2259,7 @@ class VentanaInstalador:
             _gpu_env = "VDPAU_DRIVER=radeonsi\nLIBVA_DRIVER_NAME=radeonsi\n"
 
         self._escribir("etc/environment", f"""\
-QT_QPA_PLATFORM=wayland;xcb
+QT_QPA_PLATFORM=wayland:xcb
 QT_AUTO_SCREEN_SCALE_FACTOR=1
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 GDK_BACKEND=wayland,x11
@@ -1818,18 +2304,23 @@ DISTRIB_DESCRIPTION="AvalOS"
 
         pac_path = MOUNT_ROOT / "etc" / "pacman.conf"
         try:
+            import re as _re
             existing = pac_path.read_text(encoding="utf-8") if pac_path.exists() else ""
             to_append = ""
             if "[avalos]" not in existing:
                 to_append += avalos_repo
             if "[multilib]" not in existing:
-                # Habilitar multilib descomentándolo si está comentado
-                existing = existing.replace(
-                    "#[multilib]\n#Include = /etc/pacman.d/mirrorlist",
-                    "[multilib]\nInclude = /etc/pacman.d/mirrorlist"
+                # Descomentar el bloque multilib con regex (tolerante a variaciones de espacio)
+                existing_new = _re.sub(
+                    r'#\s*\[multilib\]\s*\n#\s*Include\s*=\s*/etc/pacman\.d/mirrorlist',
+                    "[multilib]\nInclude = /etc/pacman.d/mirrorlist",
+                    existing
                 )
-                if "[multilib]" not in existing:
+                if "[multilib]" not in existing_new:
+                    # No encontrado ni comentado — añadir al final
                     to_append += multilib_repo
+                else:
+                    existing = existing_new
             if to_append:
                 pac_path.write_text(existing + to_append, encoding="utf-8")
             self._log("  repos [avalos] + [multilib] → pacman.conf", "ok")
@@ -1844,7 +2335,7 @@ DISTRIB_DESCRIPTION="AvalOS"
         _hypr_tmpl = _leer_config("hyprland/hyprland.conf.template")
         if _hypr_tmpl:
             self._escribir(f"{home}/.config/hypr/hyprland.conf",
-                           _hypr_tmpl.replace("%%GPU_ENV%%", _gpu_env_str))
+                           _hypr_tmpl.replace("%%GPU_ENV%%", _gpu_env_str).replace("%%KEYMAP%%", self._keymap))
         else:
             self._log("[WARN] hyprland.conf.template no encontrado — usando config embebida", "warn")
 
@@ -1981,10 +2472,10 @@ window#waybar { background-color: rgba(26,27,38,0.92); border-bottom: 2px solid 
 tooltip { background: rgba(26,27,38,.95); border: 1px solid rgba(122,162,247,.3); color: #c0caf5; font-size: 11px; border-radius: 4px; }
 """)
 
-        # dunst
-        _contenido = _leer_config("dunst/dunstrc")
+        # mako (reemplaza dunst — BUG-011: dunst <1.9 no soporta Wayland puro)
+        _contenido = _leer_config("mako/config")
         if _contenido:
-            self._escribir(f"{home}/.config/dunst/dunstrc", _contenido)
+            self._escribir(f"{home}/.config/mako/config", _contenido)
 
         # rofi config
         _contenido = _leer_config("rofi/config.rasi")
@@ -2056,10 +2547,42 @@ export XDG_SESSION_TYPE=wayland
         except OSError as e:
             self._log(f"[WARN] .bashrc: {e}", "warn")
 
-        # fastfetch config
+        # fastfetch config — claves traducidas al idioma elegido en el wizard
         _contenido = _leer_config("fastfetch/config.jsonc")
         if _contenido:
+            try:
+                from translations import TRANSLATIONS as _TR
+                _tr = _TR.get(self._lang, _TR["en"])
+                # Las claves en config.jsonc del repo están en inglés (baseline).
+                # Mapeamos inglés → traducción del idioma elegido.
+                _ff_keys = {
+                    '" OS"':              f'"{_tr.get("ff-os",     " OS")}"',
+                    '"\\uf0e4 Host"':     f'"{_tr.get("ff-host",   "\\uf0e4 Host")}"',
+                    '" Kernel"':          f'"{_tr.get("ff-kernel",  " Kernel")}"',
+                    '"\\uf55f Uptime"':   f'"{_tr.get("ff-uptime",  "\\uf55f Uptime")}"',
+                    '"\\uf439 Packages"': f'"{_tr.get("ff-packages","\\uf439 Packages")}"',
+                    '"\\uf879 Resolution"':f'"{_tr.get("ff-display","\\uf879 Resolution")}"',
+                    '"\\uf4cb Disk"':     f'"{_tr.get("ff-disk",    "\\uf4cb Disk")}"',
+                    '"\\uf55b RAM"':      f'"{_tr.get("ff-ram",     "\\uf55b RAM")}"',
+                }
+                for _old_k, _new_k in _ff_keys.items():
+                    _contenido = _contenido.replace(_old_k, _new_k)
+            except ImportError:
+                pass  # translations.py no disponible — usar config tal cual
             self._escribir(f"{home}/.config/fastfetch/config.jsonc", _contenido)
+
+        # Logo ASCII de fastfetch — copiar del live ISO al sistema instalado.
+        # El live tiene /etc/fastfetch/avalos.txt generado por build-iso.yml;
+        # sin copiarlo aquí, el sistema instalado mostraría el logo genérico de Arch.
+        _src_logo = Path("/etc/fastfetch/avalos.txt")
+        _dst_logo = MOUNT_ROOT / "etc" / "fastfetch" / "avalos.txt"
+        _dst_logo.parent.mkdir(parents=True, exist_ok=True)
+        if _src_logo.exists():
+            import shutil as _shutil
+            _shutil.copy2(_src_logo, _dst_logo)
+            self._log("  ✓ /etc/fastfetch/avalos.txt copiado al sistema instalado")
+        else:
+            self._log("  [WARN] avalos.txt no encontrado en el live — fastfetch usará logo genérico", "warn")
 
         # Permisos
         self._chown_r(f"/home/{usuario}", usuario)
@@ -2098,13 +2621,14 @@ WantedBy=multi-user.target
         self._instalando = True
         self._jsc("pyStartTimer")
 
-        # Esperar que el wizard envíe la config
-        if not self._config_lista.wait(timeout=600):
-            # El usuario no completó el wizard en 10 minutos
-            self._log("[ERROR] Tiempo de espera agotado (10 min). Reinicia el instalador.", "err")
-            self._jsc("pyErrorPaso", "Tiempo de espera agotado. Cierra y vuelve a abrir el instalador.")
-            self._instalando = False
-            return
+        # Si es un reintento, _config_lista ya está set (la config no cambia).
+        # Solo esperamos si todavía no se ha recibido la config del wizard.
+        if not self._config_lista.is_set():
+            if not self._config_lista.wait(timeout=600):
+                self._log("[ERROR] Tiempo de espera agotado (10 min). Reinicia el instalador.", "err")
+                self._jsc("pyErrorPaso", "Tiempo de espera agotado. Cierra y vuelve a abrir el instalador.")
+                self._instalando = False
+                return
         if self._abortado:
             self._instalando = False
             return
@@ -2231,12 +2755,14 @@ WantedBy=multi-user.target
             self._status(f"Particionando {dev}…")
             self._log(f"\n── Particionando {dev} ──\n", "step")
 
-            # Countdown 10s
+            # Countdown 10s — BUG-009 FIX: Python controla el tiempo; JS solo muestra la UI.
+            # Así la acción destructiva NUNCA ocurre antes de que el contador llegue a 0.
             self._jsc("pyIniciarCountdown", dev, disco["model"], disco["size_human"])
-            for _ in range(10):
+            for i in range(10, 0, -1):
                 if self._abortado:
                     self._jsc("pyCerrarCountdown")
                     self._limpiar_montajes(); return
+                self._jsc("pyActualizarCountdown", i - 1)  # JS solo actualiza el número
                 time.sleep(1)
             self._jsc("pyCerrarCountdown")
 
@@ -2270,7 +2796,13 @@ WantedBy=multi-user.target
             self._log(f"  {dev} no tiene particiones montadas ✓", "ok")
 
             # Borrar tabla y crear particiones
-            self._run_cmd(["wipefs", "-a", dev])
+            rc_wipe, _ = self._run_cmd(["wipefs", "-a", dev])
+            if rc_wipe != 0:
+                self._step("part", "error")
+                self._jsc("pyErrorPaso",
+                          f"wipefs falló en {dev}. El disco podría estar en uso.\n"
+                          "Desmonta todas sus particiones y vuelve a intentarlo.")
+                self._limpiar_montajes(); return
 
             if uefi:
                 # GPT: 512MB EFI + resto root
@@ -2339,6 +2871,12 @@ WantedBy=multi-user.target
             else:
                 _fmt_label = "ext4 sin journal (USB)" if self._modo_usb else "ext4"
             self._step("format", "done", _fmt_label)
+            # Segundo settle: esperar que el kernel actualice los nodos de bloque
+            # después del formateo antes de intentar montar
+            try:
+                subprocess.run(["udevadm", "settle", "--timeout=5"], check=False)
+            except Exception:
+                time.sleep(1)
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
@@ -2470,7 +3008,9 @@ WantedBy=multi-user.target
 
             pkgs += [_kernel_pkg, _headers_pkg]
             # ── Drivers GPU + entorno gráfico + gaming ───────────────────────
-            pkgs += gpu_info["pkgs"] + HYPRLAND_PKGS + GAMING_PKGS + [ucode]
+            # Si ucode es string vacío (CPU no reconocida), no incluir en pkgs:
+            # pacstrap falla con error si recibe un nombre de paquete vacío.
+            pkgs += gpu_info["pkgs"] + HYPRLAND_PKGS + GAMING_PKGS + ([ucode] if ucode else [])
             self._log(f"GPU detectada: {gpu_info['vendor'].upper()} → drivers: {', '.join(gpu_info['pkgs'][:3])}…", "info")
             self._log(f"Total: {len(pkgs)} paquetes ({', '.join(pkgs[:8])}… +{max(0, len(pkgs)-8)} más)", "info")
 
@@ -2498,11 +3038,16 @@ WantedBy=multi-user.target
                 self._limpiar_montajes(); return
 
             if self._modo_usb:
-                # Reemplazar relatime por noatime si está presente
+                import re as _re
+                # Reemplazar relatime por noatime en todas las líneas del fstab
                 fstab_out = fstab_out.replace("relatime", "noatime")
-                # Si aún no tiene noatime (ej. genfstab generó solo "defaults"), añadirlo
-                if "noatime" not in fstab_out:
-                    fstab_out = fstab_out.replace("defaults", "defaults,noatime", 1)
+                # Si una línea ext4 no tiene noatime, añadirlo — excluir líneas FAT/vfat (EFI)
+                def _add_noatime(m):
+                    opts = m.group(0)
+                    if "noatime" not in opts and "vfat" not in opts.lower():
+                        return opts.replace("defaults", "defaults,noatime", 1)
+                    return opts
+                fstab_out = _re.sub(r'(defaults[^\s]*)', _add_noatime, fstab_out)
 
             try:
                 (MOUNT_ROOT / "etc" / "fstab").write_text(fstab_out + "\n")
@@ -2524,15 +3069,39 @@ WantedBy=multi-user.target
             self._run_chroot(["ln", "-sf", f"/usr/share/zoneinfo/{timezone}", "/etc/localtime"])
             self._run_chroot(["hwclock", "--systohc"])
 
+            # Derivar locale_gen_entry y locale_conf desde self._locale
+            # "es_SV.UTF-8" → "es_SV.UTF-8 UTF-8"  y  "LANG=es_SV.UTF-8"
+            _loc     = self._locale       # ej. "es_SV.UTF-8"
+            _loc_gen = f"{_loc} UTF-8"   # ej. "es_SV.UTF-8 UTF-8"
+            _keymap  = self._keymap       # ej. "la-latin1"
+            # Siempre incluir en_US.UTF-8 como locale de respaldo
+            _loc_gen_extra = "en_US.UTF-8 UTF-8"
+            # Si el locale elegido es chino, incluir también zh_CN.UTF-8
+            _extra_locales = [_loc_gen, _loc_gen_extra]
+            if _loc.startswith("zh_") and "zh_CN.UTF-8 UTF-8" not in _extra_locales:
+                _extra_locales.append("zh_CN.UTF-8 UTF-8")
+
             locale_gen = MOUNT_ROOT / "etc" / "locale.gen"
             if locale_gen.exists():
                 txt = locale_gen.read_text()
-                for loc in LOCALE_GEN:
-                    txt = txt.replace(f"#{loc}", loc)
+                for loc_entry in _extra_locales:
+                    # Descomentamos tanto "#locale" como "# locale" (con o sin espacio)
+                    txt = txt.replace(f"#{loc_entry}", loc_entry)
+                    txt = txt.replace(f"# {loc_entry}", loc_entry)
+                    # Añadir al final solo si realmente no quedó descomentado
+                    if loc_entry not in txt:
+                        txt += f"\n{loc_entry}\n"
                 locale_gen.write_text(txt)
+            else:
+                # locale.gen no existe (no debería ocurrir tras pacstrap con glibc,
+                # pero lo creamos para no dejar al sistema sin locales)
+                self._log("[WARN] /etc/locale.gen no existe — creándolo desde cero", "warn")
+                locale_gen.parent.mkdir(parents=True, exist_ok=True)
+                locale_gen.write_text("\n".join(_extra_locales) + "\n")
             self._run_chroot(["locale-gen"])
-            (MOUNT_ROOT / "etc" / "locale.conf").write_text(LOCALE_CONF + "\n")
-            (MOUNT_ROOT / "etc" / "vconsole.conf").write_text(f"KEYMAP={KEYMAP}\n")
+            (MOUNT_ROOT / "etc" / "locale.conf").write_text(f"LANG={_loc}\n")
+            (MOUNT_ROOT / "etc" / "vconsole.conf").write_text(f"KEYMAP={_keymap}\n")
+            self._log(f"  Locale: {_loc} | Teclado: {_keymap}", "ok")
             (MOUNT_ROOT / "etc" / "hostname").write_text(hostname + "\n")
             (MOUNT_ROOT / "etc" / "hosts").write_text(
                 f"127.0.0.1   localhost\n::1         localhost\n127.0.1.1   {hostname}.localdomain {hostname}\n"
@@ -2740,7 +3309,14 @@ WantedBy=multi-user.target
                     "[Action]\n"
                     "Description = Updating systemd-boot kernel files\n"
                     "When = PostTransaction\n"
-                    f"Exec = /usr/bin/bash -c 'cp /boot/vmlinuz-{kernel_name} /boot/efi/AvalOS/vmlinuz-{kernel_name}; cp /boot/initramfs-{kernel_name}.img /boot/efi/AvalOS/initramfs-{kernel_name}.img'\n"
+                    # BUG FIX: el hook original no copiaba el microcode a la ESP.
+                    # Si ucode se actualiza junto con el kernel, la ESP queda con el
+                    # microcode viejo hasta el próximo update manual. Se añade la copia
+                    # con || true para que el hook no falle si ucode no existe.
+                    f"Exec = /usr/bin/bash -c '"
+                    f"cp /boot/vmlinuz-{kernel_name} /boot/efi/AvalOS/vmlinuz-{kernel_name}; "
+                    f"cp /boot/initramfs-{kernel_name}.img /boot/efi/AvalOS/initramfs-{kernel_name}.img; "
+                    f"[[ -n \"{ucode}\" ]] && [[ -f /boot/{ucode}.img ]] && cp /boot/{ucode}.img /boot/efi/AvalOS/{ucode}.img || true'\n"
                     "Depends = bash\n"
                 )
 
@@ -2844,13 +3420,15 @@ WantedBy=multi-user.target
                 sudoers_tmp = None
 
             yay_script = (
-                "cd /tmp && "
-                "git clone --depth=1 https://aur.archlinux.org/yay.git yay_build && "
-                "cd yay_build && makepkg -si --noconfirm --needed && "
-                "cd / && rm -rf /tmp/yay_build"
+                "set -euo pipefail; "
+                "TMPD=$(mktemp -d) && "
+                "git clone --depth=1 https://aur.archlinux.org/yay.git \"$TMPD/yay_build\" && "
+                "cd \"$TMPD/yay_build\" && "
+                "makepkg -si --noconfirm --needed && "
+                "rm -rf \"$TMPD\""
             )
             rc, _ = self._run_chroot(
-                ["sudo", "-u", usuario, "bash", "-c", yay_script], timeout=600
+                ["sudo", "-H", "-u", usuario, "bash", "-c", yay_script], timeout=600
             )
             if rc != 0:
                 self._log("[WARN] yay no se instaló — paquetes AUR omitidos.", "warn")
@@ -2859,7 +3437,7 @@ WantedBy=multi-user.target
                 all_aur = HYPRLAND_AUR_PKGS + GAMING_AUR_PKGS
                 if all_aur:
                     rc_aur, _ = self._run_chroot(
-                        ["sudo", "-u", usuario, "yay", "-S", "--noconfirm", "--needed"]
+                        ["sudo", "-H", "-u", usuario, "yay", "-S", "--noconfirm", "--needed"]
                         + all_aur, timeout=1800  # Proton-GE es grande, más tiempo
                     )
                     if rc_aur != 0:
@@ -2910,7 +3488,7 @@ WantedBy=multi-user.target
 
                 # Flatpak: instalar Heroic si no entró por AUR
                 self._run_chroot(
-                    ["sudo", "-u", usuario, "flatpak", "remote-add",
+                    ["sudo", "-H", "-u", usuario, "flatpak", "remote-add",
                      "--if-not-exists", "flathub",
                      "https://dl.flathub.org/repo/flathub.flatpakrepo"],
                     timeout=120
@@ -2951,7 +3529,7 @@ WantedBy=multi-user.target
                 f"<strong>Modo:</strong> {'USB (noatime)' if self._modo_usb else 'Disco (ext4)'}<br>"
                 f"<strong>Bootloader:</strong> { {'grub':'GRUB','sd-boot':'systemd-boot','refind':'rEFInd','none':'Omitido'}.get(self._bootloader,'?') }<br>"
                 f"<strong>DE/WM:</strong> Hyprland · Wayland · SDDM<br>"
-                f"<strong>⚠ Contraseña:</strong> cambia requerida en el primer login"
+                f"<strong>⚠ Contraseña:</strong> cambio requerido en el primer login"
             )
             self._jsc("pyInstalacionCompleta", done_info)
             self._label("✓ completado")
@@ -2973,6 +3551,15 @@ WantedBy=multi-user.target
             self._limpiar_montajes()
         finally:
             self._instalando = False
+            # Garantizar que el sudoers NOPASSWD temporal nunca quede en el sistema
+            # instalado, aunque haya ocurrido una excepción durante el paso AUR.
+            _sudoers_guard = MOUNT_ROOT / "etc" / "sudoers.d" / "99-aur-build"
+            if _sudoers_guard.exists():
+                try:
+                    _sudoers_guard.unlink()
+                    self._log("  [cleanup] sudoers temporal eliminado", "ok")
+                except OSError as _e:
+                    self._log(f"  [WARN] No se pudo eliminar sudoers temporal: {_e}", "warn")
             self._jsc("pyStopTimer")
 
 
@@ -2985,11 +3572,19 @@ def _build_html() -> str:
     tz_json       = json.dumps(TIMEZONES, ensure_ascii=False)
     default_tz    = json.dumps(DEFAULT_TIMEZONE)
     default_host  = json.dumps(DEFAULT_HOSTNAME)
+    locales_json  = json.dumps(LOCALES, ensure_ascii=False)
+    keymaps_json  = json.dumps(KEYMAPS, ensure_ascii=False)
+    default_loc   = json.dumps(DEFAULT_LOCALE)
+    default_km    = json.dumps(DEFAULT_KEYMAP)
 
     inject = (
         f"window._tzList = {tz_json};\n"
         f"window._defaultTZ = {default_tz};\n"
         f"window._defaultHostname = {default_host};\n"
+        f"window._localeList = {locales_json};\n"
+        f"window._keymapList = {keymaps_json};\n"
+        f"window._defaultLocale = {default_loc};\n"
+        f"window._defaultKeymap = {default_km};\n"
     )
     # Insertar justo antes del cierre </script> del bloque READY
     contenido = _HTML.replace("LOGO_PLACEHOLDER", _LOGO_B64)
@@ -3036,11 +3631,13 @@ if __name__ == "__main__":
     def _on_loaded():
         # Lock para evitar race condition TOCTOU: pywebview puede disparar
         # el evento 'loaded' varias veces (recarga del DOM, SPA navigation).
+        # _config_lista.clear() se hace DENTRO del lock para evitar la carrera
+        # con iniciar_instalacion() que llama .set() desde otro hilo.
         with vent._lock:
             if vent._thread_started:
                 return
             vent._thread_started = True
-        vent._config_lista.clear()
+            vent._config_lista.clear()   # ← dentro del lock
         t = threading.Thread(target=vent._run_instalacion, daemon=True)
         t.start()
 

@@ -1,15 +1,33 @@
 /* AvalOS Rofi — Tokyo Night */
 
 configuration {
-  modi: "drun,run,window";
-  font: "JetBrainsMono Nerd Font 12";
-  show-icons: true;
-  icon-theme: "Papirus-Dark";
+  modi:                "drun,run,window";
+  font:                "JetBrainsMono Nerd Font 12";
+  show-icons:          true;
+  icon-theme:          "Papirus-Dark";
   drun-display-format: "{name}";
-  display-drun: "󰍉 Apps";
-  display-run: " Run";
-  display-window: " Windows";
-  kb-cancel: "Escape";
+  display-drun:        "󰍉 Apps";
+  display-run:         " Run";
+  display-window:      " Windows";
+  kb-cancel:           "Escape";
+  /* BUG-1 FIX: kb-remove-to-eol y kb-accept-entry ausentes.
+   * Sin kb-accept-entry explícito, en algunos entornos Wayland
+   * la tecla Enter no confirma la selección correctamente.
+   * kb-remove-to-eol = Ctrl+k es el estándar readline esperado por usuarios. */
+  kb-accept-entry:     "Return,KP_Enter";
+  kb-remove-to-eol:    "Control+k";
+  /* BUG-2 FIX: matching-method ausente.
+   * El default de rofi es "normal" (prefijo). "fuzzy" da resultados
+   * más útiles al escribir parcialmente el nombre de una app. */
+  matching:            "fuzzy";
+  /* BUG-3 FIX: sort ausente con fuzzy matching.
+   * Sin sort=true, fuzzy matching no ordena por relevancia y los
+   * resultados aparecen en orden arbitrario. */
+  sort:                true;
+  /* BUG-4 FIX: cycle ausente.
+   * Sin cycle=true, al llegar al último resultado la selección no
+   * salta al primero — comportamiento confuso con el teclado. */
+  cycle:               true;
 }
 
 * {
@@ -28,13 +46,22 @@ window {
   border:           2px solid @border-color;
   border-radius:    10px;
   width:            480px;
+  /* BUG-5 FIX: location y anchor ausentes.
+   * Sin estos, rofi aparece en la esquina superior izquierda en algunos
+   * compositors Wayland (incluyendo Hyprland) en lugar de centrado. */
+  location:         center;
+  anchor:           center;
+  /* BUG-6 FIX: x-offset e y-offset ausentes.
+   * Necesarios junto a location/anchor para centrado preciso en Hyprland. */
+  x-offset:         0;
+  y-offset:         0;
 }
 
 mainbox {
   background-color: @background;
-  children: [inputbar, listview];
-  padding: 12px;
-  spacing: 8px;
+  children:         [inputbar, listview];
+  padding:          12px;
+  spacing:          8px;
 }
 
 inputbar {
@@ -53,7 +80,11 @@ prompt {
 entry {
   background-color: transparent;
   text-color:       @foreground;
-  placeholder:      "Buscar...";
+  /* BUG-7 FIX: placeholder en español.
+   * El placeholder es texto del sistema que debe ser neutral/inglés
+   * para que el mecanismo de traducción del instalador lo pueda reemplazar,
+   * o usar un texto sin idioma (solo el icono). */
+  placeholder:      " Search…";
   placeholder-color: #565f89;
 }
 
@@ -61,12 +92,29 @@ listview {
   background-color: transparent;
   lines:            8;
   spacing:          4px;
+  /* BUG-8 FIX: scrollbar ausente en listview.
+   * Con 8 líneas visibles y muchas apps instaladas, no hay indicación
+   * visual de que hay más resultados. scrollbar = true lo muestra. */
+  scrollbar:        true;
+}
+
+/* BUG-9 FIX: scrollbar sin estilar.
+ * Sin este bloque el scrollbar usa el tema GTK por defecto que puede
+ * ser completamente blanco/gris rompiendo el tema Tokyo Night. */
+scrollbar {
+  background-color: @background-alt;
+  handle-color:     @selected;
+  handle-width:     4px;
+  border:           0;
 }
 
 element {
   background-color: transparent;
   border-radius:    6px;
   padding:          8px 10px;
+  /* BUG-10 FIX: spacing entre ícono y texto ausente.
+   * Sin spacing, el ícono de la app queda pegado al texto del nombre. */
+  spacing:          8px;
 }
 
 element selected {
@@ -74,12 +122,32 @@ element selected {
   text-color:       #1a1b26;
 }
 
+/* BUG-11 FIX: estado "active" (apps en ejecución) sin estilar.
+ * Sin este bloque las apps que ya están abiertas no tienen
+ * diferenciación visual en el modo "window" de rofi. */
+element active {
+  text-color: @active;
+}
+
+/* BUG-12 FIX: estado "urgent" sin estilar.
+ * Apps con notificaciones urgentes no tenían color diferenciado. */
+element urgent {
+  text-color: @urgent;
+}
+
 element-text {
   background-color: transparent;
   text-color:       inherit;
+  /* BUG-13 FIX: vertical-align ausente en element-text.
+   * Sin esto el texto y el ícono no están alineados verticalmente
+   * en el centro del elemento — el texto aparece pegado arriba. */
+  vertical-align:   0.5;
 }
 
 element-icon {
   background-color: transparent;
   size:             1.2em;
+  /* BUG-14 FIX: vertical-align ausente en element-icon.
+   * Mismo problema que element-text — el ícono aparece descentrado. */
+  vertical-align:   0.5;
 }

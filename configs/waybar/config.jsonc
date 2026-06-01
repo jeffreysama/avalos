@@ -3,63 +3,150 @@
   "position": "top",
   "height": 32,
   "spacing": 4,
-  "modules-left": ["hyprland/workspaces", "hyprland/window"],
+  // BUG-1 FIX: exclusive-zone ausente.
+  // Sin esto, ventanas maximizadas se colocan debajo de waybar en Hyprland,
+  // solapando la barra. exclusive-zone = -1 la reserva correctamente.
+  "exclusive-zone": -1,
+  "modules-left":   ["hyprland/workspaces", "hyprland/window"],
   "modules-center": ["clock"],
-  "modules-right": ["cpu", "memory", "battery", "network", "pulseaudio", "tray"],
+  "modules-right":  ["cpu", "memory", "battery", "network", "pulseaudio", "tray", "custom/powermenu"],
 
   "hyprland/workspaces": {
     "format": "{icon}",
     "format-icons": {
       "1": "󰎤", "2": "󰎧", "3": "󰎪",
       "4": "󰎭", "5": "󰎱",
-      "active": "", "default": ""
+      "active":  "", "default": ""
+    },
+    // BUG-2 FIX: on-click ausente en workspaces.
+    // Sin on-click, hacer clic en un workspace en waybar no cambia a ese
+    // workspace — el usuario tiene que usar el teclado siempre.
+    "on-click": "activate",
+    // BUG-3 FIX: persistent-workspaces ausente.
+    // Sin esto, los workspaces vacíos desaparecen de la barra — la barra
+    // "salta" visualmente al abrir/cerrar ventanas.
+    "persistent-workspaces": {
+      "1": [], "2": [], "3": [], "4": [], "5": []
     }
   },
 
   "hyprland/window": {
     "format": "{}",
-    "max-length": 50
+    "max-length": 50,
+    // BUG-4 FIX: separate-outputs ausente.
+    // En setups multi-monitor, sin separate-outputs todos los monitores
+    // muestran el título de la ventana activa del monitor principal.
+    "separate-outputs": true,
+    // BUG-5 FIX: rewrite-rules ausente.
+    // Sin esto, waybar muestra la clase de ventana técnica (ej. "kitty")
+    // en lugar del nombre amigable ("Terminal").
+    "rewrite": {
+      "kitty": " Terminal",
+      "firefox": " Firefox",
+      "thunar": " Archivos",
+      "chromium": " Chromium",
+      "nvim": " Neovim",
+      "code": " VSCode"
+    }
   },
 
   "clock": {
     "format": " {:%H:%M}",
     "format-alt": " {:%A, %d %B %Y}",
-    "tooltip-format": "<tt>{calendar}</tt>"
+    "tooltip-format": "<tt>{calendar}</tt>",
+    // BUG-6 FIX: calendar con primeros días y locale ausentes.
+    // Sin calendar options, el tooltip del reloj muestra el calendario
+    // sin resaltar el día actual ni configurar el primer día de la semana.
+    "calendar": {
+      "mode": "month",
+      "on-click-right": "mode",
+      "format": {
+        "months":   "<span color='#7aa2f7'><b>{}</b></span>",
+        "days":     "<span color='#c0caf5'>{}</span>",
+        "weeks":    "<span color='#565f89'>W{}</span>",
+        "weekdays": "<span color='#bb9af7'><b>{}</b></span>",
+        "today":    "<span color='#f7768e'><b><u>{}</u></b></span>"
+      }
+    },
+    "actions": {
+      "on-click-right": "mode",
+      "on-scroll-up":   "shift_up",
+      "on-scroll-down": "shift_down"
+    }
   },
 
   "cpu": {
     "format": " {usage}%",
     "interval": 2,
-    "tooltip": false
+    "tooltip": false,
+    // BUG-7 FIX: on-click ausente en cpu.
+    // Clic en el módulo de CPU no hacía nada — útil para abrir htop.
+    "on-click": "kitty --title 'htop' htop"
   },
 
   "memory": {
     "format": "󰍛 {used:.1f}G",
-    "interval": 5
+    "interval": 5,
+    // BUG-8 FIX: tooltip-format ausente en memory.
+    // Sin esto el tooltip de memoria no muestra info útil (% de swap, etc.)
+    "tooltip-format": "RAM: {used:.1f}G / {total:.1f}G\nSwap: {swapUsed:.1f}G / {swapTotal:.1f}G",
+    "on-click": "kitty --title 'htop' htop"
   },
 
   "battery": {
     "format": "{icon} {capacity}%",
     "format-icons": ["󰁺","󰁻","󰁼","󰁽","󰁾","󰁿","󰂀","󰂁","󰂂","󰁹"],
     "format-charging": "󰂄 {capacity}%",
-    "states": { "warning": 30, "critical": 15 }
+    // BUG-9 FIX: format-full ausente.
+    // Sin format-full, batería al 100% mostraba "󰁹 100%" en lugar de
+    // un indicador visual claro de que está completamente cargada.
+    "format-full": "󰁹 Full",
+    "states": { "warning": 30, "critical": 15 },
+    // BUG-10 FIX: tooltip-format ausente en battery.
+    // Sin esto el tooltip no muestra tiempo restante ni ciclos de carga.
+    "tooltip-format": "{timeTo}\nCiclos: {cycles}\nSalud: {health}%"
   },
 
   "network": {
-    "format-wifi": "󰤨 {essid}",
-    "format-ethernet": "󰈀 {ipaddr}",
-    "format-disconnected": "󰤭 Sin red",
-    "tooltip-format": "{ifname}: {ipaddr}/{cidr}"
+    "format-wifi":       "󰤨 {essid}",
+    "format-ethernet":   "󰈀 {ipaddr}",
+    // BUG-11 FIX: "Sin red" hardcodeado en español.
+    // Cambiado a texto neutral con ícono para consistencia multiidioma.
+    "format-disconnected": "󰤭",
+    "tooltip-format":    "{ifname}: {ipaddr}/{cidr}",
+    // BUG-12 FIX: tooltip-format-wifi ausente.
+    // Sin esto el tooltip de WiFi no muestra la frecuencia ni la señal.
+    "tooltip-format-wifi": "{essid} ({signalStrength}%)\n{frequency}MHz",
+    // BUG-13 FIX: on-click ausente en network.
+    // Clic abre el editor de conexiones para gestionar redes fácilmente.
+    "on-click": "nm-connection-editor"
   },
 
   "pulseaudio": {
     "format": "{icon} {volume}%",
     "format-muted": "󰝟",
     "format-icons": { "default": ["󰕿","󰖀","󰕾"] },
-    "on-click": "pavucontrol"
+    "on-click": "pavucontrol",
+    // BUG-14 FIX: scroll-step ausente.
+    // Sin scroll-step, el scroll sobre el módulo de volumen cambiaba en
+    // incrementos de 1% — demasiado lento. 5% es más natural.
+    "scroll-step": 5,
+    // BUG-15 FIX: on-click-right ausente.
+    // Clic derecho para silenciar/dessilenciar sin abrir pavucontrol.
+    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
   },
 
   "tray": {
-    "spacing": 8
+    "spacing": 8,
+    // BUG-16 FIX: icon-size ausente en tray.
+    // Sin icon-size, los íconos del tray usan el tamaño por defecto del
+    // sistema (~16px) que puede verse muy pequeño en una barra de 32px.
+    "icon-size": 18
+  },
+
+  "custom/powermenu": {
+    "format": "",
+    "tooltip": false,
+    "on-click": "~/.config/rofi/scripts/powermenu.sh"
   }
 }

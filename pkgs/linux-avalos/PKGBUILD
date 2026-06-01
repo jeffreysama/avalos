@@ -1,4 +1,5 @@
 # Maintainer: AvalOS <https://github.com/jeffreysama/avalos>
+# Basado en linux-cachyos (CachyOS team) — patches moderados
 # Target: x86-64-v3 · Clang/LLVM · ThinLTO · EEVDF
 #
 # Este PKGBUILD vive en pkgs/linux-avalos/ del repo de AvalOS.
@@ -7,12 +8,12 @@
 
 pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
-pkgver=6.12.30        # ← GitHub Actions actualiza esta línea automáticamente
+pkgver=7.0.10         # ← GitHub Actions actualiza esta línea automáticamente
 pkgrel=1
-pkgdesc="AvalOS Linux Kernel — x86-64, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
+pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
 url="https://github.com/jeffreysama/avalos"
-license=(GPL2)
+license=(GPL-2.0-only)           # Linux kernel es GPL-2.0-only sin excepción
 makedepends=(bc bison flex python clang llvm lld pahole cpio perl tar xz zstd git libelf)
 install=linux-avalos.install
 options=(!strip)
@@ -32,13 +33,39 @@ sha256sums=(
 prepare() {
     cd "linux-${pkgver}"
 
-    # ── Configuración de compilador y arquitectura ─────────────────────────
+    # ── Aplicar config base ANTES de cualquier scripts/config ─────────────────
+    # Sin este cp, scripts/config opera sobre un .config vacío y el config
+    # base de Arch Linux (generado por gen-config.sh) se ignora por completo.
+    echo "  → Aplicando config base..."
+    # FIX: detectar el fallback de gen-config.sh (config vacío con marcador).
+    # Si gen-config.sh no pudo descargar la config de Arch, deja el marcador
+    # AVALOS_FALLBACK_DEFCONFIG. En ese caso se genera una base con defconfig
+    # antes de aplicar las opciones específicas de AvalOS, evitando que
+    # olddefconfig active miles de opciones innecesarias desde cero.
+    if grep -q 'AVALOS_FALLBACK_DEFCONFIG' ../config 2>/dev/null; then
+        echo "  → Config fallback detectado — generando base con defconfig..."
+        make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld defconfig
+    else
+        cp ../config .config
+    fi
+
+    # ── CPU target: x86-64-v3 genérico (AMD + Intel, AVX2+) ──────────────
+    # CONFIG_GENERIC_CPU3 = x86-64-v3: activa AVX2, BMI2, FMA, MOVBE, XSAVE
+    # para cualquier CPU que soporte estos flags — AMD Ryzen 1xxx+ e Intel
+    # Haswell/Broadwell+ incluidos — sin asumir la CPU del host de compilación.
+    # CONFIG_MNATIVE_AMD y CONFIG_MNATIVE_INTEL están en un bloque choice del
+    # Kconfig y son mutuamente excluyentes. Activar ambos deja a olddefconfig
+    # resolver el conflicto de forma no determinística según el runner de CI.
+    # CONFIG_GENERIC_CPU3 es la opción correcta para un kernel de distro compilado
+    # en CI y distribuido a usuarios con hardware mixto.
+    # KCFLAGS='-march=x86-64-v3' en build-kernel.yml complementan esta config.
+    # Nota: CONFIG_CC_IS_CLANG / CONFIG_LD_IS_LLD son def_bool auto-detectados
+    # con LLVM=1 — no se setean manualmente.
     scripts/config \
-        -e CONFIG_MNATIVE_AMD \
+        -e CONFIG_GENERIC_CPU3 \
         -e CONFIG_X86_FEATURE_NAMES \
         -e CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE \
         -d CONFIG_CC_OPTIMIZE_FOR_SIZE
-        -e CONFIG_EFI_STUB \
 
     # ── Scheduler: EEVDF tuneado (default Linux 6.6+, estable, sin parches) ──
     # Por qué EEVDF y no BORE aquí: EEVDF está en el kernel mainline, no necesita
@@ -53,8 +80,6 @@ prepare() {
 
     # ── Compilador: Clang/LLVM + ThinLTO ──────────────────────────────────
     scripts/config \
-        -e CONFIG_CC_IS_CLANG \
-        -e CONFIG_LD_IS_LLD \
         -e CONFIG_LTO_CLANG_THIN \
         -d CONFIG_LTO_NONE \
         -e CONFIG_FORTIFY_SOURCE \
@@ -62,6 +87,9 @@ prepare() {
         -e CONFIG_EFI_MIXED
 
     # ── AMD GPU — primera clase ────────────────────────────────────────────
+    # Nota: CONFIG_DRM_AMD_DC_HDCP y CONFIG_DRM_AMD_DC_DCN fueron absorbidos
+    # por CONFIG_DRM_AMD_DC en kernels recientes. scripts/config los ignora
+    # con un warning si no existen — no rompe el build.
     scripts/config \
         -e CONFIG_DRM_AMDGPU \
         -e CONFIG_DRM_AMDGPU_SI \
@@ -82,9 +110,9 @@ prepare() {
         -d CONFIG_DRM_NOUVEAU
 
     # ── AMD P-State (governor EPP — gestión energía AMD Ryzen/EPYC) ────────
+    # CONFIG_X86_AMD_PSTATE_UT es un módulo de unit testing — se omite en producción.
     scripts/config \
-        -e CONFIG_X86_AMD_PSTATE \
-        -e CONFIG_X86_AMD_PSTATE_UT
+        -e CONFIG_X86_AMD_PSTATE
 
     # ── Intel HWP (equivalente a P-State en Intel) ─────────────────────────
     scripts/config \
@@ -92,12 +120,15 @@ prepare() {
 
     # ── Red: BBR + FQ ──────────────────────────────────────────────────────
     # BBR = Bottleneck Bandwidth and RTT (Google, mainline desde 4.9)
-    # Mucho mejor que CUBIC en redes con pérdida o alta latencia
+    # Mucho mejor que CUBIC en redes con pérdida o alta latencia.
+    # --set-str cambia el algoritmo TCP por defecto a BBR correctamente.
+    # Solo deshabilitar CONFIG_DEFAULT_CUBIC sin hacer set-str deja el
+    # default en un estado indefinido (olddefconfig podría resetear a reno).
     scripts/config \
         -e CONFIG_TCP_CONG_BBR \
         -e CONFIG_NET_SCH_FQ \
         -m CONFIG_TCP_CONG_CUBIC \
-        -d CONFIG_DEFAULT_CUBIC
+        --set-str CONFIG_DEFAULT_TCP_CONG bbr
 
     # ── IO schedulers ──────────────────────────────────────────────────────
     # Kyber: NVMe/SSD (baja latencia)
@@ -117,9 +148,11 @@ prepare() {
         -e CONFIG_CRYPTO_ZSTD
 
     # ── Seguridad razonable sin overhead en desktop ────────────────────────
-    # Nota: CONFIG_MODULE_SIG_NONE + !MODULE_SIG_FORCE = módulos sin firma
-    # obligatoria. DKMS y módulos externos funcionan sin configuración extra.
-    # Si en el futuro se quiere firmar módulos: quitar estas dos líneas y
+    # CONFIG_MODULE_SIG_NONE no existe en kernels 6.x+. La forma correcta de
+    # permitir módulos sin firma es deshabilitar SIG_FORCE (impide carga de
+    # módulos sin firma) y SIG_ALL (no firma módulos durante el build).
+    # DKMS y módulos externos funcionan sin configuración extra.
+    # Si en el futuro se quiere firmar módulos: habilitar SIG + SIG_ALL y
     # generar claves en /etc/kernel/sign-key.pem.
     scripts/config \
         -d CONFIG_KASAN \
@@ -127,9 +160,19 @@ prepare() {
         -d CONFIG_DEBUG_KERNEL \
         -d CONFIG_SLUB_DEBUG_ON \
         -d CONFIG_MODULE_SIG_FORCE \
-        -e CONFIG_MODULE_SIG_NONE
+        -d CONFIG_MODULE_SIG_ALL
 
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld olddefconfig
+
+    # FIX: verificar que CONFIG_GENERIC_CPU3 quedó activo tras olddefconfig.
+    # Si el Kconfig de 7.x renombra esta opción, scripts/config la ignora
+    # silenciosamente y el kernel queda sin optimizaciones v3. Falla rápido
+    # para que el error sea obvio en el log de CI.
+    if ! grep -q 'CONFIG_GENERIC_CPU3=y' .config; then
+        echo "[WARN] CONFIG_GENERIC_CPU3 no activo en .config — verificar Kconfig del kernel ${pkgver}"
+        echo "       Opciones disponibles de CPU en este kernel:"
+        grep -E 'CONFIG_(GENERIC_CPU|MNATIVE)' .config || true
+    fi
 }
 
 # ── Build ──────────────────────────────────────────────────────────────────────
@@ -153,13 +196,21 @@ package_linux-avalos() {
         'wireless-regdb: configuración de canales WiFi por país'
         'linux-firmware: firmware para hardware adicional'
     )
-    provides=("linux=${pkgver}")
+    # FIX: provides=() debe exponer "linux=${pkgver}" para que paquetes que
+    # dependen del kernel genérico (virtualbox-host-modules, nvidia-dkms, etc.)
+    # encuentren este kernel. Un paquete nunca debe proveerse solo a sí mismo.
+    provides=("linux=${pkgver}" "linux-avalos=${pkgver}")
     conflicts=("linux-avalos-compat" "linux-avalos-compat-headers" "linux-avalos-bore" "linux-avalos-bore-headers")
-    backup=("etc/mkinitcpio.d/${pkgbase}.preset")
+    # NOTA: backup eliminado del preset de mkinitcpio.
+    # El preset se genera dinámicamente con _kver hardcodeado; si pacman
+    # genera un .pacnew con la versión anterior rompe la regeneración del initramfs.
 
     cd "linux-${pkgver}"
 
-    local modulesdir="${pkgdir}/usr/lib/modules/$(make LLVM=1 -s kernelrelease)"
+    # FIX: cachear kernelrelease — evita 4 invocaciones separadas de make
+    local _kver
+    _kver="$(make LLVM=1 -s kernelrelease)"
+    local modulesdir="${pkgdir}/usr/lib/modules/${_kver}"
     mkdir -p "${modulesdir}"
 
     echo "  → Instalando módulos…"
@@ -179,16 +230,17 @@ package_linux-avalos() {
 
     # Preset de mkinitcpio
     mkdir -p "${pkgdir}/etc/mkinitcpio.d"
-    local krel
-    krel="$(make LLVM=1 -s kernelrelease)"
     cat > "${pkgdir}/etc/mkinitcpio.d/${pkgbase}.preset" << EOF
 ALL_config='/etc/mkinitcpio.conf'
-ALL_kver="/usr/lib/modules/${krel}/vmlinuz"
+ALL_kver="/usr/lib/modules/${_kver}/vmlinuz"
 PRESETS=('default' 'fallback')
 default_image="/boot/initramfs-${pkgbase}.img"
-default_uki="/efi/EFI/Linux/arch-${pkgbase}.efi"
 fallback_image="/boot/initramfs-${pkgbase}-fallback.img"
 fallback_options='-S autodetect'
+# Nota: default_uki eliminado intencionalmente.
+# El instalador de AvalOS monta el ESP en /boot/efi, no en /efi,
+# por lo que intentar generar un UKI en /efi/EFI/Linux/ falla siempre.
+# GRUB, rEFInd y systemd-boot no necesitan UKI — usan vmlinuz + initramfs.
 EOF
 }
 
@@ -199,19 +251,30 @@ package_linux-avalos-headers() {
     provides=("linux-headers=${pkgver}")
 
     cd "linux-${pkgver}"
-    local builddir="${pkgdir}/usr/lib/modules/$(make LLVM=1 -s kernelrelease)/build"
+
+    # FIX: cachear kernelrelease — evita invocaciones redundantes de make
+    local _kver
+    _kver="$(make LLVM=1 -s kernelrelease)"
+    local builddir="${pkgdir}/usr/lib/modules/${_kver}/build"
 
     echo "  → Instalando headers en ${builddir}…"
 
+    # vmlinux se incluye intencionalmente: el live ISO de AvalOS lo necesita
+    # para soporte DKMS durante la sesión live. El instalador reemplaza estos
+    # kernels con linux-avalos una vez instalado en disco.
     install -Dt "${builddir}" -m644 .config Makefile System.map vmlinux
-    # Module.symvers: con ThinLTO puede no generarse en raíz; se instala si existe,
-    # o se crea vacío como fallback para que DKMS no falle al verificar la presencia del archivo.
+
+    # Module.symvers: con ThinLTO puede no generarse en raíz; si no existe
+    # el build falló silenciosamente — falla aquí con mensaje claro en lugar
+    # de dejar un archivo vacío que rompe DKMS con errores crípticos.
     if [[ -f Module.symvers ]]; then
         install -Dt "${builddir}" -m644 Module.symvers
     else
-        echo "  ⚠ Module.symvers ausente — creando archivo vacío (fallback DKMS)"
-        touch "${builddir}/Module.symvers"
+        error "Module.symvers ausente — ThinLTO no generó tabla de símbolos."
+        error "Revisar el log de 'make all' para errores de ld.lld o LTO."
+        exit 1
     fi
+
     install -Dt "${builddir}/kernel" -m644 kernel/Makefile
     install -Dt "${builddir}/arch/x86" -m644 arch/x86/Makefile
     cp -t "${builddir}" -a scripts
@@ -223,9 +286,19 @@ package_linux-avalos-headers() {
         echo "  ⚠ tools/objtool/objtool no encontrado — omitiendo (puede afectar algunos módulos DKMS)"
     fi
 
-    # Todos los Kconfig y headers (.h)
+    # FIX: reemplazar find+install por cp -a para los headers.
+    # El find original lanzaba una llamada a 'install' por cada uno de los
+    # >20 000 archivos .h del árbol del kernel (decenas de minutos extra)
+    # y generaba paths duplicados bajo builddir/builddir/ en kernels recientes.
+    # cp -a copia los directorios completos de una sola vez, igual que hace
+    # el PKGBUILD oficial de linux en Arch Linux.
+    cp -a include "${builddir}/"
+    cp -a arch/x86/include "${builddir}/arch/x86/"
+
+    # Kconfig: install por archivo es aceptable aquí — son ~300 archivos,
+    # no >20 000 como los headers. Se mantiene el find para preservar la
+    # estructura de directorios exacta requerida por make menuconfig.
     find . -name 'Kconfig*' -exec install -Dm644 {} "${builddir}/{}" \;
-    find . -name '*.h' -exec install -Dm644 {} "${builddir}/{}" \;
 
     # Eliminar referencias al directorio de build del host (rutas limpias)
     sed -i "s|${srcdir}|/usr/src|g" "${builddir}/Makefile"

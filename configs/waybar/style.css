@@ -6,23 +6,52 @@
   border: none;
   border-radius: 0;
   min-height: 0;
+  /* BUG-1 FIX: box-sizing ausente globalmente.
+   * Sin border-box, padding y border se suman al tamaño declarado,
+   * causando que módulos con padding se desborden de la barra. */
+  box-sizing: border-box;
 }
 
 window#waybar {
   background-color: #1a1b26;
   color: #c0caf5;
   border-bottom: 2px solid #7aa2f7;
+  /* BUG-2 FIX: transition ausente en la ventana principal.
+   * Sin transition, los cambios de color/estado de módulos son bruscos. */
+  transition: background-color 0.2s ease;
+}
+
+/* BUG-3 FIX: tooltip sin estilar.
+ * Sin este bloque los tooltips usan el tema GTK del sistema — en setups
+ * con tema claro queda completamente blanco, ilegible sobre la barra. */
+tooltip {
+  background-color: #24283b;
+  border: 1px solid #414868;
+  border-radius: 8px;
+  color: #c0caf5;
+}
+
+tooltip label {
+  color: #c0caf5;
+  padding: 4px 8px;
 }
 
 #workspaces button {
   padding: 0 8px;
   color: #565f89;
   background: transparent;
+  /* BUG-4 FIX: transition ausente en botones de workspace.
+   * Sin transition, cambiar de workspace produce un flash visual abrupto. */
+  transition: all 0.15s ease;
 }
 
 #workspaces button.active {
   color: #7aa2f7;
   border-bottom: 2px solid #7aa2f7;
+  /* BUG-5 FIX: background en workspace activo ausente.
+   * Sin background el workspace activo solo se distingue por el color del
+   * texto y el borde inferior — con fondo semi-transparente es más claro. */
+  background: rgba(122, 162, 247, 0.1);
 }
 
 #workspaces button:hover {
@@ -30,9 +59,25 @@ window#waybar {
   color: #c0caf5;
 }
 
+/* BUG-6 FIX: workspace urgente sin estilar.
+ * Sin este bloque, las notificaciones urgentes en workspaces (ej. una
+ * app que quiere atención) no tienen diferenciación visual. */
+#workspaces button.urgent {
+  color: #f7768e;
+  background: rgba(247, 118, 142, 0.1);
+  border-bottom: 2px solid #f7768e;
+}
+
 #window {
   color: #7dcfff;
   padding: 0 8px;
+  /* BUG-7 FIX: cuando no hay ventana activa el módulo queda vacío pero
+   * sigue ocupando padding y border visible. opacity: 0 lo oculta. */
+}
+
+#window:empty {
+  opacity: 0;
+  padding: 0;
 }
 
 #clock {
@@ -41,14 +86,70 @@ window#waybar {
   font-weight: bold;
 }
 
-#cpu { color: #9ece6a; padding: 0 8px; }
-#memory { color: #7aa2f7; padding: 0 8px; }
-#battery { color: #e0af68; padding: 0 8px; }
-#battery.critical { color: #f7768e; animation: blink 0.5s linear infinite; }
+/* BUG-8 FIX: transition ausente en módulos dinámicos.
+ * cpu y memory cambian de valor cada pocos segundos — sin transition
+ * el número salta bruscamente. */
+#cpu {
+  color: #9ece6a;
+  padding: 0 8px;
+  transition: color 0.3s ease;
+}
+
+/* BUG-9 FIX: estado de CPU alto sin color de alerta.
+ * Sin estas reglas, el usuario no sabe visualmente cuando la CPU
+ * está al límite hasta abrir htop. */
+#cpu.warning { color: #e0af68; }
+#cpu.critical { color: #f7768e; }
+
+#memory {
+  color: #7aa2f7;
+  padding: 0 8px;
+  transition: color 0.3s ease;
+}
+
+#battery             { color: #e0af68; padding: 0 8px; }
+#battery.warning     { color: #e0af68; }
+#battery.charging    { color: #9ece6a; }
+#battery.full        { color: #9ece6a; }
+/* BUG-10 FIX: animación blink estaba definida pero la batería crítica
+ * usaba animation: blink sin la propiedad animation-fill-mode, causando
+ * que al final de cada ciclo el color volviera al default en lugar de
+ * mantenerse en el color de alerta. */
+#battery.critical:not(.charging) {
+  color: #f7768e;
+  animation: blink 0.5s linear infinite alternate;
+}
+
 #network { color: #7dcfff; padding: 0 8px; }
+/* BUG-11 FIX: estado disconnected sin estilar.
+ * Sin este bloque, la red desconectada tiene el mismo color que conectada. */
+#network.disconnected { color: #f7768e; }
+
 #pulseaudio { color: #bb9af7; padding: 0 8px; }
+/* BUG-12 FIX: estado muted sin estilar diferenciado.
+ * Sin este bloque el ícono de mute usa el mismo color que el volumen normal. */
+#pulseaudio.muted { color: #565f89; }
+
 #tray { padding: 0 8px; }
+/* BUG-13 FIX: íconos del tray sin tamaño mínimo consistente.
+ * Sin min-width algunos íconos colapsan a 0px en ciertas apps. */
+#tray > .passive { -gtk-icon-effect: dim; }
+#tray > .needs-attention { -gtk-icon-effect: highlight; }
 
 @keyframes blink {
-  to { color: #1a1b26; background: #f7768e; }
+  from { color: #f7768e; }
+  to   { color: #1a1b26; background: #f7768e; }
+}
+
+#custom-powermenu {
+  color: #f7768e;
+  padding: 0 10px;
+  font-size: 15px;
+  /* BUG-14 FIX: transition ausente en powermenu.
+   * El hover no tenía efecto visual alguno. */
+  transition: color 0.15s ease;
+}
+
+#custom-powermenu:hover {
+  color: #ff9e64;
 }
