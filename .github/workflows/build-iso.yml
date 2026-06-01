@@ -98,46 +98,8 @@ jobs:
           # python3 textwrap.dedent() elimina la indentación común y escribe
           # el archivo sin espacios iniciales — igual que lo haría un editor.
 
-          python3 - "$BUILD_DIR" "$VERSION" << 'PREPYEOF'
-import sys, os, textwrap
-BUILD_DIR, VERSION = sys.argv[1], sys.argv[2]
-
-def w(path, content, executable=False):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        f.write(textwrap.dedent(content).lstrip('\n'))
-    if executable:
-        os.chmod(path, 0o755)
-
-# profiledef.sh
-import time
-label_date = time.strftime('%y%m%d')
-w(f"{BUILD_DIR}/profiledef.sh", f"""
-    #!/usr/bin/env bash
-    iso_name="avalos-{VERSION}"
-    iso_label="AVLS{label_date}"
-    iso_publisher="AvalOS <https://github.com/jeffreysama/avalos>"
-    iso_application="AvalOS — Arch-based · Hyprland · Tokyo Night"
-    iso_version="{VERSION}"
-    install_dir="arch"
-    buildmodes=('iso')
-    bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
-    arch="x86_64"
-    pacman_conf="pacman.conf"
-    airootfs_image_type="squashfs"
-    airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '19' '-b' '1M')
-    bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
-    file_permissions=(
-        ["/etc/shadow"]="0:0:400"
-        ["/etc/gshadow"]="0:0:400"
-        ["/root"]="0:0:750"
-        ["/usr/local/bin/avalos-install"]="0:0:755"
-        ["/usr/local/bin/avalos-gpu-env"]="0:0:755"
-    )
-    """, executable=True)
-
-print("profiledef.sh OK")
-PREPYEOF
+          printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkJVSUxEX0RJUiwgVkVSU0lPTiA9IHN5cy5hcmd2WzFdLCBzeXMuYXJndlsyXQoKZGVmIHcocGF0aCwgY29udGVudCwgZXhlY3V0YWJsZT1GYWxzZSk6CiAgICBvcy5tYWtlZGlycyhvcy5wYXRoLmRpcm5hbWUocGF0aCksIGV4aXN0X29rPVRydWUpCiAgICB3aXRoIG9wZW4ocGF0aCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodGV4dHdyYXAuZGVkZW50KGNvbnRlbnQpLmxzdHJpcCgnXG4nKSkKICAgIGlmIGV4ZWN1dGFibGU6CiAgICAgICAgb3MuY2htb2QocGF0aCwgMG83NTUpCgojIHByb2ZpbGVkZWYuc2gKaW1wb3J0IHRpbWUKbGFiZWxfZGF0ZSA9IHRpbWUuc3RyZnRpbWUoJyV5JW0lZCcpCncoZiJ7QlVJTERfRElSfS9wcm9maWxlZGVmLnNoIiwgZiIiIgogICAgIyEvdXNyL2Jpbi9lbnYgYmFzaAogICAgaXNvX25hbWU9ImF2YWxvcy17VkVSU0lPTn0iCiAgICBpc29fbGFiZWw9IkFWTFN7bGFiZWxfZGF0ZX0iCiAgICBpc29fcHVibGlzaGVyPSJBdmFsT1MgPGh0dHBzOi8vZ2l0aHViLmNvbS9qZWZmcmV5c2FtYS9hdmFsb3M+IgogICAgaXNvX2FwcGxpY2F0aW9uPSJBdmFsT1Mg4oCUIEFyY2gtYmFzZWQgwrcgSHlwcmxhbmQgwrcgVG9reW8gTmlnaHQiCiAgICBpc29fdmVyc2lvbj0ie1ZFUlNJT059IgogICAgaW5zdGFsbF9kaXI9ImFyY2giCiAgICBidWlsZG1vZGVzPSgnaXNvJykKICAgIGJvb3Rtb2Rlcz0oJ2Jpb3Muc3lzbGludXgubWJyJyAnYmlvcy5zeXNsaW51eC5lbHRvcml0bycgJ3VlZmkteDY0LnN5c3RlbWQtYm9vdC5lc3AnICd1ZWZpLXg2NC5zeXN0ZW1kLWJvb3QuZWx0b3JpdG8nKQogICAgYXJjaD0ieDg2XzY0IgogICAgcGFjbWFuX2NvbmY9InBhY21hbi5jb25mIgogICAgYWlyb290ZnNfaW1hZ2VfdHlwZT0ic3F1YXNoZnMiCiAgICBhaXJvb3Rmc19pbWFnZV90b29sX29wdGlvbnM9KCctY29tcCcgJ3pzdGQnICctWGNvbXByZXNzaW9uLWxldmVsJyAnMTknICctYicgJzFNJykKICAgIGJvb3RzdHJhcF90YXJiYWxsX2NvbXByZXNzaW9uPSgnenN0ZCcgJy1jJyAnLVQwJyAnLS1hdXRvLXRocmVhZHM9bG9naWNhbCcgJy0tbG9uZycgJy0xOScpCiAgICBmaWxlX3Blcm1pc3Npb25zPSgKICAgICAgICBbIi9ldGMvc2hhZG93Il09IjA6MDo0MDAiCiAgICAgICAgWyIvZXRjL2dzaGFkb3ciXT0iMDowOjQwMCIKICAgICAgICBbIi9yb290Il09IjA6MDo3NTAiCiAgICAgICAgWyIvdXNyL2xvY2FsL2Jpbi9hdmFsb3MtaW5zdGFsbCJdPSIwOjA6NzU1IgogICAgICAgIFsiL3Vzci9sb2NhbC9iaW4vYXZhbG9zLWdwdS1lbnYiXT0iMDowOjc1NSIKICAgICkKICAgICIiIiwgZXhlY3V0YWJsZT1UcnVlKQoKcHJpbnQoInByb2ZpbGVkZWYuc2ggT0siKQo=" | base64 -d > /tmp/pyprepyeof.py
+          python3 /tmp/pyprepyeof.py "$BUILD_DIR" "$VERSION"
 
           # pacman.conf del ISO — incluye repo avalos
           cp /etc/pacman.conf "$BUILD_DIR/pacman.conf"
@@ -161,65 +123,8 @@ PREPYEOF
         run: |
           set -u
           KERNEL="${{ steps.vars.outputs.kernel }}"
-          python3 - "$BUILD_DIR/packages.x86_64" "$KERNEL" << 'PKGPYEOF'
-import sys
-dest, kernel = sys.argv[1], sys.argv[2]
-pkgs = [
-    "# Kernel — el live usa 'linux' (estándar Arch) para máxima compatibilidad.",
-    "# El instalador detecta la CPU del usuario y descarga el correcto:",
-    "#   CPU x86-64-v3/v4 (AVX2+) → instala linux-avalos",
-    "#   CPU x86-64/v2 (sin AVX2)  → instala linux-avalos-compat",
-    "linux",  # kernel estándar Arch — arranca en cualquier CPU x86-64
-    "# Firmware — cubre AMD, Intel, WiFi, Ethernet, Bluetooth y demás",
-    "linux-firmware",
-    "intel-ucode",
-    "amd-ucode",
-    "# Base",
-    "base", "base-devel", "sudo", "bash", "bash-completion",
-    "# Hyprland",
-    "hyprland", "hyprpaper", "waybar", "kitty",
-    "rofi-wayland",    # lanzador de apps — versión Wayland
-    "mako",            # notificaciones nativas Wayland
-    "hypridle",        # BUG-013: sin esto la pantalla puede apagarse sin reactivación en el live
-    "brightnessctl",   # brillo — hyprland.conf: XF86MonBrightness{Up,Down}
-    "sddm", "qt5-graphicaleffects", "plymouth",
-    "qt5-wayland", "qt6-wayland", "hyprpolkitagent",
-    "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
-    "# Audio",
-    "pipewire", "pipewire-pulse", "pipewire-alsa", "pipewire-jack", "wireplumber",
-    "# GPU AMD",
-    "mesa", "vulkan-radeon", "libva-mesa-driver",
-    "lib32-mesa", "lib32-vulkan-radeon",
-    "# GPU Intel",
-    "vulkan-intel", "intel-media-driver",
-    "libva-intel-driver", "lib32-vulkan-intel",
-    "# Fuentes",
-    "ttf-jetbrains-mono-nerd", "ttf-nerd-fonts-symbols",
-    "noto-fonts", "noto-fonts-emoji", "noto-fonts-cjk",
-    "# Live tools",
-    "networkmanager", "nm-connection-editor",
-    "git", "curl", "wget", "python", "python-pip",
-    "webkit2gtk-4.1",  # motor de renderizado — pywebview lo requiere en runtime
-    "python-gobject",  # bindings GObject para Python — pywebview los importa al arrancar
-    # FIX: python-pywebview se instala aquí como paquete AUR en lugar de vía pip
-    # dentro del chroot. pip install dentro del chroot de mkarchiso no tiene
-    # acceso a internet (red aislada por defecto) y falla silenciosamente.
-    # Opción alternativa si no está en AUR: usar customize_airootfs.sh
-    # solo para instalar wheels pre-descargados copiados al airootfs.
-    "python-pywebview",
-    "fastfetch", "htop", "nano", "vim",
-    "grim", "slurp", "wl-clipboard", "xdg-utils",
-    "udisks2", "udiskie", "gvfs", "thunar", "file-roller", "firefox",
-    "# Instalacion",
-    "arch-install-scripts", "parted", "dosfstools",
-    "e2fsprogs", "btrfs-progs", "gptfdisk",
-    "# archiso",
-    "archiso", "syslinux", "edk2-shell",
-]
-with open(dest, 'w') as f:
-    f.write('\n'.join(pkgs) + '\n')
-print(f"packages.x86_64 generado ({len([p for p in pkgs if not p.startswith('#')])} paquetes)")
-PKGPYEOF
+          printf '%s' "aW1wb3J0IHN5cwpkZXN0LCBrZXJuZWwgPSBzeXMuYXJndlsxXSwgc3lzLmFyZ3ZbMl0KcGtncyA9IFsKICAgICIjIEtlcm5lbCDigJQgZWwgbGl2ZSB1c2EgJ2xpbnV4JyAoZXN0w6FuZGFyIEFyY2gpIHBhcmEgbcOheGltYSBjb21wYXRpYmlsaWRhZC4iLAogICAgIiMgRWwgaW5zdGFsYWRvciBkZXRlY3RhIGxhIENQVSBkZWwgdXN1YXJpbyB5IGRlc2NhcmdhIGVsIGNvcnJlY3RvOiIsCiAgICAiIyAgIENQVSB4ODYtNjQtdjMvdjQgKEFWWDIrKSDihpIgaW5zdGFsYSBsaW51eC1hdmFsb3MiLAogICAgIiMgICBDUFUgeDg2LTY0L3YyIChzaW4gQVZYMikgIOKGkiBpbnN0YWxhIGxpbnV4LWF2YWxvcy1jb21wYXQiLAogICAgImxpbnV4IiwgICMga2VybmVsIGVzdMOhbmRhciBBcmNoIOKAlCBhcnJhbmNhIGVuIGN1YWxxdWllciBDUFUgeDg2LTY0CiAgICAiIyBGaXJtd2FyZSDigJQgY3VicmUgQU1ELCBJbnRlbCwgV2lGaSwgRXRoZXJuZXQsIEJsdWV0b290aCB5IGRlbcOhcyIsCiAgICAibGludXgtZmlybXdhcmUiLAogICAgImludGVsLXVjb2RlIiwKICAgICJhbWQtdWNvZGUiLAogICAgIiMgQmFzZSIsCiAgICAiYmFzZSIsICJiYXNlLWRldmVsIiwgInN1ZG8iLCAiYmFzaCIsICJiYXNoLWNvbXBsZXRpb24iLAogICAgIiMgSHlwcmxhbmQiLAogICAgImh5cHJsYW5kIiwgImh5cHJwYXBlciIsICJ3YXliYXIiLCAia2l0dHkiLAogICAgInJvZmktd2F5bGFuZCIsICAgICMgbGFuemFkb3IgZGUgYXBwcyDigJQgdmVyc2nDs24gV2F5bGFuZAogICAgIm1ha28iLCAgICAgICAgICAgICMgbm90aWZpY2FjaW9uZXMgbmF0aXZhcyBXYXlsYW5kCiAgICAiaHlwcmlkbGUiLCAgICAgICAgIyBCVUctMDEzOiBzaW4gZXN0byBsYSBwYW50YWxsYSBwdWVkZSBhcGFnYXJzZSBzaW4gcmVhY3RpdmFjacOzbiBlbiBlbCBsaXZlCiAgICAiYnJpZ2h0bmVzc2N0bCIsICAgIyBicmlsbG8g4oCUIGh5cHJsYW5kLmNvbmY6IFhGODZNb25CcmlnaHRuZXNze1VwLERvd259CiAgICAic2RkbSIsICJxdDUtZ3JhcGhpY2FsZWZmZWN0cyIsICJwbHltb3V0aCIsCiAgICAicXQ1LXdheWxhbmQiLCAicXQ2LXdheWxhbmQiLCAiaHlwcnBvbGtpdGFnZW50IiwKICAgICJ4ZGctZGVza3RvcC1wb3J0YWwtaHlwcmxhbmQiLCAieGRnLWRlc2t0b3AtcG9ydGFsLWd0ayIsCiAgICAiIyBBdWRpbyIsCiAgICAicGlwZXdpcmUiLCAicGlwZXdpcmUtcHVsc2UiLCAicGlwZXdpcmUtYWxzYSIsICJwaXBld2lyZS1qYWNrIiwgIndpcmVwbHVtYmVyIiwKICAgICIjIEdQVSBBTUQiLAogICAgIm1lc2EiLCAidnVsa2FuLXJhZGVvbiIsICJsaWJ2YS1tZXNhLWRyaXZlciIsCiAgICAibGliMzItbWVzYSIsICJsaWIzMi12dWxrYW4tcmFkZW9uIiwKICAgICIjIEdQVSBJbnRlbCIsCiAgICAidnVsa2FuLWludGVsIiwgImludGVsLW1lZGlhLWRyaXZlciIsCiAgICAibGlidmEtaW50ZWwtZHJpdmVyIiwgImxpYjMyLXZ1bGthbi1pbnRlbCIsCiAgICAiIyBGdWVudGVzIiwKICAgICJ0dGYtamV0YnJhaW5zLW1vbm8tbmVyZCIsICJ0dGYtbmVyZC1mb250cy1zeW1ib2xzIiwKICAgICJub3RvLWZvbnRzIiwgIm5vdG8tZm9udHMtZW1vamkiLCAibm90by1mb250cy1jamsiLAogICAgIiMgTGl2ZSB0b29scyIsCiAgICAibmV0d29ya21hbmFnZXIiLCAibm0tY29ubmVjdGlvbi1lZGl0b3IiLAogICAgImdpdCIsICJjdXJsIiwgIndnZXQiLCAicHl0aG9uIiwgInB5dGhvbi1waXAiLAogICAgIndlYmtpdDJndGstNC4xIiwgICMgbW90b3IgZGUgcmVuZGVyaXphZG8g4oCUIHB5d2VidmlldyBsbyByZXF1aWVyZSBlbiBydW50aW1lCiAgICAicHl0aG9uLWdvYmplY3QiLCAgIyBiaW5kaW5ncyBHT2JqZWN0IHBhcmEgUHl0aG9uIOKAlCBweXdlYnZpZXcgbG9zIGltcG9ydGEgYWwgYXJyYW5jYXIKICAgICMgRklYOiBweXRob24tcHl3ZWJ2aWV3IHNlIGluc3RhbGEgYXF1w60gY29tbyBwYXF1ZXRlIEFVUiBlbiBsdWdhciBkZSB2w61hIHBpcAogICAgIyBkZW50cm8gZGVsIGNocm9vdC4gcGlwIGluc3RhbGwgZGVudHJvIGRlbCBjaHJvb3QgZGUgbWthcmNoaXNvIG5vIHRpZW5lCiAgICAjIGFjY2VzbyBhIGludGVybmV0IChyZWQgYWlzbGFkYSBwb3IgZGVmZWN0bykgeSBmYWxsYSBzaWxlbmNpb3NhbWVudGUuCiAgICAjIE9wY2nDs24gYWx0ZXJuYXRpdmEgc2kgbm8gZXN0w6EgZW4gQVVSOiB1c2FyIGN1c3RvbWl6ZV9haXJvb3Rmcy5zaAogICAgIyBzb2xvIHBhcmEgaW5zdGFsYXIgd2hlZWxzIHByZS1kZXNjYXJnYWRvcyBjb3BpYWRvcyBhbCBhaXJvb3Rmcy4KICAgICJweXRob24tcHl3ZWJ2aWV3IiwKICAgICJmYXN0ZmV0Y2giLCAiaHRvcCIsICJuYW5vIiwgInZpbSIsCiAgICAiZ3JpbSIsICJzbHVycCIsICJ3bC1jbGlwYm9hcmQiLCAieGRnLXV0aWxzIiwKICAgICJ1ZGlza3MyIiwgInVkaXNraWUiLCAiZ3ZmcyIsICJ0aHVuYXIiLCAiZmlsZS1yb2xsZXIiLCAiZmlyZWZveCIsCiAgICAiIyBJbnN0YWxhY2lvbiIsCiAgICAiYXJjaC1pbnN0YWxsLXNjcmlwdHMiLCAicGFydGVkIiwgImRvc2ZzdG9vbHMiLAogICAgImUyZnNwcm9ncyIsICJidHJmcy1wcm9ncyIsICJncHRmZGlzayIsCiAgICAiIyBhcmNoaXNvIiwKICAgICJhcmNoaXNvIiwgInN5c2xpbnV4IiwgImVkazItc2hlbGwiLApdCndpdGggb3BlbihkZXN0LCAndycpIGFzIGY6CiAgICBmLndyaXRlKCdcbicuam9pbihwa2dzKSArICdcbicpCnByaW50KGYicGFja2FnZXMueDg2XzY0IGdlbmVyYWRvICh7bGVuKFtwIGZvciBwIGluIHBrZ3MgaWYgbm90IHAuc3RhcnRzd2l0aCgnIycpXSl9IHBhcXVldGVzKSIpCg==" | base64 -d > /tmp/pypkgpyeof.py
+          python3 /tmp/pypkgpyeof.py "$BUILD_DIR/packages.x86_64" "$KERNEL"
           wc -l "$BUILD_DIR/packages.x86_64"
 
       - name: Configurar airootfs (scripts, configs, wallpaper)
@@ -252,70 +157,8 @@ PKGPYEOF
 
           # FIX: todos los archivos de configuración escritos via python3 para
           # evitar indentación YAML en el contenido de los archivos.
-          python3 - "$AIROOTFS" << 'CFGPYEOF'
-import sys, os, textwrap
-A = sys.argv[1]
-
-def w(path, content, executable=False):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        f.write(textwrap.dedent(content).lstrip('\n'))
-    if executable:
-        os.chmod(path, 0o755)
-
-# ── Preset de mkinitcpio para linux estándar (live) ───────────────────────────
-# FIX: archivo escrito sin indentación — el parser de mkinitcpio es sensible
-# a espacios iniciales en las líneas de asignación de variables.
-w(f"{A}/etc/mkinitcpio.d/linux.preset", """
-    ALL_config='/etc/mkinitcpio.conf'
-    ALL_kver='/boot/vmlinuz-linux'
-    PRESETS=('default' 'fallback' 'archiso')
-
-    default_image='/boot/initramfs-linux.img'
-    fallback_image='/boot/initramfs-linux-fallback.img'
-    fallback_options='-S autodetect'
-
-    archiso_config='/etc/mkinitcpio.conf.d/archiso.conf'
-    archiso_image='/boot/initramfs-linux.img'
-    """)
-
-# ── archiso.conf: hooks mínimos para el initramfs del live ────────────────────
-# FIX: archivo escrito sin indentación — mkinitcpio parsea HOOKS= en col-0.
-w(f"{A}/etc/mkinitcpio.conf.d/archiso.conf", """
-    HOOKS=(base systemd keyboard sd-vconsole plymouth archiso block filesystems)
-    COMPRESSION="zstd"
-    """)
-
-# ── sysctl BBR ────────────────────────────────────────────────────────────────
-w(f"{A}/etc/sysctl.d/80-avalos-bbr.conf", """
-    net.core.default_qdisc = fq
-    net.ipv4.tcp_congestion_control = bbr
-    """)
-
-# ── SDDM autologin root en live ───────────────────────────────────────────────
-w(f"{A}/etc/sddm.conf.d/autologin.conf", """
-    [Autologin]
-    User=root
-    Session=hyprland
-    """)
-
-# ── Hyprland .desktop — garantiza que SDDM encuentra la sesión ───────────────
-# FIX: si el paquete hyprland no instala este archivo (varía por versión),
-# SDDM no lo lista y hace fallback a X11 o muestra error de sesión no encontrada.
-w(f"{A}/usr/share/wayland-sessions/hyprland.desktop", """
-    [Desktop Entry]
-    Name=Hyprland
-    Comment=An intelligent dynamic tiling Wayland compositor
-    Exec=Hyprland
-    Type=Application
-    """)
-
-# ── gpu-env.conf vacío (sobreescrito por el servicio antes de Hyprland) ───────
-os.makedirs(f"{A}/root/.config/hypr", exist_ok=True)
-open(f"{A}/root/.config/hypr/gpu-env.conf", 'w').close()
-
-print("Configs base OK")
-CFGPYEOF
+          printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkEgPSBzeXMuYXJndlsxXQoKZGVmIHcocGF0aCwgY29udGVudCwgZXhlY3V0YWJsZT1GYWxzZSk6CiAgICBvcy5tYWtlZGlycyhvcy5wYXRoLmRpcm5hbWUocGF0aCksIGV4aXN0X29rPVRydWUpCiAgICB3aXRoIG9wZW4ocGF0aCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodGV4dHdyYXAuZGVkZW50KGNvbnRlbnQpLmxzdHJpcCgnXG4nKSkKICAgIGlmIGV4ZWN1dGFibGU6CiAgICAgICAgb3MuY2htb2QocGF0aCwgMG83NTUpCgojIOKUgOKUgCBQcmVzZXQgZGUgbWtpbml0Y3BpbyBwYXJhIGxpbnV4IGVzdMOhbmRhciAobGl2ZSkg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACiMgRklYOiBhcmNoaXZvIGVzY3JpdG8gc2luIGluZGVudGFjacOzbiDigJQgZWwgcGFyc2VyIGRlIG1raW5pdGNwaW8gZXMgc2Vuc2libGUKIyBhIGVzcGFjaW9zIGluaWNpYWxlcyBlbiBsYXMgbMOtbmVhcyBkZSBhc2lnbmFjacOzbiBkZSB2YXJpYWJsZXMuCncoZiJ7QX0vZXRjL21raW5pdGNwaW8uZC9saW51eC5wcmVzZXQiLCAiIiIKICAgIEFMTF9jb25maWc9Jy9ldGMvbWtpbml0Y3Bpby5jb25mJwogICAgQUxMX2t2ZXI9Jy9ib290L3ZtbGludXotbGludXgnCiAgICBQUkVTRVRTPSgnZGVmYXVsdCcgJ2ZhbGxiYWNrJyAnYXJjaGlzbycpCgogICAgZGVmYXVsdF9pbWFnZT0nL2Jvb3QvaW5pdHJhbWZzLWxpbnV4LmltZycKICAgIGZhbGxiYWNrX2ltYWdlPScvYm9vdC9pbml0cmFtZnMtbGludXgtZmFsbGJhY2suaW1nJwogICAgZmFsbGJhY2tfb3B0aW9ucz0nLVMgYXV0b2RldGVjdCcKCiAgICBhcmNoaXNvX2NvbmZpZz0nL2V0Yy9ta2luaXRjcGlvLmNvbmYuZC9hcmNoaXNvLmNvbmYnCiAgICBhcmNoaXNvX2ltYWdlPScvYm9vdC9pbml0cmFtZnMtbGludXguaW1nJwogICAgIiIiKQoKIyDilIDilIAgYXJjaGlzby5jb25mOiBob29rcyBtw61uaW1vcyBwYXJhIGVsIGluaXRyYW1mcyBkZWwgbGl2ZSDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIAKIyBGSVg6IGFyY2hpdm8gZXNjcml0byBzaW4gaW5kZW50YWNpw7NuIOKAlCBta2luaXRjcGlvIHBhcnNlYSBIT09LUz0gZW4gY29sLTAuCncoZiJ7QX0vZXRjL21raW5pdGNwaW8uY29uZi5kL2FyY2hpc28uY29uZiIsICIiIgogICAgSE9PS1M9KGJhc2Ugc3lzdGVtZCBrZXlib2FyZCBzZC12Y29uc29sZSBwbHltb3V0aCBhcmNoaXNvIGJsb2NrIGZpbGVzeXN0ZW1zKQogICAgQ09NUFJFU1NJT049InpzdGQiCiAgICAiIiIpCgojIOKUgOKUgCBzeXNjdGwgQkJSIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAp3KGYie0F9L2V0Yy9zeXNjdGwuZC84MC1hdmFsb3MtYmJyLmNvbmYiLCAiIiIKICAgIG5ldC5jb3JlLmRlZmF1bHRfcWRpc2MgPSBmcQogICAgbmV0LmlwdjQudGNwX2Nvbmdlc3Rpb25fY29udHJvbCA9IGJicgogICAgIiIiKQoKIyDilIDilIAgU0RETSBhdXRvbG9naW4gcm9vdCBlbiBsaXZlIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAp3KGYie0F9L2V0Yy9zZGRtLmNvbmYuZC9hdXRvbG9naW4uY29uZiIsICIiIgogICAgW0F1dG9sb2dpbl0KICAgIFVzZXI9cm9vdAogICAgU2Vzc2lvbj1oeXBybGFuZAogICAgIiIiKQoKIyDilIDilIAgSHlwcmxhbmQgLmRlc2t0b3Ag4oCUIGdhcmFudGl6YSBxdWUgU0RETSBlbmN1ZW50cmEgbGEgc2VzacOzbiDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIAKIyBGSVg6IHNpIGVsIHBhcXVldGUgaHlwcmxhbmQgbm8gaW5zdGFsYSBlc3RlIGFyY2hpdm8gKHZhcsOtYSBwb3IgdmVyc2nDs24pLAojIFNERE0gbm8gbG8gbGlzdGEgeSBoYWNlIGZhbGxiYWNrIGEgWDExIG8gbXVlc3RyYSBlcnJvciBkZSBzZXNpw7NuIG5vIGVuY29udHJhZGEuCncoZiJ7QX0vdXNyL3NoYXJlL3dheWxhbmQtc2Vzc2lvbnMvaHlwcmxhbmQuZGVza3RvcCIsICIiIgogICAgW0Rlc2t0b3AgRW50cnldCiAgICBOYW1lPUh5cHJsYW5kCiAgICBDb21tZW50PUFuIGludGVsbGlnZW50IGR5bmFtaWMgdGlsaW5nIFdheWxhbmQgY29tcG9zaXRvcgogICAgRXhlYz1IeXBybGFuZAogICAgVHlwZT1BcHBsaWNhdGlvbgogICAgIiIiKQoKIyDilIDilIAgZ3B1LWVudi5jb25mIHZhY8OtbyAoc29icmVlc2NyaXRvIHBvciBlbCBzZXJ2aWNpbyBhbnRlcyBkZSBIeXBybGFuZCkg4pSA4pSA4pSA4pSA4pSA4pSA4pSACm9zLm1ha2VkaXJzKGYie0F9L3Jvb3QvLmNvbmZpZy9oeXByIiwgZXhpc3Rfb2s9VHJ1ZSkKb3BlbihmIntBfS9yb290Ly5jb25maWcvaHlwci9ncHUtZW52LmNvbmYiLCAndycpLmNsb3NlKCkKCnByaW50KCJDb25maWdzIGJhc2UgT0siKQo=" | base64 -d > /tmp/pycfgpyeof.py
+          python3 /tmp/pycfgpyeof.py "$AIROOTFS"
 
           # ── Mirrorlist ────────────────────────────────────────────────────────
           cp /etc/pacman.d/mirrorlist "$AIROOTFS/etc/pacman.d/mirrorlist" 2>/dev/null || \
@@ -335,52 +178,15 @@ CFGPYEOF
           # (2) python-pywebview se movió a packages.x86_64 — este script ahora
           # solo hace tareas que REQUIEREN estar dentro del chroot (locale, etc.)
           # y no instala paquetes vía pip (sin red en el chroot de mkarchiso).
-          cat > "$AIROOTFS/etc/customize_airootfs.sh" << 'CUSTOMEOF'
-#!/usr/bin/env bash
-set -euo pipefail
-echo "[AvalOS] Ejecutando customize_airootfs.sh..."
-
-# Locale en español (por defecto) e inglés + Chino Simplificado habilitados
-sed -i 's/^#\(es_ES.UTF-8\)/\1/' /etc/locale.gen
-sed -i 's/^#\(en_US.UTF-8\)/\1/' /etc/locale.gen
-sed -i 's/^#\(zh_CN.UTF-8\)/\1/' /etc/locale.gen
-locale-gen
-
-echo "[AvalOS] customize_airootfs.sh completado"
-CUSTOMEOF
+          printf '%s' "IyEvdXNyL2Jpbi9lbnYgYmFzaApzZXQgLWV1byBwaXBlZmFpbAplY2hvICJbQXZhbE9TXSBFamVjdXRhbmRvIGN1c3RvbWl6ZV9haXJvb3Rmcy5zaC4uLiIKCiMgTG9jYWxlIGVuIGVzcGHDsW9sIChwb3IgZGVmZWN0bykgZSBpbmdsw6lzICsgQ2hpbm8gU2ltcGxpZmljYWRvIGhhYmlsaXRhZG9zCnNlZCAtaSAncy9eI1woZXNfRVMuVVRGLThcKS9cMS8nIC9ldGMvbG9jYWxlLmdlbgpzZWQgLWkgJ3MvXiNcKGVuX1VTLlVURi04XCkvXDEvJyAvZXRjL2xvY2FsZS5nZW4Kc2VkIC1pICdzL14jXCh6aF9DTi5VVEYtOFwpL1wxLycgL2V0Yy9sb2NhbGUuZ2VuCmxvY2FsZS1nZW4KCmVjaG8gIltBdmFsT1NdIGN1c3RvbWl6ZV9haXJvb3Rmcy5zaCBjb21wbGV0YWRvIgo=" | base64 -d > "$AIROOTFS/etc/customize_airootfs.sh"
           chmod 755 "$AIROOTFS/etc/customize_airootfs.sh"
 
           # ── avalos-gpu-env ────────────────────────────────────────────────────
-          cat > "$AIROOTFS/usr/local/bin/avalos-gpu-env" << 'GPUEOF'
-#!/bin/bash
-HYPR_CFG="$HOME/.config/hypr/gpu-env.conf"
-mkdir -p "$(dirname "$HYPR_CFG")"
-if lspci 2>/dev/null | grep -qiE 'amd|radeon|amdgpu'; then
-    printf 'env = AMD_VULKAN_ICD,RADV\nenv = VDPAU_DRIVER,radeonsi\nenv = LIBVA_DRIVER_NAME,radeonsi\n' \
-      > "$HYPR_CFG"
-elif lspci 2>/dev/null | grep -qiE 'intel.*(graphics|vga|display)'; then
-    printf 'env = LIBVA_DRIVER_NAME,iHD\nenv = VDPAU_DRIVER,va_gl\n' > "$HYPR_CFG"
-else
-    : > "$HYPR_CFG"
-fi
-GPUEOF
+          printf '%s' "IyEvYmluL2Jhc2gKSFlQUl9DRkc9IiRIT01FLy5jb25maWcvaHlwci9ncHUtZW52LmNvbmYiCm1rZGlyIC1wICIkKGRpcm5hbWUgIiRIWVBSX0NGRyIpIgppZiBsc3BjaSAyPi9kZXYvbnVsbCB8IGdyZXAgLXFpRSAnYW1kfHJhZGVvbnxhbWRncHUnOyB0aGVuCiAgICBwcmludGYgJ2VudiA9IEFNRF9WVUxLQU5fSUNELFJBRFZcbmVudiA9IFZEUEFVX0RSSVZFUixyYWRlb25zaVxuZW52ID0gTElCVkFfRFJJVkVSX05BTUUscmFkZW9uc2lcbicgXAogICAgICA+ICIkSFlQUl9DRkciCmVsaWYgbHNwY2kgMj4vZGV2L251bGwgfCBncmVwIC1xaUUgJ2ludGVsLiooZ3JhcGhpY3N8dmdhfGRpc3BsYXkpJzsgdGhlbgogICAgcHJpbnRmICdlbnYgPSBMSUJWQV9EUklWRVJfTkFNRSxpSERcbmVudiA9IFZEUEFVX0RSSVZFUix2YV9nbFxuJyA+ICIkSFlQUl9DRkciCmVsc2UKICAgIDogPiAiJEhZUFJfQ0ZHIgpmaQo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-gpu-env"
           chmod 755 "$AIROOTFS/usr/local/bin/avalos-gpu-env"
 
           # ── gpu-detect service (corre antes de SDDM) ──────────────────────────
-          cat > "$AIROOTFS/etc/systemd/system/avalos-gpu-detect.service" << 'SVCEOF'
-[Unit]
-Description=AvalOS GPU Environment Detection
-Before=sddm.service display-manager.service
-After=systemd-udev-settle.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/avalos-gpu-env
-RemainAfterExit=yes
-
-[Install]
-WantedBy=graphical.target
-SVCEOF
+          printf '%s' "W1VuaXRdCkRlc2NyaXB0aW9uPUF2YWxPUyBHUFUgRW52aXJvbm1lbnQgRGV0ZWN0aW9uCkJlZm9yZT1zZGRtLnNlcnZpY2UgZGlzcGxheS1tYW5hZ2VyLnNlcnZpY2UKQWZ0ZXI9c3lzdGVtZC11ZGV2LXNldHRsZS5zZXJ2aWNlCgpbU2VydmljZV0KVHlwZT1vbmVzaG90CkV4ZWNTdGFydD0vdXNyL2xvY2FsL2Jpbi9hdmFsb3MtZ3B1LWVudgpSZW1haW5BZnRlckV4aXQ9eWVzCgpbSW5zdGFsbF0KV2FudGVkQnk9Z3JhcGhpY2FsLnRhcmdldAo=" | base64 -d > "$AIROOTFS/etc/systemd/system/avalos-gpu-detect.service"
           ln -sf /etc/systemd/system/avalos-gpu-detect.service \
             "$AIROOTFS/etc/systemd/system/graphical.target.wants/avalos-gpu-detect.service"
 
@@ -398,11 +204,7 @@ SVCEOF
             [[ -f "scripts/translations.py" ]] && \
               cp scripts/translations.py \
                  "$AIROOTFS/usr/share/avalos/installer/translations.py"
-            cat > "$AIROOTFS/usr/local/bin/avalos-install" << 'LAUNCHEOF'
-#!/bin/bash
-export PYTHONPATH="/usr/share/avalos/installer${PYTHONPATH:+:$PYTHONPATH}"
-exec python /usr/share/avalos/installer/skill_instalar_usb.py "$@"
-LAUNCHEOF
+            printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24gL3Vzci9zaGFyZS9hdmFsb3MvaW5zdGFsbGVyL3NraWxsX2luc3RhbGFyX3VzYi5weSAiJEAiCg==" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install"
             chmod 755 "$AIROOTFS/usr/local/bin/avalos-install"
             echo "Instalador copiado"
           else
@@ -438,68 +240,8 @@ LAUNCHEOF
 
           # ── Fastfetch ─────────────────────────────────────────────────────────
           mkdir -p "$AIROOTFS/etc/fastfetch" "$AIROOTFS/root/.config/fastfetch"
-          python3 - "$AIROOTFS" << 'FFPYEOF'
-import sys, os, textwrap
-A = sys.argv[1]
-def w(p, c, raw=False):
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    txt = c if raw else textwrap.dedent(c).lstrip('\n')
-    with open(p, 'w') as f:
-        f.write(txt)
-w(f"{A}/etc/fastfetch/avalos.txt",
-  "$1                          \u028c\n"
-  "$1                         /#\\\n"
-  "$1                        /#$2@$1#\\\n"
-  "$1                       /#$2@$3$$$2@$1#\\\n"
-  "$1                ___   /#$3$$$2@$1\u028c$2@$3$$$1#\\    ___\n"
-  "$1                \\$4&&$1\\ /#$3$$$2@$1/$3$$$1\\$2@$1##\\  /$4&&$1/\n"
-  "$1                 \\$4&&$1\\#$3$$$2@$1/$3$$$$$$$1\\$2@$1##\\/$4&&$1/\n"
-  "$1                  \\$4&&$1\\$2@$1/$3$$$$$1\u028c$3$$$$$1\\$2@$3$$$1#\\$4&$1/\n"
-  "$1                  /\\$4&&$1\\$3$$$$$1/ \\$3$$$$$1\\$2@$3$$$1#\\\n"
-  "$1                 /#$3$$$1\\$4&&$1\\/   \\$3$$$$$1\\$2@$3$$$1#\\\n"
-  "$1                /#$3$$$2@$1/\\$4&&$1\\    \\$3$$$$$1\\$2@$3$$$1#\\\n"
-  "$1               /#$3$$$2@$1/$3$$$$$1\\$4&&$1\\  /$4&$1\\$3$$$$$1\\$2@$3$$$1#\\\n"
-  "$1              /#$3$$$2@$1/$3$$$$$1/ \\$4&&$1\\/$4&&$1/\\$3$$$$$1\\$2@$3$$$1#\\\n"
-  "$1             /#$3$$$2@$1/$3$$$$$1/   \\$4&&&&$1/  \\$3$$$$$1\\$2@$3$$$1#\\\n"
-  "$1             \\#$3$$$1/$3$$$$$1/     \\$4&&$1/    \\$3$$$$$1\\$2@$3$$$1/\n"
-  "$1              \\/__/       \\/      \\__\\/\n",
-  raw=True)
-w(f"{A}/root/.config/fastfetch/config.jsonc", """
-    {
-      "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/master/doc/json_schema.json",
-      "logo": {
-        "source": "/etc/fastfetch/avalos.txt",
-        "colors": ["38;2;122;162;247","38;2;125;207;255","38;2;187;154;247","38;2;158;206;106"],
-        "padding": { "top": 1, "right": 2 }
-      },
-      "display": {
-        "separator": " \u2192 ",
-        "color": { "keys": "38;2;122;162;247", "title": "38;2;125;207;255", "output": "38;2;192;202;245" }
-      },
-      "modules": [
-        { "type": "title",    "format": "{user-name}@{host-name}" },
-        "separator",
-        { "type": "os",       "key": " OS",          "format": "AvalOS ({distro-id})" },
-        { "type": "host",     "key": "\\uf0e4 Host" },
-        { "type": "kernel",   "key": " Kernel" },
-        { "type": "uptime",   "key": "\\uf55f Uptime" },
-        { "type": "packages", "key": "\\uf439 Packages" },
-        { "type": "shell",    "key": " Shell" },
-        { "type": "display",  "key": "\\uf879 Resolution" },
-        { "type": "wm",       "key": " WM" },
-        { "type": "terminal", "key": " Terminal" },
-        "separator",
-        { "type": "cpu",    "key": " CPU",   "showPeCoreCount": true, "temp": true },
-        { "type": "gpu",    "key": "\\uf43f GPU",  "temp": true },
-        { "type": "memory", "key": "\\uf55b RAM" },
-        { "type": "disk",   "key": "\\uf4cb Disk", "folders": "/" },
-        "separator",
-        { "type": "colors", "paddingLeft": 2, "symbol": "circle" }
-      ]
-    }
-    """)
-print("Fastfetch OK")
-FFPYEOF
+          printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkEgPSBzeXMuYXJndlsxXQpkZWYgdyhwLCBjLCByYXc9RmFsc2UpOgogICAgb3MubWFrZWRpcnMob3MucGF0aC5kaXJuYW1lKHApLCBleGlzdF9vaz1UcnVlKQogICAgdHh0ID0gYyBpZiByYXcgZWxzZSB0ZXh0d3JhcC5kZWRlbnQoYykubHN0cmlwKCdcbicpCiAgICB3aXRoIG9wZW4ocCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodHh0KQp3KGYie0F9L2V0Yy9mYXN0ZmV0Y2gvYXZhbG9zLnR4dCIsCiAgIiQxICAgICAgICAgICAgICAgICAgICAgICAgICBcdTAyOGNcbiIKICAiJDEgICAgICAgICAgICAgICAgICAgICAgICAgLyNcXFxuIgogICIkMSAgICAgICAgICAgICAgICAgICAgICAgIC8jJDJAJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgICAgICAgICAgIC8jJDJAJDMkJCQyQCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgIF9fXyAgIC8jJDMkJCQyQCQxXHUwMjhjJDJAJDMkJCQxI1xcICAgIF9fX1xuIgogICIkMSAgICAgICAgICAgICAgICBcXCQ0JiYkMVxcIC8jJDMkJCQyQCQxLyQzJCQkMVxcJDJAJDEjI1xcICAvJDQmJiQxL1xuIgogICIkMSAgICAgICAgICAgICAgICAgXFwkNCYmJDFcXCMkMyQkJDJAJDEvJDMkJCQkJCQkMVxcJDJAJDEjI1xcLyQ0JiYkMS9cbiIKICAiJDEgICAgICAgICAgICAgICAgICBcXCQ0JiYkMVxcJDJAJDEvJDMkJCQkJDFcdTAyOGMkMyQkJCQkMVxcJDJAJDMkJCQxI1xcJDQmJDEvXG4iCiAgIiQxICAgICAgICAgICAgICAgICAgL1xcJDQmJiQxXFwkMyQkJCQkMS8gXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgICAvIyQzJCQkMVxcJDQmJiQxXFwvICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgIC8jJDMkJCQyQCQxL1xcJDQmJiQxXFwgICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgLyMkMyQkJDJAJDEvJDMkJCQkJDFcXCQ0JiYkMVxcICAvJDQmJDFcXCQzJCQkJCQxXFwkMkAkMyQkJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgIC8jJDMkJCQyQCQxLyQzJCQkJCQxLyBcXCQ0JiYkMVxcLyQ0JiYkMS9cXCQzJCQkJCQxXFwkMkAkMyQkJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgLyMkMyQkJDJAJDEvJDMkJCQkJDEvICAgXFwkNCYmJiYkMS8gIFxcJDMkJCQkJDFcXCQyQCQzJCQkMSNcXFxuIgogICIkMSAgICAgICAgICAgICBcXCMkMyQkJDEvJDMkJCQkJDEvICAgICBcXCQ0JiYkMS8gICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxL1xuIgogICIkMSAgICAgICAgICAgICAgXFwvX18vICAgICAgIFxcLyAgICAgIFxcX19cXC9cbiIsCiAgcmF3PVRydWUpCncoZiJ7QX0vcm9vdC8uY29uZmlnL2Zhc3RmZXRjaC9jb25maWcuanNvbmMiLCAiIiIKICAgIHsKICAgICAgIiRzY2hlbWEiOiAiaHR0cHM6Ly9naXRodWIuY29tL2Zhc3RmZXRjaC1jbGkvZmFzdGZldGNoL3Jhdy9tYXN0ZXIvZG9jL2pzb25fc2NoZW1hLmpzb24iLAogICAgICAibG9nbyI6IHsKICAgICAgICAic291cmNlIjogIi9ldGMvZmFzdGZldGNoL2F2YWxvcy50eHQiLAogICAgICAgICJjb2xvcnMiOiBbIjM4OzI7MTIyOzE2MjsyNDciLCIzODsyOzEyNTsyMDc7MjU1IiwiMzg7MjsxODc7MTU0OzI0NyIsIjM4OzI7MTU4OzIwNjsxMDYiXSwKICAgICAgICAicGFkZGluZyI6IHsgInRvcCI6IDEsICJyaWdodCI6IDIgfQogICAgICB9LAogICAgICAiZGlzcGxheSI6IHsKICAgICAgICAic2VwYXJhdG9yIjogIiBcdTIxOTIgIiwKICAgICAgICAiY29sb3IiOiB7ICJrZXlzIjogIjM4OzI7MTIyOzE2MjsyNDciLCAidGl0bGUiOiAiMzg7MjsxMjU7MjA3OzI1NSIsICJvdXRwdXQiOiAiMzg7MjsxOTI7MjAyOzI0NSIgfQogICAgICB9LAogICAgICAibW9kdWxlcyI6IFsKICAgICAgICB7ICJ0eXBlIjogInRpdGxlIiwgICAgImZvcm1hdCI6ICJ7dXNlci1uYW1lfUB7aG9zdC1uYW1lfSIgfSwKICAgICAgICAic2VwYXJhdG9yIiwKICAgICAgICB7ICJ0eXBlIjogIm9zIiwgICAgICAgImtleSI6ICIgT1MiLCAgICAgICAgICAiZm9ybWF0IjogIkF2YWxPUyAoe2Rpc3Ryby1pZH0pIiB9LAogICAgICAgIHsgInR5cGUiOiAiaG9zdCIsICAgICAia2V5IjogIlxcdWYwZTQgSG9zdCIgfSwKICAgICAgICB7ICJ0eXBlIjogImtlcm5lbCIsICAgImtleSI6ICIgS2VybmVsIiB9LAogICAgICAgIHsgInR5cGUiOiAidXB0aW1lIiwgICAia2V5IjogIlxcdWY1NWYgVXB0aW1lIiB9LAogICAgICAgIHsgInR5cGUiOiAicGFja2FnZXMiLCAia2V5IjogIlxcdWY0MzkgUGFja2FnZXMiIH0sCiAgICAgICAgeyAidHlwZSI6ICJzaGVsbCIsICAgICJrZXkiOiAiIFNoZWxsIiB9LAogICAgICAgIHsgInR5cGUiOiAiZGlzcGxheSIsICAia2V5IjogIlxcdWY4NzkgUmVzb2x1dGlvbiIgfSwKICAgICAgICB7ICJ0eXBlIjogIndtIiwgICAgICAgImtleSI6ICIgV00iIH0sCiAgICAgICAgeyAidHlwZSI6ICJ0ZXJtaW5hbCIsICJrZXkiOiAiIFRlcm1pbmFsIiB9LAogICAgICAgICJzZXBhcmF0b3IiLAogICAgICAgIHsgInR5cGUiOiAiY3B1IiwgICAgImtleSI6ICIgQ1BVIiwgICAic2hvd1BlQ29yZUNvdW50IjogdHJ1ZSwgInRlbXAiOiB0cnVlIH0sCiAgICAgICAgeyAidHlwZSI6ICJncHUiLCAgICAia2V5IjogIlxcdWY0M2YgR1BVIiwgICJ0ZW1wIjogdHJ1ZSB9LAogICAgICAgIHsgInR5cGUiOiAibWVtb3J5IiwgImtleSI6ICJcXHVmNTViIFJBTSIgfSwKICAgICAgICB7ICJ0eXBlIjogImRpc2siLCAgICJrZXkiOiAiXFx1ZjRjYiBEaXNrIiwgImZvbGRlcnMiOiAiLyIgfSwKICAgICAgICAic2VwYXJhdG9yIiwKICAgICAgICB7ICJ0eXBlIjogImNvbG9ycyIsICJwYWRkaW5nTGVmdCI6IDIsICJzeW1ib2wiOiAiY2lyY2xlIiB9CiAgICAgIF0KICAgIH0KICAgICIiIikKcHJpbnQoIkZhc3RmZXRjaCBPSyIpCg==" | base64 -d > /tmp/pyffpyeof.py
+          python3 /tmp/pyffpyeof.py "$AIROOTFS"
 
           echo "airootfs configurado"
 
@@ -541,188 +283,8 @@ FFPYEOF
                  echo "Fallback: wallpaper solido negro profundo"; }
 
           # ── Archivos de config via Python (evita col-0 en YAML) ───────────────
-          python3 - "$AIROOTFS" << 'BRANDPYEOF'
-import sys, os, textwrap, shutil
-A = sys.argv[1]
-
-def w(path, content):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        f.write(textwrap.dedent(content).lstrip('\n'))
-
-# os-release
-w(f"{A}/etc/os-release", """
-    NAME="AvalOS"
-    PRETTY_NAME="AvalOS"
-    ID=avalos
-    ID_LIKE=arch
-    HOME_URL="https://github.com/jeffreysama/avalos"
-    SUPPORT_URL="https://github.com/jeffreysama/avalos/issues"
-    BUG_REPORT_URL="https://github.com/jeffreysama/avalos/issues"
-    LOGO=avalos-logo
-    BUILD_ID=rolling
-    ANSI_COLOR="38;2;122;162;247"
-    """)
-
-# SDDM — tema Tokyo Night
-T = f"{A}/usr/share/sddm/themes/avalos"
-os.makedirs(T, exist_ok=True)
-shutil.copy(f"{A}/usr/share/pixmaps/avalos-logo.png", f"{T}/avalos-logo.png")
-w(f"{T}/theme.conf", """
-    [General]
-    type=theme
-    name=AvalOS
-    description=AvalOS - Tokyo Night
-    author=AvalOS
-    license=MIT
-    """)
-
-w(f"{T}/Main.qml", """
-    import QtQuick 2.15
-    import QtQuick.Controls 2.15
-    import QtQuick.Layouts 1.15
-    Item {
-        id: root
-        Rectangle { anchors.fill: parent; color: "#1a1b26" }
-        ColumnLayout {
-            anchors.centerIn: parent
-            spacing: 18
-            width: 300
-            Image {
-                Layout.alignment: Qt.AlignHCenter
-                source: Qt.resolvedUrl("avalos-logo.png")
-                width: 140; height: 140
-                fillMode: Image.PreserveAspectFit; smooth: true
-            }
-            Text {
-                Layout.alignment: Qt.AlignHCenter
-                text: "AvalOS"; color: "#7aa2f7"
-                font.pixelSize: 30; font.weight: Font.Light
-            }
-            Item { Layout.preferredHeight: 8 }
-            TextField {
-                id: nameField; Layout.fillWidth: true
-                text: userModel.lastUser; placeholderText: "User"
-                color: "#c0caf5"; placeholderTextColor: "#565f89"
-                font.pixelSize: 13
-                leftPadding: 14; rightPadding: 14; topPadding: 10; bottomPadding: 10
-                background: Rectangle {
-                    color: "#24283b"; radius: 8
-                    border.color: nameField.activeFocus ? "#7aa2f7" : "#414868"; border.width: 1
-                }
-                KeyNavigation.tab: passField
-            }
-            TextField {
-                id: passField; Layout.fillWidth: true
-                placeholderText: "Password"; echoMode: TextInput.Password
-                color: "#c0caf5"; placeholderTextColor: "#565f89"
-                font.pixelSize: 13
-                leftPadding: 14; rightPadding: 14; topPadding: 10; bottomPadding: 10
-                background: Rectangle {
-                    color: "#24283b"; radius: 8
-                    border.color: passField.activeFocus ? "#7aa2f7" : "#414868"; border.width: 1
-                }
-                Keys.onReturnPressed: doLogin()
-                KeyNavigation.tab: loginBtn
-            }
-            Text {
-                Layout.fillWidth: true; text: sddm.lastError
-                color: "#f7768e"; font.pixelSize: 11
-                wrapMode: Text.WordWrap; visible: sddm.lastError !== ""
-            }
-            Button {
-                id: loginBtn; Layout.fillWidth: true
-                text: "Log In"
-                topPadding: 10; bottomPadding: 10
-                onClicked: doLogin()
-                Keys.onReturnPressed: doLogin()
-                background: Rectangle {
-                    color: loginBtn.pressed ? "#5a7fd4" : loginBtn.hovered ? "#8aade7" : "#7aa2f7"
-                    radius: 8
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                }
-                contentItem: Text {
-                    text: loginBtn.text; color: "#1a1b26"
-                    font.pixelSize: 13; font.weight: Font.Medium
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-            }
-        }
-        ComboBox {
-            id: sessionSelect
-            anchors { right: parent.right; bottom: parent.bottom; margins: 20 }
-            width: 170; model: sessionModel; textRole: "name"
-            background: Rectangle { color: "#24283b"; radius: 6; border.color: "#414868" }
-            contentItem: Text {
-                leftPadding: 10; text: sessionSelect.displayText
-                color: "#c0caf5"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter
-            }
-            popup.background: Rectangle { color: "#24283b"; border.color: "#414868"; radius: 6 }
-        }
-        function doLogin() {
-            sddm.login(nameField.text, passField.text, sessionSelect.currentIndex)
-        }
-    }
-    """)
-
-# SDDM — activar tema
-os.makedirs(f"{A}/etc/sddm.conf.d", exist_ok=True)
-w(f"{A}/etc/sddm.conf.d/theme.conf", """
-    [Theme]
-    Current=avalos
-    """)
-
-# Plymouth — tema
-P = f"{A}/usr/share/plymouth/themes/avalos"
-os.makedirs(P, exist_ok=True)
-os.makedirs(f"{A}/etc/plymouth", exist_ok=True)
-shutil.copy(f"{A}/usr/share/pixmaps/avalos-logo.png", f"{P}/avalos-logo.png")
-
-w(f"{P}/avalos.plymouth", """
-    [Plymouth Theme]
-    Name=AvalOS
-    Description=AvalOS boot splash - Tokyo Night
-    ModuleName=script
-
-    [script]
-    ImageDir=/usr/share/plymouth/themes/avalos
-    ScriptFile=/usr/share/plymouth/themes/avalos/avalos.script
-    """)
-
-w(f"{P}/avalos.script", """
-    screen_width  = Window.GetWidth();
-    screen_height = Window.GetHeight();
-    Window.SetBackgroundTopColor(0.102, 0.106, 0.149);
-    Window.SetBackgroundBottomColor(0.102, 0.106, 0.149);
-    logo_image  = Image("avalos-logo.png");
-    logo_image  = logo_image.Scale(260, 260);
-    logo_sprite = Sprite(logo_image);
-    logo_sprite.SetX(Math.Int(screen_width  / 2 - 130));
-    logo_sprite.SetY(Math.Int(screen_height / 2 - 150));
-    logo_sprite.SetOpacity(1);
-    bar_bg_sprite = Sprite(Image(300, 6));
-    bar_bg_sprite.SetX(Math.Int(screen_width / 2 - 150));
-    bar_bg_sprite.SetY(Math.Int(screen_height / 2 + 150));
-    fun boot_progress_cb(duration, progress) {
-        bar_w = Math.Int(300 * progress);
-        if (bar_w < 2) bar_w = 2;
-        bar_sprite = Sprite(Image(bar_w, 6));
-        bar_sprite.SetX(Math.Int(screen_width / 2 - 150));
-        bar_sprite.SetY(Math.Int(screen_height / 2 + 150));
-        bar_sprite.SetOpacity(1);
-    }
-    Plymouth.SetBootProgressFunction(boot_progress_cb);
-    """)
-
-w(f"{A}/etc/plymouth/plymouthd.conf", """
-    [Daemon]
-    Theme=avalos
-    ShowDelay=0
-    """)
-
-print("Branding OK")
-BRANDPYEOF
+          printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwLCBzaHV0aWwKQSA9IHN5cy5hcmd2WzFdCgpkZWYgdyhwYXRoLCBjb250ZW50KToKICAgIG9zLm1ha2VkaXJzKG9zLnBhdGguZGlybmFtZShwYXRoKSwgZXhpc3Rfb2s9VHJ1ZSkKICAgIHdpdGggb3BlbihwYXRoLCAndycpIGFzIGY6CiAgICAgICAgZi53cml0ZSh0ZXh0d3JhcC5kZWRlbnQoY29udGVudCkubHN0cmlwKCdcbicpKQoKIyBvcy1yZWxlYXNlCncoZiJ7QX0vZXRjL29zLXJlbGVhc2UiLCAiIiIKICAgIE5BTUU9IkF2YWxPUyIKICAgIFBSRVRUWV9OQU1FPSJBdmFsT1MiCiAgICBJRD1hdmFsb3MKICAgIElEX0xJS0U9YXJjaAogICAgSE9NRV9VUkw9Imh0dHBzOi8vZ2l0aHViLmNvbS9qZWZmcmV5c2FtYS9hdmFsb3MiCiAgICBTVVBQT1JUX1VSTD0iaHR0cHM6Ly9naXRodWIuY29tL2plZmZyZXlzYW1hL2F2YWxvcy9pc3N1ZXMiCiAgICBCVUdfUkVQT1JUX1VSTD0iaHR0cHM6Ly9naXRodWIuY29tL2plZmZyZXlzYW1hL2F2YWxvcy9pc3N1ZXMiCiAgICBMT0dPPWF2YWxvcy1sb2dvCiAgICBCVUlMRF9JRD1yb2xsaW5nCiAgICBBTlNJX0NPTE9SPSIzODsyOzEyMjsxNjI7MjQ3IgogICAgIiIiKQoKIyBTRERNIOKAlCB0ZW1hIFRva3lvIE5pZ2h0ClQgPSBmIntBfS91c3Ivc2hhcmUvc2RkbS90aGVtZXMvYXZhbG9zIgpvcy5tYWtlZGlycyhULCBleGlzdF9vaz1UcnVlKQpzaHV0aWwuY29weShmIntBfS91c3Ivc2hhcmUvcGl4bWFwcy9hdmFsb3MtbG9nby5wbmciLCBmIntUfS9hdmFsb3MtbG9nby5wbmciKQp3KGYie1R9L3RoZW1lLmNvbmYiLCAiIiIKICAgIFtHZW5lcmFsXQogICAgdHlwZT10aGVtZQogICAgbmFtZT1BdmFsT1MKICAgIGRlc2NyaXB0aW9uPUF2YWxPUyAtIFRva3lvIE5pZ2h0CiAgICBhdXRob3I9QXZhbE9TCiAgICBsaWNlbnNlPU1JVAogICAgIiIiKQoKdyhmIntUfS9NYWluLnFtbCIsICIiIgogICAgaW1wb3J0IFF0UXVpY2sgMi4xNQogICAgaW1wb3J0IFF0UXVpY2suQ29udHJvbHMgMi4xNQogICAgaW1wb3J0IFF0UXVpY2suTGF5b3V0cyAxLjE1CiAgICBJdGVtIHsKICAgICAgICBpZDogcm9vdAogICAgICAgIFJlY3RhbmdsZSB7IGFuY2hvcnMuZmlsbDogcGFyZW50OyBjb2xvcjogIiMxYTFiMjYiIH0KICAgICAgICBDb2x1bW5MYXlvdXQgewogICAgICAgICAgICBhbmNob3JzLmNlbnRlckluOiBwYXJlbnQKICAgICAgICAgICAgc3BhY2luZzogMTgKICAgICAgICAgICAgd2lkdGg6IDMwMAogICAgICAgICAgICBJbWFnZSB7CiAgICAgICAgICAgICAgICBMYXlvdXQuYWxpZ25tZW50OiBRdC5BbGlnbkhDZW50ZXIKICAgICAgICAgICAgICAgIHNvdXJjZTogUXQucmVzb2x2ZWRVcmwoImF2YWxvcy1sb2dvLnBuZyIpCiAgICAgICAgICAgICAgICB3aWR0aDogMTQwOyBoZWlnaHQ6IDE0MAogICAgICAgICAgICAgICAgZmlsbE1vZGU6IEltYWdlLlByZXNlcnZlQXNwZWN0Rml0OyBzbW9vdGg6IHRydWUKICAgICAgICAgICAgfQogICAgICAgICAgICBUZXh0IHsKICAgICAgICAgICAgICAgIExheW91dC5hbGlnbm1lbnQ6IFF0LkFsaWduSENlbnRlcgogICAgICAgICAgICAgICAgdGV4dDogIkF2YWxPUyI7IGNvbG9yOiAiIzdhYTJmNyIKICAgICAgICAgICAgICAgIGZvbnQucGl4ZWxTaXplOiAzMDsgZm9udC53ZWlnaHQ6IEZvbnQuTGlnaHQKICAgICAgICAgICAgfQogICAgICAgICAgICBJdGVtIHsgTGF5b3V0LnByZWZlcnJlZEhlaWdodDogOCB9CiAgICAgICAgICAgIFRleHRGaWVsZCB7CiAgICAgICAgICAgICAgICBpZDogbmFtZUZpZWxkOyBMYXlvdXQuZmlsbFdpZHRoOiB0cnVlCiAgICAgICAgICAgICAgICB0ZXh0OiB1c2VyTW9kZWwubGFzdFVzZXI7IHBsYWNlaG9sZGVyVGV4dDogIlVzZXIiCiAgICAgICAgICAgICAgICBjb2xvcjogIiNjMGNhZjUiOyBwbGFjZWhvbGRlclRleHRDb2xvcjogIiM1NjVmODkiCiAgICAgICAgICAgICAgICBmb250LnBpeGVsU2l6ZTogMTMKICAgICAgICAgICAgICAgIGxlZnRQYWRkaW5nOiAxNDsgcmlnaHRQYWRkaW5nOiAxNDsgdG9wUGFkZGluZzogMTA7IGJvdHRvbVBhZGRpbmc6IDEwCiAgICAgICAgICAgICAgICBiYWNrZ3JvdW5kOiBSZWN0YW5nbGUgewogICAgICAgICAgICAgICAgICAgIGNvbG9yOiAiIzI0MjgzYiI7IHJhZGl1czogOAogICAgICAgICAgICAgICAgICAgIGJvcmRlci5jb2xvcjogbmFtZUZpZWxkLmFjdGl2ZUZvY3VzID8gIiM3YWEyZjciIDogIiM0MTQ4NjgiOyBib3JkZXIud2lkdGg6IDEKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIEtleU5hdmlnYXRpb24udGFiOiBwYXNzRmllbGQKICAgICAgICAgICAgfQogICAgICAgICAgICBUZXh0RmllbGQgewogICAgICAgICAgICAgICAgaWQ6IHBhc3NGaWVsZDsgTGF5b3V0LmZpbGxXaWR0aDogdHJ1ZQogICAgICAgICAgICAgICAgcGxhY2Vob2xkZXJUZXh0OiAiUGFzc3dvcmQiOyBlY2hvTW9kZTogVGV4dElucHV0LlBhc3N3b3JkCiAgICAgICAgICAgICAgICBjb2xvcjogIiNjMGNhZjUiOyBwbGFjZWhvbGRlclRleHRDb2xvcjogIiM1NjVmODkiCiAgICAgICAgICAgICAgICBmb250LnBpeGVsU2l6ZTogMTMKICAgICAgICAgICAgICAgIGxlZnRQYWRkaW5nOiAxNDsgcmlnaHRQYWRkaW5nOiAxNDsgdG9wUGFkZGluZzogMTA7IGJvdHRvbVBhZGRpbmc6IDEwCiAgICAgICAgICAgICAgICBiYWNrZ3JvdW5kOiBSZWN0YW5nbGUgewogICAgICAgICAgICAgICAgICAgIGNvbG9yOiAiIzI0MjgzYiI7IHJhZGl1czogOAogICAgICAgICAgICAgICAgICAgIGJvcmRlci5jb2xvcjogcGFzc0ZpZWxkLmFjdGl2ZUZvY3VzID8gIiM3YWEyZjciIDogIiM0MTQ4NjgiOyBib3JkZXIud2lkdGg6IDEKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIEtleXMub25SZXR1cm5QcmVzc2VkOiBkb0xvZ2luKCkKICAgICAgICAgICAgICAgIEtleU5hdmlnYXRpb24udGFiOiBsb2dpbkJ0bgogICAgICAgICAgICB9CiAgICAgICAgICAgIFRleHQgewogICAgICAgICAgICAgICAgTGF5b3V0LmZpbGxXaWR0aDogdHJ1ZTsgdGV4dDogc2RkbS5sYXN0RXJyb3IKICAgICAgICAgICAgICAgIGNvbG9yOiAiI2Y3NzY4ZSI7IGZvbnQucGl4ZWxTaXplOiAxMQogICAgICAgICAgICAgICAgd3JhcE1vZGU6IFRleHQuV29yZFdyYXA7IHZpc2libGU6IHNkZG0ubGFzdEVycm9yICE9PSAiIgogICAgICAgICAgICB9CiAgICAgICAgICAgIEJ1dHRvbiB7CiAgICAgICAgICAgICAgICBpZDogbG9naW5CdG47IExheW91dC5maWxsV2lkdGg6IHRydWUKICAgICAgICAgICAgICAgIHRleHQ6ICJMb2cgSW4iCiAgICAgICAgICAgICAgICB0b3BQYWRkaW5nOiAxMDsgYm90dG9tUGFkZGluZzogMTAKICAgICAgICAgICAgICAgIG9uQ2xpY2tlZDogZG9Mb2dpbigpCiAgICAgICAgICAgICAgICBLZXlzLm9uUmV0dXJuUHJlc3NlZDogZG9Mb2dpbigpCiAgICAgICAgICAgICAgICBiYWNrZ3JvdW5kOiBSZWN0YW5nbGUgewogICAgICAgICAgICAgICAgICAgIGNvbG9yOiBsb2dpbkJ0bi5wcmVzc2VkID8gIiM1YTdmZDQiIDogbG9naW5CdG4uaG92ZXJlZCA/ICIjOGFhZGU3IiA6ICIjN2FhMmY3IgogICAgICAgICAgICAgICAgICAgIHJhZGl1czogOAogICAgICAgICAgICAgICAgICAgIEJlaGF2aW9yIG9uIGNvbG9yIHsgQ29sb3JBbmltYXRpb24geyBkdXJhdGlvbjogMTAwIH0gfQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgY29udGVudEl0ZW06IFRleHQgewogICAgICAgICAgICAgICAgICAgIHRleHQ6IGxvZ2luQnRuLnRleHQ7IGNvbG9yOiAiIzFhMWIyNiIKICAgICAgICAgICAgICAgICAgICBmb250LnBpeGVsU2l6ZTogMTM7IGZvbnQud2VpZ2h0OiBGb250Lk1lZGl1bQogICAgICAgICAgICAgICAgICAgIGhvcml6b250YWxBbGlnbm1lbnQ6IFRleHQuQWxpZ25IQ2VudGVyCiAgICAgICAgICAgICAgICAgICAgdmVydGljYWxBbGlnbm1lbnQ6IFRleHQuQWxpZ25WQ2VudGVyCiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICAgICAgQ29tYm9Cb3ggewogICAgICAgICAgICBpZDogc2Vzc2lvblNlbGVjdAogICAgICAgICAgICBhbmNob3JzIHsgcmlnaHQ6IHBhcmVudC5yaWdodDsgYm90dG9tOiBwYXJlbnQuYm90dG9tOyBtYXJnaW5zOiAyMCB9CiAgICAgICAgICAgIHdpZHRoOiAxNzA7IG1vZGVsOiBzZXNzaW9uTW9kZWw7IHRleHRSb2xlOiAibmFtZSIKICAgICAgICAgICAgYmFja2dyb3VuZDogUmVjdGFuZ2xlIHsgY29sb3I6ICIjMjQyODNiIjsgcmFkaXVzOiA2OyBib3JkZXIuY29sb3I6ICIjNDE0ODY4IiB9CiAgICAgICAgICAgIGNvbnRlbnRJdGVtOiBUZXh0IHsKICAgICAgICAgICAgICAgIGxlZnRQYWRkaW5nOiAxMDsgdGV4dDogc2Vzc2lvblNlbGVjdC5kaXNwbGF5VGV4dAogICAgICAgICAgICAgICAgY29sb3I6ICIjYzBjYWY1IjsgZm9udC5waXhlbFNpemU6IDEyOyB2ZXJ0aWNhbEFsaWdubWVudDogVGV4dC5BbGlnblZDZW50ZXIKICAgICAgICAgICAgfQogICAgICAgICAgICBwb3B1cC5iYWNrZ3JvdW5kOiBSZWN0YW5nbGUgeyBjb2xvcjogIiMyNDI4M2IiOyBib3JkZXIuY29sb3I6ICIjNDE0ODY4IjsgcmFkaXVzOiA2IH0KICAgICAgICB9CiAgICAgICAgZnVuY3Rpb24gZG9Mb2dpbigpIHsKICAgICAgICAgICAgc2RkbS5sb2dpbihuYW1lRmllbGQudGV4dCwgcGFzc0ZpZWxkLnRleHQsIHNlc3Npb25TZWxlY3QuY3VycmVudEluZGV4KQogICAgICAgIH0KICAgIH0KICAgICIiIikKCiMgU0RETSDigJQgYWN0aXZhciB0ZW1hCm9zLm1ha2VkaXJzKGYie0F9L2V0Yy9zZGRtLmNvbmYuZCIsIGV4aXN0X29rPVRydWUpCncoZiJ7QX0vZXRjL3NkZG0uY29uZi5kL3RoZW1lLmNvbmYiLCAiIiIKICAgIFtUaGVtZV0KICAgIEN1cnJlbnQ9YXZhbG9zCiAgICAiIiIpCgojIFBseW1vdXRoIOKAlCB0ZW1hClAgPSBmIntBfS91c3Ivc2hhcmUvcGx5bW91dGgvdGhlbWVzL2F2YWxvcyIKb3MubWFrZWRpcnMoUCwgZXhpc3Rfb2s9VHJ1ZSkKb3MubWFrZWRpcnMoZiJ7QX0vZXRjL3BseW1vdXRoIiwgZXhpc3Rfb2s9VHJ1ZSkKc2h1dGlsLmNvcHkoZiJ7QX0vdXNyL3NoYXJlL3BpeG1hcHMvYXZhbG9zLWxvZ28ucG5nIiwgZiJ7UH0vYXZhbG9zLWxvZ28ucG5nIikKCncoZiJ7UH0vYXZhbG9zLnBseW1vdXRoIiwgIiIiCiAgICBbUGx5bW91dGggVGhlbWVdCiAgICBOYW1lPUF2YWxPUwogICAgRGVzY3JpcHRpb249QXZhbE9TIGJvb3Qgc3BsYXNoIC0gVG9reW8gTmlnaHQKICAgIE1vZHVsZU5hbWU9c2NyaXB0CgogICAgW3NjcmlwdF0KICAgIEltYWdlRGlyPS91c3Ivc2hhcmUvcGx5bW91dGgvdGhlbWVzL2F2YWxvcwogICAgU2NyaXB0RmlsZT0vdXNyL3NoYXJlL3BseW1vdXRoL3RoZW1lcy9hdmFsb3MvYXZhbG9zLnNjcmlwdAogICAgIiIiKQoKdyhmIntQfS9hdmFsb3Muc2NyaXB0IiwgIiIiCiAgICBzY3JlZW5fd2lkdGggID0gV2luZG93LkdldFdpZHRoKCk7CiAgICBzY3JlZW5faGVpZ2h0ID0gV2luZG93LkdldEhlaWdodCgpOwogICAgV2luZG93LlNldEJhY2tncm91bmRUb3BDb2xvcigwLjEwMiwgMC4xMDYsIDAuMTQ5KTsKICAgIFdpbmRvdy5TZXRCYWNrZ3JvdW5kQm90dG9tQ29sb3IoMC4xMDIsIDAuMTA2LCAwLjE0OSk7CiAgICBsb2dvX2ltYWdlICA9IEltYWdlKCJhdmFsb3MtbG9nby5wbmciKTsKICAgIGxvZ29faW1hZ2UgID0gbG9nb19pbWFnZS5TY2FsZSgyNjAsIDI2MCk7CiAgICBsb2dvX3Nwcml0ZSA9IFNwcml0ZShsb2dvX2ltYWdlKTsKICAgIGxvZ29fc3ByaXRlLlNldFgoTWF0aC5JbnQoc2NyZWVuX3dpZHRoICAvIDIgLSAxMzApKTsKICAgIGxvZ29fc3ByaXRlLlNldFkoTWF0aC5JbnQoc2NyZWVuX2hlaWdodCAvIDIgLSAxNTApKTsKICAgIGxvZ29fc3ByaXRlLlNldE9wYWNpdHkoMSk7CiAgICBiYXJfYmdfc3ByaXRlID0gU3ByaXRlKEltYWdlKDMwMCwgNikpOwogICAgYmFyX2JnX3Nwcml0ZS5TZXRYKE1hdGguSW50KHNjcmVlbl93aWR0aCAvIDIgLSAxNTApKTsKICAgIGJhcl9iZ19zcHJpdGUuU2V0WShNYXRoLkludChzY3JlZW5faGVpZ2h0IC8gMiArIDE1MCkpOwogICAgZnVuIGJvb3RfcHJvZ3Jlc3NfY2IoZHVyYXRpb24sIHByb2dyZXNzKSB7CiAgICAgICAgYmFyX3cgPSBNYXRoLkludCgzMDAgKiBwcm9ncmVzcyk7CiAgICAgICAgaWYgKGJhcl93IDwgMikgYmFyX3cgPSAyOwogICAgICAgIGJhcl9zcHJpdGUgPSBTcHJpdGUoSW1hZ2UoYmFyX3csIDYpKTsKICAgICAgICBiYXJfc3ByaXRlLlNldFgoTWF0aC5JbnQoc2NyZWVuX3dpZHRoIC8gMiAtIDE1MCkpOwogICAgICAgIGJhcl9zcHJpdGUuU2V0WShNYXRoLkludChzY3JlZW5faGVpZ2h0IC8gMiArIDE1MCkpOwogICAgICAgIGJhcl9zcHJpdGUuU2V0T3BhY2l0eSgxKTsKICAgIH0KICAgIFBseW1vdXRoLlNldEJvb3RQcm9ncmVzc0Z1bmN0aW9uKGJvb3RfcHJvZ3Jlc3NfY2IpOwogICAgIiIiKQoKdyhmIntBfS9ldGMvcGx5bW91dGgvcGx5bW91dGhkLmNvbmYiLCAiIiIKICAgIFtEYWVtb25dCiAgICBUaGVtZT1hdmFsb3MKICAgIFNob3dEZWxheT0wCiAgICAiIiIpCgpwcmludCgiQnJhbmRpbmcgT0siKQo=" | base64 -d > /tmp/pybrandpyeof.py
+          python3 /tmp/pybrandpyeof.py "$AIROOTFS"
 
       - name: Inyectar entradas de boot
         run: |
@@ -733,26 +295,11 @@ BRANDPYEOF
 
           # FIX: archivos escritos sin indentación — systemd-boot parsea
           # los .conf de entries en formato "key value" sin espacios iniciales.
-          cat > "$LOADER_DIR/01-avalos.conf" << 'ENTRYEOF'
-title   AvalOS Live
-linux   /arch/boot/x86_64/vmlinuz-linux
-initrd  /arch/boot/x86_64/initramfs-linux.img
-options archisobasedir=arch archisolabel=%ARCHISO_LABEL% quiet splash
-ENTRYEOF
+          printf '%s' "dGl0bGUgICBBdmFsT1MgTGl2ZQpsaW51eCAgIC9hcmNoL2Jvb3QveDg2XzY0L3ZtbGludXotbGludXgKaW5pdHJkICAvYXJjaC9ib290L3g4Nl82NC9pbml0cmFtZnMtbGludXguaW1nCm9wdGlvbnMgYXJjaGlzb2Jhc2VkaXI9YXJjaCBhcmNoaXNvbGFiZWw9JUFSQ0hJU09fTEFCRUwlIHF1aWV0IHNwbGFzaAo=" | base64 -d > "$LOADER_DIR/01-avalos.conf"
 
-          cat > "$LOADER_DIR/02-avalos-nomodeset.conf" << 'ENTRYEOF2'
-title   AvalOS Live (nomodeset — GPU con problemas)
-linux   /arch/boot/x86_64/vmlinuz-linux
-initrd  /arch/boot/x86_64/initramfs-linux.img
-options archisobasedir=arch archisolabel=%ARCHISO_LABEL% nomodeset quiet splash
-ENTRYEOF2
+          printf '%s' "dGl0bGUgICBBdmFsT1MgTGl2ZSAobm9tb2Rlc2V0IOKAlCBHUFUgY29uIHByb2JsZW1hcykKbGludXggICAvYXJjaC9ib290L3g4Nl82NC92bWxpbnV6LWxpbnV4CmluaXRyZCAgL2FyY2gvYm9vdC94ODZfNjQvaW5pdHJhbWZzLWxpbnV4LmltZwpvcHRpb25zIGFyY2hpc29iYXNlZGlyPWFyY2ggYXJjaGlzb2xhYmVsPSVBUkNISVNPX0xBQkVMJSBub21vZGVzZXQgcXVpZXQgc3BsYXNoCg==" | base64 -d > "$LOADER_DIR/02-avalos-nomodeset.conf"
 
-          cat > "$BUILD_DIR/efiboot/loader/loader.conf" << 'LOADEREOF'
-default 01-avalos.conf
-timeout 8
-console-mode auto
-editor  no
-LOADEREOF
+          printf '%s' "ZGVmYXVsdCAwMS1hdmFsb3MuY29uZgp0aW1lb3V0IDgKY29uc29sZS1tb2RlIGF1dG8KZWRpdG9yICBubwo=" | base64 -d > "$BUILD_DIR/efiboot/loader/loader.conf"
 
           # ── syslinux entries (BIOS legacy) ─────────────────────────────────────
           SYSLINUX_DIR="$BUILD_DIR/syslinux"
@@ -761,23 +308,7 @@ LOADEREOF
           [[ -f /usr/share/archiso/configs/releng/syslinux/archiso_sys-linux.cfg ]] && \
             cp /usr/share/archiso/configs/releng/syslinux/*.cfg "$SYSLINUX_DIR/" 2>/dev/null || true
 
-          cat > "$SYSLINUX_DIR/archiso_sys.cfg" << 'SYSEOF'
-DEFAULT avalos
-PROMPT 1
-TIMEOUT 80
-
-LABEL avalos
-  MENU LABEL AvalOS Live
-  LINUX /arch/boot/x86_64/vmlinuz-linux
-  INITRD /arch/boot/x86_64/initramfs-linux.img
-  APPEND archisobasedir=arch archisolabel=%ARCHISO_LABEL% quiet splash
-
-LABEL avalos-nomodeset
-  MENU LABEL AvalOS Live (nomodeset)
-  LINUX /arch/boot/x86_64/vmlinuz-linux
-  INITRD /arch/boot/x86_64/initramfs-linux.img
-  APPEND archisobasedir=arch archisolabel=%ARCHISO_LABEL% nomodeset quiet splash
-SYSEOF
+          printf '%s' "REVGQVVMVCBhdmFsb3MKUFJPTVBUIDEKVElNRU9VVCA4MAoKTEFCRUwgYXZhbG9zCiAgTUVOVSBMQUJFTCBBdmFsT1MgTGl2ZQogIExJTlVYIC9hcmNoL2Jvb3QveDg2XzY0L3ZtbGludXotbGludXgKICBJTklUUkQgL2FyY2gvYm9vdC94ODZfNjQvaW5pdHJhbWZzLWxpbnV4LmltZwogIEFQUEVORCBhcmNoaXNvYmFzZWRpcj1hcmNoIGFyY2hpc29sYWJlbD0lQVJDSElTT19MQUJFTCUgcXVpZXQgc3BsYXNoCgpMQUJFTCBhdmFsb3Mtbm9tb2Rlc2V0CiAgTUVOVSBMQUJFTCBBdmFsT1MgTGl2ZSAobm9tb2Rlc2V0KQogIExJTlVYIC9hcmNoL2Jvb3QveDg2XzY0L3ZtbGludXotbGludXgKICBJTklUUkQgL2FyY2gvYm9vdC94ODZfNjQvaW5pdHJhbWZzLWxpbnV4LmltZwogIEFQUEVORCBhcmNoaXNvYmFzZWRpcj1hcmNoIGFyY2hpc29sYWJlbD0lQVJDSElTT19MQUJFTCUgbm9tb2Rlc2V0IHF1aWV0IHNwbGFzaAo=" | base64 -d > "$SYSLINUX_DIR/archiso_sys.cfg"
 
           echo "Entradas de boot inyectadas (UEFI + BIOS)"
 
