@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║  avalos-settings — Centro de Control AvalOS                         ║
+# ║  Hub de configuración del sistema instalado.                         ║
+# ║  Estilo coherente con powermenu.sh: rofi + Nerd Font icons.          ║
+# ║  Soporta: English · Español · 中文简体                               ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+
+LANG_CODE="${LANG%%_*}"
+
+# ── Traducciones ──────────────────────────────────────────────────────────
+case "$LANG_CODE" in
+  es)
+    T_TITLE="  Configuración AvalOS"
+    T_APPEARANCE=" Apariencia  GTK · Íconos · Cursor · Fuentes"
+    T_DISPLAY=" Pantallas  Resolución · Disposición"
+    T_AUDIO=" Audio  Volumen · Dispositivos de sonido"
+    T_NETWORK=" Red  Conexiones · Wi-Fi · VPN"
+    T_BLUETOOTH=" Bluetooth  Dispositivos inalámbricos"
+    T_WALLPAPER=" Fondo de pantalla  Cambiar imagen"
+    T_FILES=" Archivos  Explorador de archivos"
+    T_USERS="  Usuario  Contraseña · Perfil"
+    T_SNAPSHOTS=" Snapshots  Instantáneas del sistema"
+    T_ABOUT="  Acerca de  Info del sistema"
+    T_NO_APP="❌ Aplicación no instalada"
+    ;;
+  zh)
+    T_TITLE="  AvalOS 设置"
+    T_APPEARANCE=" 外观  GTK · 图标 · 光标 · 字体"
+    T_DISPLAY=" 显示器  分辨率 · 布局"
+    T_AUDIO=" 音频  音量 · 声音设备"
+    T_NETWORK=" 网络  连接 · Wi-Fi · VPN"
+    T_BLUETOOTH=" 蓝牙  无线设备"
+    T_WALLPAPER=" 壁纸  更换壁纸"
+    T_FILES=" 文件  文件管理器"
+    T_USERS="  用户  密码 · 个人设置"
+    T_SNAPSHOTS=" 快照  系统快照管理"
+    T_ABOUT="  关于  系统信息"
+    T_NO_APP="❌ 未安装该应用程序"
+    ;;
+  *)  # English (default)
+    T_TITLE="  AvalOS Settings"
+    T_APPEARANCE=" Appearance  GTK · Icons · Cursor · Fonts"
+    T_DISPLAY=" Displays  Resolution · Layout"
+    T_AUDIO=" Audio  Volume · Sound devices"
+    T_NETWORK=" Network  Connections · Wi-Fi · VPN"
+    T_BLUETOOTH=" Bluetooth  Wireless devices"
+    T_WALLPAPER=" Wallpaper  Change background"
+    T_FILES=" Files  File manager"
+    T_USERS="  User  Password · Profile"
+    T_SNAPSHOTS=" Snapshots  System snapshots"
+    T_ABOUT="  About  System info"
+    T_NO_APP="❌ Application not installed"
+    ;;
+esac
+
+# ── Helper: ejecutar o notificar si el comando no existe ──────────────────
+_run() {
+  local cmd="$1"; shift
+  if command -v "$cmd" &>/dev/null; then
+    "$cmd" "$@" &
+    disown
+  else
+    notify-send "AvalOS Settings" \
+      "$T_NO_APP: $cmd" \
+      -i preferences-system -t 4000 2>/dev/null || true
+  fi
+}
+
+# ── Menú principal ────────────────────────────────────────────────────────
+chosen=$(printf '%s\n' \
+    "$T_APPEARANCE" \
+    "$T_DISPLAY"    \
+    "$T_AUDIO"      \
+    "$T_NETWORK"    \
+    "$T_BLUETOOTH"  \
+    "$T_WALLPAPER"  \
+    "$T_FILES"      \
+    "$T_USERS"      \
+    "$T_SNAPSHOTS"  \
+    "$T_ABOUT"      \
+  | rofi -dmenu \
+         -i \
+         -no-custom \
+         -p "$T_TITLE" \
+         -theme-str 'window {width: 480px;} listview {lines: 10;}')
+
+[[ -z "$chosen" ]] && exit 0
+
+# ── Acciones por sección ──────────────────────────────────────────────────
+if   [[ "$chosen" == "$T_APPEARANCE" ]]; then
+    _run nwg-look
+
+elif [[ "$chosen" == "$T_DISPLAY" ]]; then
+    _run nwg-displays
+
+elif [[ "$chosen" == "$T_AUDIO" ]]; then
+    _run pavucontrol
+
+elif [[ "$chosen" == "$T_NETWORK" ]]; then
+    _run nm-connection-editor
+
+elif [[ "$chosen" == "$T_BLUETOOTH" ]]; then
+    _run blueman-manager
+
+elif [[ "$chosen" == "$T_WALLPAPER" ]]; then
+    if command -v avalos-wallpaper &>/dev/null; then
+        avalos-wallpaper
+    else
+        notify-send "AvalOS" "$T_NO_APP: avalos-wallpaper" -i error -t 3000 2>/dev/null || true
+    fi
+
+elif [[ "$chosen" == "$T_FILES" ]]; then
+    _run thunar
+
+elif [[ "$chosen" == "$T_USERS" ]]; then
+    kitty --title "AvalOS — Usuario / User" -- bash -c '
+        LANG_CODE="${LANG%%_*}"
+        case "$LANG_CODE" in
+          es)
+            echo ""
+            echo "  ╔════════════════════════════════════════╗"
+            echo "  ║   AvalOS — Gestión de Usuario         ║"
+            echo "  ╚════════════════════════════════════════╝"
+            echo ""
+            echo "  Usuario actual : $(whoami)"
+            echo "  Shell          : $SHELL"
+            echo "  Home           : $HOME"
+            echo "  UID            : $(id -u)"
+            echo "  Grupos         : $(groups)"
+            echo ""
+            echo "  ─────────────────────────────────────────"
+            echo "  [1] Cambiar contraseña"
+            echo "  [2] Salir"
+            echo ""
+            read -rp "  Opción: " opt
+            case "$opt" in 1) passwd ;; esac
+            ;;
+          zh)
+            echo ""
+            echo "  ╔════════════════════════════════════════╗"
+            echo "  ║   AvalOS — 用户管理                   ║"
+            echo "  ╚════════════════════════════════════════╝"
+            echo ""
+            echo "  当前用户：$(whoami)"
+            echo "  Shell   ：$SHELL"
+            echo "  家目录  ：$HOME"
+            echo "  UID     ：$(id -u)"
+            echo "  用户组  ：$(groups)"
+            echo ""
+            echo "  ─────────────────────────────────────────"
+            echo "  [1] 修改密码"
+            echo "  [2] 退出"
+            echo ""
+            read -rp "  选择：" opt
+            case "$opt" in 1) passwd ;; esac
+            ;;
+          *)
+            echo ""
+            echo "  ╔════════════════════════════════════════╗"
+            echo "  ║   AvalOS — User Management            ║"
+            echo "  ╚════════════════════════════════════════╝"
+            echo ""
+            echo "  Current user : $(whoami)"
+            echo "  Shell        : $SHELL"
+            echo "  Home         : $HOME"
+            echo "  UID          : $(id -u)"
+            echo "  Groups       : $(groups)"
+            echo ""
+            echo "  ─────────────────────────────────────────"
+            echo "  [1] Change password"
+            echo "  [2] Exit"
+            echo ""
+            read -rp "  Option: " opt
+            case "$opt" in 1) passwd ;; esac
+            ;;
+        esac
+        echo ""
+        echo "  Press Enter to close."
+        read -r
+    '
+
+elif [[ "$chosen" == "$T_SNAPSHOTS" ]]; then
+    if command -v snapper-gui &>/dev/null; then
+        _run snapper-gui
+    else
+        kitty --title "AvalOS — Snapshots" -- bash -c '
+            echo ""
+            echo "  ╔════════════════════════════════════════╗"
+            echo "  ║   AvalOS — Snapshots (snapper)        ║"
+            echo "  ╚════════════════════════════════════════╝"
+            echo ""
+            if command -v snapper &>/dev/null; then
+                snapper -c root list 2>/dev/null || echo "  snapper no está configurado para root."
+            else
+                echo "  snapper no está instalado."
+            fi
+            echo ""
+            echo "  Press Enter to close."
+            read -r
+        '
+    fi
+
+elif [[ "$chosen" == "$T_ABOUT" ]]; then
+    if command -v avalos-about &>/dev/null; then
+        avalos-about
+    elif command -v fastfetch &>/dev/null; then
+        kitty --title "AvalOS — About" -- bash -c 'fastfetch; echo ""; echo "  Press Enter to close."; read -r'
+    else
+        notify-send "AvalOS Settings" "$T_NO_APP: avalos-about / fastfetch" \
+            -i dialog-information -t 4000 2>/dev/null || true
+    fi
+fi

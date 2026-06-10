@@ -3,10 +3,9 @@
   "position": "top",
   "height": 32,
   "spacing": 4,
-  // BUG-1 FIX: exclusive-zone ausente.
-  // Sin esto, ventanas maximizadas se colocan debajo de waybar en Hyprland,
-  // solapando la barra. exclusive-zone = -1 la reserva correctamente.
-  "exclusive-zone": -1,
+  // exclusive-zone: waybar la gestiona automáticamente — no se especifica.
+  // NOTA: -1 NO reserva espacio, hace lo contrario (protocolo wlr-layer-shell:
+  // -1 = "no mover otras superficies por mí"). Omitir la línea es correcto.
   "modules-left":   ["hyprland/workspaces", "hyprland/window"],
   "modules-center": ["clock"],
   "modules-right":  ["cpu", "memory", "battery", "network", "pulseaudio", "tray", "custom/powermenu"],
@@ -40,13 +39,18 @@
     // BUG-5 FIX: rewrite-rules ausente.
     // Sin esto, waybar muestra la clase de ventana técnica (ej. "kitty")
     // en lugar del nombre amigable ("Terminal").
+    // BUG-5b FIX: patrones originales eran case-sensitive y sin .* anchors.
+    // "firefox" nunca coincidía con "Mozilla Firefox" (F mayúscula); igual
+    // para thunar/Thunar, chromium/Chromium y code/Code.
+    // Solución: .* al inicio y final para capturar el título completo, y
+    // clase de caracteres [Xx] para cubrir la capitalización real de cada app.
     "rewrite": {
-      "kitty": " Terminal",
-      "firefox": " Firefox",
-      "thunar": " Archivos",
-      "chromium": " Chromium",
-      "nvim": " Neovim",
-      "code": " VSCode"
+      "^kitty$":                   " Terminal",
+      ".*[Ff]irefox.*":           " Firefox",
+      ".*[Tt]hunar.*":            " Files",
+      ".*[Cc]hromium.*":          " Chromium",
+      "(?i).*nvim.*":             " Neovim",
+      ".*Visual Studio Code.*":   " VSCode"
     }
   },
 
@@ -102,9 +106,10 @@
     // un indicador visual claro de que está completamente cargada.
     "format-full": "󰁹 Full",
     "states": { "warning": 30, "critical": 15 },
-    // BUG-10 FIX: tooltip-format ausente en battery.
-    // Sin esto el tooltip no muestra tiempo restante ni ciclos de carga.
-    "tooltip-format": "{timeTo}\nCiclos: {cycles}\nSalud: {health}%"
+    // BUG-10 FIX: tooltip-format en battery.
+    // {cycles} y {health} NO son tokens válidos de waybar — siempre quedan vacíos.
+    // Tokens reales: {timeTo}, {power}, {capacity}, {status}, {icon}.
+    "tooltip-format": "{timeTo}\n{power:.1f}W  ·  {capacity}%"
   },
 
   "network": {

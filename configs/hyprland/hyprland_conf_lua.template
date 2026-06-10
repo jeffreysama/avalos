@@ -1,0 +1,235 @@
+-- ── AvalOS — hyprland_conf.lua.template ──────────────────────────
+-- Template Lua para el sistema INSTALADO.
+-- El instalador (skill_instalar_usb.py) reemplaza:
+--   %%GPU_ENV%%  → bloque hl.env() específico de la GPU detectada
+--   %%KEYMAP%%   → string del layout de teclado elegido (ej: "latam", "us", "cn")
+--
+-- Requiere Hyprland >= 0.55 (API Lua).
+-- Ubicación final: ~/.config/hypr/hyprland.lua
+-- ──────────────────────────────────────────────────────────────────
+
+-- ── Monitor ───────────────────────────────────────────────────────
+hl.monitor({
+    output   = "",
+    mode     = "preferred",
+    position = "auto",
+    scale    = "auto",
+})
+
+-- ── Variables de entorno ──────────────────────────────────────────
+-- Vars base (toolkit, cursor, Wayland backends)
+-- NOTA: Si usas uwsm, QT_*, GDK_*, MOZ_* van en ~/.config/uwsm/env
+-- y AQ_*/HYPR* en ~/.config/uwsm/env-hyprland. Déjalas aquí si
+-- arrancas Hyprland desde SDDM directamente sin uwsm.
+hl.env("XCURSOR_SIZE",                        "24")
+hl.env("XCURSOR_THEME",                       "capitaine-cursors-dark")
+hl.env("QT_QPA_PLATFORM",                     "wayland;xcb")
+hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
+hl.env("GDK_BACKEND",                         "wayland,x11")
+hl.env("MOZ_ENABLE_WAYLAND",                  "1")
+hl.env("ELECTRON_OZONE_PLATFORM_HINT",        "auto")
+
+-- GPU base: mesa como fallback para OpenGL (AMD y Intel).
+-- %%GPU_ENV%% añade vars de Vulkan/VA-API específicas de la GPU detectada
+-- (AMD_VULKAN_ICD, VDPAU_DRIVER, LIBVA_DRIVER_NAME). No sobreescribe
+-- __GLX_VENDOR_LIBRARY_NAME — mesa es correcto para OpenGL en AMD y Intel.
+hl.env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+%%GPU_ENV%%
+
+-- ── Configuración principal ───────────────────────────────────────
+hl.config({
+    general = {
+        gaps_in          = 5,
+        gaps_out         = 10,
+        border_size      = 2,
+        col = {
+            active_border   = { colors = { "rgba(7aa2f7ee)", "rgba(bb9af7ee)" }, angle = 45 },
+            inactive_border = "rgba(414868aa)",
+        },
+        layout           = "dwindle",
+        resize_on_border = true,
+        allow_tearing    = false,
+    },
+
+    decoration = {
+        rounding         = 12,
+        active_opacity   = 1.0,
+        inactive_opacity = 0.75,
+        blur = {
+            enabled = true,
+            size    = 4,
+            passes  = 1,
+        },
+        shadow = {
+            enabled      = true,
+            range        = 12,
+            render_power = 2,
+            color        = "rgba(1a1b2660)",
+        },
+    },
+
+    animations = {
+        enabled = true,
+    },
+
+    dwindle = {
+        preserve_split = true,
+        -- pseudotile eliminado en Hyprland 0.55
+    },
+
+    input = {
+        -- %%KEYMAP%% es reemplazado por el instalador.
+        -- Si no se reemplaza, Hyprland ignora el valor literal y usa "us" por defecto.
+        kb_layout    = "%%KEYMAP%%",
+        follow_mouse = 1,
+        sensitivity  = 0,
+        touchpad = {
+            natural_scroll = false,
+            tap_to_click   = true,
+        },
+    },
+
+    misc = {
+        force_default_wallpaper  = 0,
+        disable_hyprland_logo    = true,
+        disable_splash_rendering = true,
+    },
+
+    debug = {
+        vfr = true,   -- vfr movido de misc: a debug: en Hyprland 0.55
+    },
+})
+
+-- ── Animaciones ───────────────────────────────────────────────────
+hl.curve("myBezier", { type = "bezier", points = { { 0.08, 0.9 }, { 0.1, 1.05 } } })
+
+hl.animation({ leaf = "windows",    enabled = true, speed = 6, bezier = "myBezier" })
+hl.animation({ leaf = "windowsOut", enabled = true, speed = 5, bezier = "default",  style = "popin 75%" })
+hl.animation({ leaf = "border",     enabled = true, speed = 8, bezier = "default" })
+hl.animation({ leaf = "fade",       enabled = true, speed = 6, bezier = "default" })
+hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "default",  style = "slide" })
+
+-- ── Autostart ─────────────────────────────────────────────────────
+hl.on("hyprland.start", function()
+    -- Fondo de pantalla primero (hyprpaper debe estar listo antes que waybar)
+    hl.exec_cmd("hyprpaper")
+    hl.exec_cmd("waybar")
+    hl.exec_cmd("mako")
+    hl.exec_cmd("hypridle")
+    hl.exec_cmd("nm-applet --indicator")
+    hl.exec_cmd("blueman-applet")
+    hl.exec_cmd("hyprpolkitagent")
+    hl.exec_cmd("wl-paste --type text  --watch cliphist store")
+    hl.exec_cmd("wl-paste --type image --watch cliphist store")
+    hl.exec_cmd("xdg-user-dirs-update")
+    hl.exec_cmd("udiskie -t")
+end)
+
+-- ── Keybinds ──────────────────────────────────────────────────────
+local mod = "SUPER"
+
+-- Apps
+hl.bind(mod .. " + Return",   hl.dsp.exec_cmd("kitty"))
+hl.bind(mod .. " + Space",    hl.dsp.exec_cmd("rofi -show drun"))
+hl.bind(mod .. " + E",        hl.dsp.exec_cmd("thunar"))
+hl.bind(mod .. " + B",        hl.dsp.exec_cmd("firefox"))
+hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("chromium"))
+hl.bind(mod .. " + V",
+    hl.dsp.exec_cmd("cliphist list | rofi -dmenu | cliphist decode | wl-copy"))
+
+-- Captura de pantalla
+hl.bind("Print",
+    hl.dsp.exec_cmd("grim ~/Pictures/screenshot_$(date +%Y%m%d_%H%M%S).png"))
+hl.bind(mod .. " + SHIFT + S",
+    hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy'))
+
+-- Gestión de ventanas
+hl.bind(mod .. " + Q", hl.dsp.window.close())
+hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }))
+hl.bind(mod .. " + T", hl.dsp.window.float({ action = "toggle" }))
+hl.bind(mod .. " + SHIFT + L", hl.dsp.exec_cmd("hyprlock"))
+
+-- Powermenu (con fallback)
+hl.bind(mod .. " + SHIFT + E",
+    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
+
+-- Configuración AvalOS
+hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
+
+-- Foco — flechas y HJKL
+hl.bind(mod .. " + left",  hl.dsp.focus.move("l"))
+hl.bind(mod .. " + right", hl.dsp.focus.move("r"))
+hl.bind(mod .. " + up",    hl.dsp.focus.move("u"))
+hl.bind(mod .. " + down",  hl.dsp.focus.move("d"))
+hl.bind(mod .. " + H",     hl.dsp.focus.move("l"))
+hl.bind(mod .. " + L",     hl.dsp.focus.move("r"))
+hl.bind(mod .. " + K",     hl.dsp.focus.move("u"))
+hl.bind(mod .. " + J",     hl.dsp.focus.move("d"))
+
+-- Mover ventanas
+hl.bind(mod .. " + SHIFT + left",  hl.dsp.window.move("l"))
+hl.bind(mod .. " + SHIFT + right", hl.dsp.window.move("r"))
+hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move("u"))
+hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move("d"))
+
+-- Redimensionar con teclado
+hl.bind(mod .. " + CTRL + right", hl.dsp.resize({ dx =  30, dy =   0 }), { repeating = true })
+hl.bind(mod .. " + CTRL + left",  hl.dsp.resize({ dx = -30, dy =   0 }), { repeating = true })
+hl.bind(mod .. " + CTRL + up",    hl.dsp.resize({ dx =   0, dy = -30 }), { repeating = true })
+hl.bind(mod .. " + CTRL + down",  hl.dsp.resize({ dx =   0, dy =  30 }), { repeating = true })
+
+-- Workspaces — scroll con ratón y Tab
+hl.bind(mod .. " + mouse_down",   hl.dsp.workspace.relative(1))
+hl.bind(mod .. " + mouse_up",     hl.dsp.workspace.relative(-1))
+hl.bind(mod .. " + Tab",          hl.dsp.workspace.relative(1))
+hl.bind(mod .. " + SHIFT + Tab",  hl.dsp.workspace.relative(-1))
+
+-- Workspaces 1–9 (loop Lua — una línea en vez de 18)
+for i = 1, 9 do
+    hl.bind(mod .. " + " .. i,
+        hl.dsp.workspace.go(tostring(i)))
+    hl.bind(mod .. " + SHIFT + " .. i,
+        hl.dsp.window.move({ workspace = tostring(i) }))
+end
+
+-- Audio
+hl.bind("XF86AudioRaiseVolume",
+    hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"),
+    { repeating = true })
+hl.bind("XF86AudioLowerVolume",
+    hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),
+    { repeating = true })
+hl.bind("XF86AudioMute",
+    hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
+    { locked = true })
+hl.bind("XF86AudioPlay",
+    hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
+hl.bind("XF86AudioNext",
+    hl.dsp.exec_cmd("playerctl next"),       { locked = true })
+hl.bind("XF86AudioPrev",
+    hl.dsp.exec_cmd("playerctl previous"),   { locked = true })
+
+-- Brillo
+hl.bind("XF86MonBrightnessUp",
+    hl.dsp.exec_cmd("brightnessctl set +5%"), { repeating = true })
+hl.bind("XF86MonBrightnessDown",
+    hl.dsp.exec_cmd("brightnessctl set 5%-"), { repeating = true })
+
+-- ── Window rules ──────────────────────────────────────────────────
+hl.window_rule({ match = { class = "pavucontrol" },
+    float = true, size = { 800, 600 } })
+
+hl.window_rule({ match = { class = "nm-connection-editor" }, float = true })
+hl.window_rule({ match = { class = "blueman-manager" },      float = true })
+
+-- Thunar flotante al abrir desde keybind (no empuja otras ventanas)
+hl.window_rule({ match = { class = "thunar" },
+    float = true, size = { 900, 600 } })
+
+-- Diálogo de autenticación polkit — siempre flotante y centrado
+hl.window_rule({ match = { class = "hyprpolkitagent" },
+    float = true, center = true })
+
+-- Udiskie (montado USB) — diálogo flotante
+hl.window_rule({ match = { class = "udiskie" }, float = true })

@@ -81,7 +81,15 @@ elif [[ "$chosen" == "$T_REBOOT" ]]; then
 elif [[ "$chosen" == "$T_SUSPEND" ]]; then
   systemctl suspend
 elif [[ "$chosen" == "$T_LOGOUT" ]]; then
-  hyprctl dispatch exit
+  # WARN-05 FIX: detectar si la sesión corre bajo uwsm.
+  # Con Hyprland 0.55 se recomienda uwsm como session manager.
+  # "hyprctl dispatch exit" directo interfiere con el shutdown de uwsm/systemd.
+  # Si uwsm está activo, usar "uwsm stop"; si no, hyprctl dispatch exit como fallback.
+  if systemctl --user is-active --quiet uwsm-env-hyprland.service 2>/dev/null; then
+    uwsm stop
+  else
+    hyprctl dispatch exit
+  fi
 elif [[ "$chosen" == "$T_LOCK" ]]; then
   # BUG-4 FIX: hyprlock sin verificar si ya está corriendo.
   # Si el usuario llama al powermenu dos veces seguido, se abren dos

@@ -107,8 +107,8 @@ tooltip label {
   transition: color 0.3s ease;
 }
 
-#battery             { color: #e0af68; padding: 0 8px; }
-#battery.warning     { color: #e0af68; }
+#battery             { color: #9ece6a; padding: 0 8px; }  /* verde: batería normal */
+#battery.warning     { color: #e0af68; }                  /* naranja: batería baja  */
 #battery.charging    { color: #9ece6a; }
 #battery.full        { color: #9ece6a; }
 /* BUG-10 FIX: animación blink estaba definida pero la batería crítica
@@ -118,6 +118,7 @@ tooltip label {
 #battery.critical:not(.charging) {
   color: #f7768e;
   animation: blink 0.5s linear infinite alternate;
+  animation-fill-mode: both; /* BUG-03 FIX: sin esto el color vuelve a #e0af68 al final de cada ciclo */
 }
 
 #network { color: #7dcfff; padding: 0 8px; }

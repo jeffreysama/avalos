@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║  avalos-about — Información del sistema AvalOS                      ║
+# ║  Muestra fastfetch + datos específicos de AvalOS.                   ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+
+kitty --title "AvalOS — About / Acerca de" -- bash -c '
+    clear
+
+    # fastfetch si está disponible
+    if command -v fastfetch &>/dev/null; then
+        fastfetch
+    fi
+
+    # Info adicional específica de AvalOS
+    echo ""
+    echo "  ╔══════════════════════════════════════════════════════════╗"
+    echo "  ║   AvalOS — Arch Linux + Hyprland + Tokyo Night          ║"
+    echo "  ╚══════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Versión del kernel avalos si está corriendo
+    _kver=$(uname -r)
+    if echo "$_kver" | grep -q "avalos"; then
+        echo "  Kernel AvalOS  : $_kver"
+    else
+        echo "  Kernel         : $_kver"
+    fi
+
+    echo "  Hyprland       : $(hyprctl version 2>/dev/null | grep -o "v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -1 || echo N/A)"
+    echo "  Waybar         : $(waybar --version 2>&1 | head -1 || echo "N/A")"
+    _mfree=$(free -h | awk /^Mem:/{print\$7})
+    _mtotal=$(free -h | awk /^Mem:/{print\$2})
+    echo "  Memoria libre  : $_mfree libre de $_mtotal"
+    _dfree=$(df -h / | awk NR==2{print\$4})
+    _dtotal=$(df -h / | awk NR==2{print\$2})
+    echo "  Disco raíz     : $_dfree libre de $_dtotal"
+    echo "  Uptime         : $(uptime -p)"
+    echo "  Shell          : $SHELL"
+
+    # Fecha de instalación (si existe el archivo de marca)
+    if [[ -f /etc/avalos-install-date ]]; then
+        echo "  Instalado      : $(cat /etc/avalos-install-date)"
+    fi
+
+    echo ""
+    echo "  GitHub  : https://github.com/jeffreysama/avalos"
+    echo ""
+    echo "  ──────────────────────────────────────────────────────────"
+    echo "  Pulsa Enter para cerrar / Press Enter to close."
+    read -r
+'

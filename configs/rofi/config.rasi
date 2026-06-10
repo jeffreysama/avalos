@@ -46,13 +46,12 @@ window {
   border:           2px solid @border-color;
   border-radius:    10px;
   width:            480px;
-  /* BUG-5 FIX: location y anchor ausentes.
-   * Sin estos, rofi aparece en la esquina superior izquierda en algunos
-   * compositors Wayland (incluyendo Hyprland) en lugar de centrado. */
+  /* INFO-01: location, anchor, x-offset e y-offset son ignorados por rofi-wayland.
+   * En Wayland el compositor (Hyprland) posiciona la ventana — rofi-wayland
+   * siempre aparece centrado en el monitor activo independientemente de estos valores.
+   * Se mantienen como documentación para compatibilidad con rofi en X11. */
   location:         center;
   anchor:           center;
-  /* BUG-6 FIX: x-offset e y-offset ausentes.
-   * Necesarios junto a location/anchor para centrado preciso en Hyprland. */
   x-offset:         0;
   y-offset:         0;
 }

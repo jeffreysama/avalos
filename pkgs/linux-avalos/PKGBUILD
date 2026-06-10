@@ -8,7 +8,7 @@
 
 pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
-pkgver=7.0.10         # ← GitHub Actions actualiza esta línea automáticamente
+pkgver=7.0.11         # ← GitHub Actions actualiza esta línea automáticamente
 pkgrel=1
 pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
@@ -141,7 +141,7 @@ prepare() {
 
     # ── Memoria / ZRAM ─────────────────────────────────────────────────────
     scripts/config \
-        -e CONFIG_ZRAM \
+        -m CONFIG_ZRAM \
         -e CONFIG_ZRAM_WRITEBACK \
         -e CONFIG_ZSMALLOC \
         -e CONFIG_ZSWAP \
@@ -166,12 +166,13 @@ prepare() {
 
     # FIX: verificar que CONFIG_GENERIC_CPU3 quedó activo tras olddefconfig.
     # Si el Kconfig de 7.x renombra esta opción, scripts/config la ignora
-    # silenciosamente y el kernel queda sin optimizaciones v3. Falla rápido
-    # para que el error sea obvio en el log de CI.
+    # silenciosamente y el kernel queda sin optimizaciones v3. Falla inmediato
+    # para que el error sea obvio en el log de CI — el build no continúa.
     if ! grep -q 'CONFIG_GENERIC_CPU3=y' .config; then
-        echo "[WARN] CONFIG_GENERIC_CPU3 no activo en .config — verificar Kconfig del kernel ${pkgver}"
-        echo "       Opciones disponibles de CPU en este kernel:"
+        echo "[ERROR] CONFIG_GENERIC_CPU3 no activo en .config — el kernel NO tiene optimizaciones v3"
+        echo "        Verificar Kconfig del kernel ${pkgver}. Opciones CPU disponibles:"
         grep -E 'CONFIG_(GENERIC_CPU|MNATIVE)' .config || true
+        exit 1
     fi
 }
 
@@ -199,7 +200,7 @@ package_linux-avalos() {
     # FIX: provides=() debe exponer "linux=${pkgver}" para que paquetes que
     # dependen del kernel genérico (virtualbox-host-modules, nvidia-dkms, etc.)
     # encuentren este kernel. Un paquete nunca debe proveerse solo a sí mismo.
-    provides=("linux=${pkgver}" "linux-avalos=${pkgver}")
+    provides=("linux=${pkgver}")
     conflicts=("linux-avalos-compat" "linux-avalos-compat-headers" "linux-avalos-bore" "linux-avalos-bore-headers")
     # NOTA: backup eliminado del preset de mkinitcpio.
     # El preset se genera dinámicamente con _kver hardcodeado; si pacman

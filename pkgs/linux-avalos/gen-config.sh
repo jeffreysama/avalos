@@ -19,7 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$SCRIPT_DIR/config"
 
 # Versión del kernel (para buscar la config de Arch correcta)
-PKGVER=$(grep '^pkgver=' "$SCRIPT_DIR/PKGBUILD" | cut -d= -f2)
+# BUG-04 FIX: cut -d= -f2 incluye comentarios inline (ej: "7.0.11  # auto-updated").
+# Añadir triple filtrado: por espacio, por '#', y trim de espacios — siempre seguro.
+PKGVER=$(grep '^pkgver=' "$SCRIPT_DIR/PKGBUILD" | cut -d= -f2 | cut -d' ' -f1 | cut -d'#' -f1 | tr -d '[:space:]')
 MAJOR="${PKGVER%%.*}"
 MINOR="${PKGVER#*.}"; MINOR="${MINOR%.*}"
 
@@ -72,15 +74,15 @@ for pkgrel in 1 2 3; do
     )
 done
 
-# Paquete actual de Arch (siempre existe pero puede ser distinta versión)
+# Paquete actual de Arch (siempre existe, sin importar pkgrel — URL canónica)
 ARCH_CONFIG_URLS+=(
     "https://archlinux.org/packages/core/x86_64/linux/download/"
 )
 
-# Mirror alternativo geo-distribuido como fallback adicional
-ARCH_CONFIG_URLS+=(
-    "https://geo.mirror.pkgbuild.com/core/os/x86_64/linux-${PKGVER}-1-x86_64.pkg.tar.zst"
-)
+# WARN-02 FIX: geo.mirror con pkgrel=1 es redundante con el primer intento de ALA.
+# Se elimina — si los 3 intentos de ALA y la URL canónica fallan, ya hay suficientes
+# alternativas antes de caer al defconfig fallback.
+# (Eliminado: "https://geo.mirror.pkgbuild.com/core/os/x86_64/linux-${PKGVER}-1-x86_64.pkg.tar.zst")
 
 echo "    Fuente: config de Arch Linux (descarga)"
 _tmpdir=$(mktemp -d)
@@ -91,7 +93,9 @@ DOWNLOADED=false
 for url in "${ARCH_CONFIG_URLS[@]}"; do
     echo "    Intentando: $url"
     if curl -fsSL --max-time 60 -o "$_tmpdir/linux.pkg.tar.zst" "$url" 2>/dev/null; then
-        # Extraer config desde el paquete
+        # BUG-03 FIX: usar rutas exactas en lugar de wildcard '*/config*'.
+        # '*/config*' podría capturar config.h, config.yaml, etc.
+        # La ruta exacta en el .pkg de Arch es boot/config (sin sufijo de versión).
         if tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
                "./boot/config" 2>/dev/null \
            || tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
@@ -100,17 +104,6 @@ for url in "${ARCH_CONFIG_URLS[@]}"; do
             if [[ -f "$CONFIG_FILE" ]] && [[ -s "$CONFIG_FILE" ]]; then
                 cp "$CONFIG_FILE" "$OUT"
                 echo "    ✓ config extraído del paquete Arch Linux"
-                DOWNLOADED=true
-                break
-            fi
-        fi
-        # Intentar extraer el .config directamente (algunos paquetes lo incluyen)
-        if tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
-               --wildcards "*/config*" 2>/dev/null; then
-            CONFIG_FILE=$(find "$_tmpdir" -name "config" | grep -v ".pkg" | head -1)
-            if [[ -f "$CONFIG_FILE" ]] && [[ -s "$CONFIG_FILE" ]]; then
-                cp "$CONFIG_FILE" "$OUT"
-                echo "    ✓ config extraído del paquete Arch Linux (wildcard)"
                 DOWNLOADED=true
                 break
             fi
@@ -131,8 +124,11 @@ if ! $DOWNLOADED; then
     echo "    [WARN] No se pudo descargar la config de Arch."
     echo "    Se generará un config mínimo con 'make defconfig' en prepare()."
     echo "    Nota: el PKGBUILD llamará 'make LLVM=1 olddefconfig' que lo completará."
-    # Config vacío especial: una sola línea para indicar que es el fallback.
-    # prepare() lo detecta y llama a 'make defconfig' antes de olddefconfig.
+    # Config vacío especial: una sola línea de comentario.
+    # make olddefconfig sobre un .config casi vacío trata todas las opciones
+    # como "nuevas" y las resuelve a sus defaults del Kconfig — equivalente
+    # funcional a "make defconfig + olddefconfig". No es necesario detectar
+    # este marker en el PKGBUILD; olddefconfig lo maneja solo.
     echo "# AVALOS_FALLBACK_DEFCONFIG" > "$OUT"
 fi
 

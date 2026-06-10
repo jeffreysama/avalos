@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║  avalos-wallpaper — Selector de fondo de pantalla AvalOS            ║
+# ║  Escanea directorios de imágenes y aplica vía hyprpaper.            ║
+# ║  Soporta: English · Español · 中文简体                               ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+
+LANG_CODE="${LANG%%_*}"
+
+case "$LANG_CODE" in
+  es) PROMPT="  Elige fondo de pantalla" ; MSG_NONE="No se encontraron imágenes en los directorios de wallpapers." ; MSG_OK="Fondo aplicado:" ;;
+  zh) PROMPT="  选择壁纸"                ; MSG_NONE="未找到壁纸文件。"                                          ; MSG_OK="壁纸已更换："   ;;
+  *)  PROMPT="  Choose wallpaper"        ; MSG_NONE="No wallpaper images found."                                 ; MSG_OK="Wallpaper set:"  ;;
+esac
+
+# ── Directorios donde buscar wallpapers ───────────────────────────────────
+WALLPAPER_DIRS=(
+    "$HOME/.local/share/wallpapers"
+    "$HOME/Pictures"
+    "$HOME/Imágenes"
+    "$HOME/Images"
+    "/usr/share/backgrounds"
+    "/usr/share/wallpapers"
+)
+
+# ── Recolectar archivos de imagen ─────────────────────────────────────────
+mapfile -t WALLPAPERS < <(
+    for dir in "${WALLPAPER_DIRS[@]}"; do
+        [[ -d "$dir" ]] && find "$dir" -maxdepth 4 -type f \
+            \( -iname "*.jpg"  -o -iname "*.jpeg" \
+               -o -iname "*.png" -o -iname "*.webp" \) \
+            2>/dev/null
+    done | sort -u
+)
+
+if [[ ${#WALLPAPERS[@]} -eq 0 ]]; then
+    notify-send "AvalOS Wallpaper" "$MSG_NONE
+Copia imágenes a ~/.local/share/wallpapers/" \
+        -i preferences-desktop-wallpaper -t 6000 2>/dev/null || true
+    exit 0
+fi
+
+# ── Mostrar menú rofi con nombres de archivo ──────────────────────────────
+# Guardamos la lista original para recuperar la ruta completa después.
+# Usamos solo el nombre de archivo para el menú (más limpio).
+declare -A NAME_TO_PATH
+display_list=()
+for path in "${WALLPAPERS[@]}"; do
+    name=$(basename "$path")
+    NAME_TO_PATH["$name"]="$path"
+    display_list+=("$name")
+done
+
+chosen_name=$(printf '%s\n' "${display_list[@]}" \
+    | rofi -dmenu \
+           -i \
+           -no-custom \
+           -p "$PROMPT" \
+           -theme-str 'window {width: 480px;} listview {lines: 12;}')
+
+[[ -z "$chosen_name" ]] && exit 0
+
+WALLPAPER_PATH="${NAME_TO_PATH[$chosen_name]}"
+
+if [[ -z "$WALLPAPER_PATH" || ! -f "$WALLPAPER_PATH" ]]; then
+    notify-send "AvalOS Wallpaper" "❌ No se encontró: $chosen_name" -i error -t 3000 2>/dev/null || true
+    exit 1
+fi
+
+# ── Actualizar hyprpaper.conf ─────────────────────────────────────────────
+HYPR_CONF="$HOME/.config/hypr/hyprpaper.conf"
+mkdir -p "$(dirname "$HYPR_CONF")"
+
+cat > "$HYPR_CONF" << EOF
+# AvalOS hyprpaper.conf — generado por avalos-wallpaper
+# $(date)
+preload   = $WALLPAPER_PATH
+wallpaper = ,$WALLPAPER_PATH
+splash    = false
+EOF
+
+# ── Aplicar sin reiniciar si hyprpaper ya corre (Hyprland IPC) ───────────
+# Intentar primero via IPC (hyprctl); si falla, restart completo.
+if hyprctl hyprpaper preload "$WALLPAPER_PATH" &>/dev/null && \
+   hyprctl hyprpaper wallpaper ",$WALLPAPER_PATH" &>/dev/null; then
+    : # IPC funcionó — wallpaper aplicado en vivo
+else
+    # Fallback: reiniciar hyprpaper
+    pkill hyprpaper 2>/dev/null || true
+    sleep 0.3
+    hyprpaper &
+    disown
+fi
+
+notify-send "AvalOS Wallpaper" "$MSG_OK $chosen_name" \
+    -i preferences-desktop-wallpaper -t 2000 2>/dev/null || true

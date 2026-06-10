@@ -35,6 +35,36 @@ post_remove() {
     echo "   GRUB:         grub-mkconfig -o /boot/grub/grub.cfg"
     echo "   systemd-boot: bootctl update"
     echo "   rEFInd:       refind-install"
+
+    # BUG-02 FIX: limpiar archivos de la ESP al desinstalar.
+    # Sin esta limpieza, los archivos vmlinuz+initramfs quedan en la ESP y el menú
+    # de boot sigue mostrando la entrada de AvalOS aunque el kernel ya no esté instalado.
+    # Arrancar desde esa entrada causaría kernel panic (módulos eliminados).
+    local _esp=""
+    for _candidate in /efi /boot/efi /boot; do
+        if mountpoint -q "$_candidate" \
+           && { [[ -d "$_candidate/EFI" ]] || [[ -d "$_candidate/loader" ]]; } \
+           && stat -f -c %T "$_candidate" 2>/dev/null | grep -qiE 'fat|vfat|msdos'; then
+            _esp="$_candidate"
+            break
+        fi
+    done
+
+    if [[ -n "$_esp" ]]; then
+        # Eliminar archivos del kernel de la ESP
+        if [[ -d "$_esp/AvalOS" ]]; then
+            rm -rf "$_esp/AvalOS"
+            echo "   ✓ Archivos del kernel eliminados de ${_esp}/AvalOS/"
+        fi
+        # Eliminar la entrada del bootloader (systemd-boot)
+        local _entry="$_esp/loader/entries/avalos.conf"
+        if [[ -f "$_entry" ]]; then
+            rm -f "$_entry"
+            echo "   ✓ Entrada de systemd-boot eliminada: ${_entry}"
+        fi
+    else
+        echo "   [INFO] ESP no detectada — elimina manualmente los archivos del bootloader si es necesario."
+    fi
 }
 
 # ── Detecta qué bootloader está activo y lo actualiza ────────────────────────
@@ -55,7 +85,12 @@ _update_bootloader() {
         local _esp=""
         # Detectar punto de montaje de la ESP
         for _candidate in /efi /boot/efi /boot; do
-            if mountpoint -q "$_candidate" && [[ -d "$_candidate/EFI" || -d "$_candidate/loader" ]]; then
+            if mountpoint -q "$_candidate" \
+               && { [[ -d "$_candidate/EFI" ]] || [[ -d "$_candidate/loader" ]]; } \
+               && stat -f -c %T "$_candidate" 2>/dev/null | grep -qiE 'fat|vfat|msdos'; then
+                # WARN-01 FIX: verificar que es realmente FAT32 (filesystem de la ESP).
+                # Sin esta comprobación, /boot con un directorio EFI/ residual podría
+                # tomarse como ESP en sistemas con GRUB donde /boot es ext4.
                 _esp="$_candidate"
                 break
             fi
@@ -89,10 +124,16 @@ _update_bootloader() {
             # el menú de boot seguía apuntando a la versión anterior.
             local _entry="$_esp/loader/entries/avalos.conf"
             if [[ -f "$_entry" ]]; then
-                # Solo actualizar si la entrada existente apunta a una ruta distinta
-                # (kernel release en el título, por ejemplo)
-                sed -i "s|^title.*|title   AvalOS Linux (${_kver})|" "$_entry" 2>/dev/null || true
-                echo "   ✓ Entrada systemd-boot actualizada: ${_entry}"
+                # BUG-01 FIX: actualizar título Y rutas de kernel/initrd en la entrada .conf.
+                # El sed anterior solo actualizaba 'title' — si el nombre base del kernel
+                # cambia entre versiones, las líneas linux= e initrd= quedaban apuntando
+                # al nombre anterior y el sistema arrancaba el kernel viejo con título nuevo.
+                sed -i \
+                    -e "s|^title.*|title   AvalOS Linux (${_kver})|" \
+                    -e "s|^linux .*|linux   /AvalOS/vmlinuz-${_pkgbase}|" \
+                    -e "s|^initrd.*/initramfs-.*\.img|initrd  /AvalOS/initramfs-${_pkgbase}.img|" \
+                    "$_entry" 2>/dev/null || true
+                echo "   ✓ Entrada systemd-boot actualizada (título + rutas): ${_entry}"
             else
                 echo "[INFO] Entrada de systemd-boot no encontrada en ${_entry}"
                 echo "       El instalador de AvalOS la crea durante la instalación inicial."

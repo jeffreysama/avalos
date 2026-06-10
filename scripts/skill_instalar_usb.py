@@ -100,6 +100,28 @@ KEYMAPS = [
     ("colemak",    "Colemak (colemak)"),
 ]
 DEFAULT_KEYMAP = "la-latin1"
+
+# ── Conversión vconsole → xkb (libxkbcommon / Hyprland / Wayland) ─────────────
+# Los keymaps de vconsole (/etc/vconsole.conf) usan nombres distintos a los de xkb.
+# Hyprland usa libxkbcommon (xkb), por lo que %%KEYMAP%% en hyprland.conf necesita
+# el nombre xkb, no el de vconsole. Sin esta conversión, "la-latin1" en hyprland.conf
+# hace que libxkbcommon no reconozca el layout y caiga silenciosamente a "us",
+# rompiendo ñ, tildes, ¿, ¡ en el sistema instalado.
+_VCONSOLE_TO_XKB = {
+    "la-latin1":  "latam",    # Español Latinoamérica — layout vconsole → xkb equivalente
+    "es":         "es",       # Español España — mismo nombre en ambos sistemas
+    "latam":      "latam",    # Ya es xkb — passthrough
+    "us":         "us",
+    "uk":         "gb",       # vconsole usa "uk", xkb usa "gb"
+    "br-abnt2":   "br",       # vconsole usa "br-abnt2", xkb usa "br"
+    "de":         "de",
+    "de-latin1":  "de",       # variante vconsole → misma base xkb
+    "fr":         "fr",
+    "it":         "it",
+    "ru":         "ru",
+    "dvorak":     "us(dvorak)",
+    "colemak":    "us(colemak)",
+}
 MIN_DISK_GB  = 30
 GRUB_UEFI_REMOVABLE = False  # PC normal: entrada NVRAM estándar
 
@@ -126,6 +148,12 @@ BASE_PKGS = [
     "zip", "unzip", "p7zip", "zram-generator",
     "reflector", "pacman-contrib", "xdg-utils", "udiskie",
     "fastfetch", "bat", "github-cli",
+    # ── Btrfs + Snapshots (Opción C) ─────────────────────────────────────────
+    # snapper: gestión de snapshots (pre/post pacman + manuales)
+    # snap-pac: hooks que crean snapshot automático antes/después de cada pacman
+    # grub-btrfs: regenera grub.cfg con entradas de cada snapshot (solo GRUB)
+    # inotify-tools: requerido por grub-btrfsd para detectar nuevos snapshots
+    "btrfs-progs", "snapper", "snap-pac", "grub-btrfs", "inotify-tools",
 ]
 
 DRIVER_PKGS_AMD = [
@@ -156,7 +184,7 @@ HYPRLAND_PKGS = [
     "sddm", "network-manager-applet", "blueman",
     "playerctl", "firefox", "chromium", "bluez", "bluez-utils", "libnotify",
     "file-roller", "thunar-archive-plugin", "thunar-volman",
-    "gvfs-mtp", "gvfs-smb", "nwg-look", "papirus-icon-theme",
+    "gvfs-mtp", "gvfs-smb", "nwg-look", "nwg-displays", "papirus-icon-theme",
     "lm_sensors", "acpi", "capitaine-cursors",
 ]
 
@@ -352,8 +380,8 @@ def verificar_internet() -> bool:
     return rc6 == 0
 
 
-def verificar_herramientas() -> dict[str, bool]:
-    tools = ["parted", "mkfs.fat", "mkfs.ext4", "arch-chroot",
+def verificar_herramientas():
+    tools = ["parted", "mkfs.fat", "mkfs.ext4", "mkfs.btrfs", "btrfs", "arch-chroot",
              "pacstrap", "genfstab", "mount", "umount"]
     return {h: shutil.which(h) is not None for h in tools}
 
@@ -521,6 +549,19 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 .badge-green  { color: var(--tn-green);  border-color: var(--tn-green); }
 .badge-purple { color: var(--tn-purple); border-color: var(--tn-purple); }
 .badge-cyan   { color: var(--tn-cyan);   border-color: var(--tn-cyan); }
+/* Badges de snapshots en los botones de bootloader */
+.badge-snap {
+  font-size: 9px; padding: 2px 7px; border-radius: 20px;
+  background: rgba(158,206,106,.15); color: #9ece6a;
+  border: 1px solid rgba(158,206,106,.4);
+  font-weight: 500; vertical-align: middle; margin-left: 5px;
+}
+.badge-warn {
+  font-size: 9px; padding: 2px 7px; border-radius: 20px;
+  background: rgba(224,175,104,.12); color: #e0af68;
+  border: 1px solid rgba(224,175,104,.4);
+  font-weight: 500; vertical-align: middle; margin-left: 5px;
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    PAGE 2: CONFIG (disk + form)
@@ -984,11 +1025,11 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
             </div>
             <div class="strength-bar-wrap"><div class="strength-bar s0" id="strength-bar"></div></div>
             <div class="strength-reqs" id="strength-reqs">
-              <span class="req" id="req-len">✗ 8+ caracteres</span>
-              <span class="req" id="req-upper">✗ mayúscula</span>
-              <span class="req" id="req-lower">✗ minúscula</span>
-              <span class="req" id="req-num">✗ número</span>
-              <span class="req" id="req-sym">✗ símbolo</span>
+              <span class="req" id="req-len" data-i18n="req-len-x">✗ 8+ caracteres</span>
+              <span class="req" id="req-upper" data-i18n="req-upper-x">✗ mayúscula</span>
+              <span class="req" id="req-lower" data-i18n="req-lower-x">✗ minúscula</span>
+              <span class="req" id="req-num" data-i18n="req-num-x">✗ número</span>
+              <span class="req" id="req-sym" data-i18n="req-sym-x">✗ símbolo</span>
             </div>
           </div>
           <div class="form-group">
@@ -1040,16 +1081,16 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
           <label>Bootloader</label>
           <div class="opts-row">
             <button class="opt-btn sel" id="opt-bl-grub" onclick="selBootloader('grub')">
-              <span class="opt-title">GRUB</span>
-              <span class="opt-desc">Universal. BIOS + UEFI, dual-boot, hardware antiguo.</span>
+              <span class="opt-title">GRUB <span class="badge-snap">✦ Snapshots</span></span>
+              <span class="opt-desc" data-i18n="opt-grub-desc">Universal. BIOS + UEFI, dual-boot. Menú de snapshots Btrfs en el arranque.</span>
             </button>
             <button class="opt-btn" id="opt-bl-sd" onclick="selBootloader('sd-boot')">
-              <span class="opt-title">systemd-boot</span>
-              <span class="opt-desc">Moderno, rápido. Solo UEFI. Ideal para instalaciones nuevas.</span>
+              <span class="opt-title">systemd-boot <span class="badge-warn">⚠ Sin snapshots en boot</span></span>
+              <span class="opt-desc" data-i18n="opt-sdboot-desc">Solo UEFI, rápido. Snapshots disponibles vía terminal, sin menú visual en el arranque.</span>
             </button>
             <button class="opt-btn" id="opt-bl-refind" onclick="selBootloader('refind')">
-              <span class="opt-title">rEFInd</span>
-              <span class="opt-desc">Solo UEFI. Detecta kernels automáticamente, bonito menú gráfico.</span>
+              <span class="opt-title">rEFInd <span class="badge-warn">⚠ Sin snapshots en boot</span></span>
+              <span class="opt-desc" data-i18n="opt-refind-desc">Solo UEFI. Detecta kernels automáticamente. Snapshots requieren configuración manual.</span>
             </button>
             <button class="opt-btn" id="opt-bl-none" onclick="selBootloader('none')">
               <span class="opt-title" data-i18n="opt-no-boot">Sin bootloader</span>
@@ -1058,17 +1099,41 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
           </div>
         </div>
 
-        <div class="form-group" style="margin-top:10px;">
+        <!-- Panel de advertencia snapshots — visible solo con sd-boot o rEFInd -->
+        <div id="snap-boot-warning" style="display:none; margin:10px 0 0 0;
+             background:rgba(224,175,104,0.10); border:1.5px solid #e0af68;
+             border-radius:10px; padding:12px 16px; font-size:12.5px; line-height:1.7;
+             color:#e0af68;">
+        </div>
+
+        <div class="form-group" style="margin-top:14px;">
           <label data-i18n="lbl-install-type">Tipo de instalación</label>
           <div class="opts-row">
             <button class="opt-btn sel" id="opt-modo-disco" onclick="selModo('disco', true)">
               <span class="opt-title">💾 PC / HDD / SSD</span>
-              <span class="opt-desc" data-i18n="opt-pc-desc">ext4 con journal — instalación estándar en PC.</span>
+              <span class="opt-desc" data-i18n="opt-pc-desc">Btrfs con subvolúmenes — snapshots automáticos, rollback desde GRUB.</span>
             </button>
             <button class="opt-btn" id="opt-modo-usb" onclick="selModo('usb', true)">
               <span class="opt-title">🔌 USB Persistente</span>
-              <span class="opt-desc">ext4 sin journal + noatime — minimiza escrituras en pendrive.</span>
+              <span class="opt-desc" data-i18n="opt-usb-desc">ext4 sin journal + noatime — minimiza escrituras en pendrive.</span>
             </button>
+          </div>
+        </div>
+
+        <!-- ── Opciones adicionales ─────────────────────────────────── -->
+        <div class="form-group" style="margin-top:10px;">
+          <label data-i18n="lbl-extras">Extras</label>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;
+                          background:var(--tn-bg2);border:1px solid var(--tn-border);
+                          border-radius:8px;padding:9px 12px;">
+              <input type="checkbox" id="chk-gaming" onchange="window._installGaming=this.checked"
+                     style="width:15px;height:15px;accent-color:var(--tn-blue);flex-shrink:0;">
+              <span>
+                <span class="opt-title" style="font-size:12.5px;" data-i18n="chk-gaming-title">🎮 Gaming</span>
+                <span class="opt-desc" style="display:block;margin-top:2px;" data-i18n="chk-gaming-desc">Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)</span>
+              </span>
+            </label>
           </div>
         </div>
 
@@ -1168,7 +1233,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
   <div class="box">
     <div id="done-icon">✓</div>
     <div id="done-title" data-i18n="done-title">AvalOS instalado correctamente</div>
-    <div id="done-sub">Retira el USB y reinicia el equipo.<br>
+    <div id="done-sub" data-i18n="done-desc">Retira el USB y reinicia el equipo.<br>
       SDDM te pedirá iniciar sesión → selecciona <strong>Hyprland</strong>.</div>
     <div id="done-info"></div>
     <div class="done-btns">
@@ -1197,13 +1262,19 @@ const STRINGS = {
     "lbl-user":"Username","lbl-pass":"Password","lbl-confirm-pass":"Confirm password",
     "lbl-show-hide":"Show/hide","lbl-hostname":"Hostname","lbl-timezone":"Time zone",
     "lbl-locale":"Locale","lbl-keymap":"Keyboard layout","lbl-bootloader":"Bootloader",
-    "lbl-install-type":"Installation type",
+    "lbl-install-type":"Installation type","lbl-extras":"Extras",
     "btn-install":"▶ Install AvalOS","btn-abort":"⛔ Abort","btn-retry":"↺ Retry",
     "btn-reboot":"⟳ Reboot now","btn-close":"Close",
     "opt-no-boot":"No bootloader","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 Persistent USB",
-    "opt-pc-desc":"ext4 with journal — standard PC installation.",
+    "opt-pc-desc":"Btrfs with subvolumes — automatic snapshots, GRUB rollback menu.",
+    "req-len-ok":"✓ 8+ characters","req-len-x":"✗ 8+ characters",
+    "req-upper-ok":"✓ Uppercase","req-upper-x":"✗ Uppercase",
+    "req-lower-ok":"✓ Lowercase","req-lower-x":"✗ Lowercase",
+    "req-num-ok":"✓ Number","req-num-x":"✗ Number",
+    "req-sym-ok":"✓ Symbol","req-sym-x":"✗ Symbol",
     "log-title":"▸ Installation log","cd-title":"⚠ POINT OF NO RETURN",
     "err-title":"⛔ Critical error","done-title":"AvalOS installed successfully",
+    "done-desc":"Remove the USB drive and reboot. SDDM will ask you to log in — select Hyprland.",
     "val-select-disk":"Select a destination disk",
     "val-invalid-user":"Enter a valid username (minimum 2 characters)",
     "val-min-user":"Minimum 2 characters, maximum 32",
@@ -1213,13 +1284,20 @@ const STRINGS = {
     "val-reserved-user":"That username is reserved by the system",
     "val-uefi-req":"requires UEFI and this machine boots in BIOS Legacy. Use GRUB.",
     "val-uefi-warn":"only works on UEFI. Make sure your computer is not BIOS Legacy.",
+    "opt-grub-desc":"Universal. BIOS + UEFI, dual-boot. Btrfs snapshot menu at boot.",
+    "opt-sdboot-desc":"UEFI only, fast. Snapshots available via terminal — no visual boot menu.",
+    "opt-refind-desc":"UEFI only. Auto-detects kernels. Snapshots require manual configuration.",
+    "chk-gaming-title":"🎮 Gaming",
+    "chk-gaming-desc":"Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)",
+    "warn-sdboot-snaps":"<b>⚠ systemd-boot — Snapshots without boot menu</b><br>AvalOS uses <b>Btrfs + snapper</b> for automatic snapshots (pre/post every update). With systemd-boot, snapshots work correctly and <code>snapper rollback &lt;N&gt;</code> lets you restore from terminal.<br><br>What you <b>won't have</b>: a visual snapshot menu at boot like GRUB offers. If the system fails to boot, you'll need to boot from the live USB and run the rollback from there.<br><br>✦ Snapshots are still <b>fully functional</b> — only the visual boot menu is missing.",
+    "warn-refind-snaps":"<b>⚠ rEFInd — Snapshots require manual setup</b><br>AvalOS uses <b>Btrfs + snapper</b> for automatic snapshots. With rEFInd, snapshot entries in the boot menu are <b>not generated automatically</b> — each snapshot would need to be added manually to <code>refind.conf</code>.<br><br><code>snapper rollback &lt;N&gt;</code> works from terminal. For the visual menu you'd need to configure rEFInd manually after installation.<br><br>✦ Snapshots are still <b>fully functional</b> — the boot menu integration is manual only.",
     "status-error":"Error — check the log or press Retry",
     "err-timeout":"Timeout expired. Close and reopen the installer.",
     "step-uefi":"Detecting boot mode","step-uefi-d":"UEFI / BIOS Legacy",
     "step-net":"Verifying internet connection","step-net-d":"Required for pacstrap",
     "step-tools":"Verifying tools","step-tools-d":"parted, mkfs, pacstrap…",
     "step-part":"Partitioning target disk","step-part-d":"",
-    "step-format":"Formatting partitions","step-format-d":"FAT32 (EFI) + ext4 (root)",
+    "step-format":"Formatting partitions","step-format-d":"FAT32 (EFI) + Btrfs (root)",
     "step-mount":"Mounting filesystem","step-mount-d":"",
     "step-mirrors":"Optimizing mirrors with reflector","step-mirrors-d":"Selecting fastest mirrors",
     "step-pacstrap":"Installing base system","step-pacstrap-d":"pacstrap — may take several minutes",
@@ -1229,9 +1307,9 @@ const STRINGS = {
     "step-services":"Enabling services","step-services-d":"NetworkManager · bluetooth · SDDM",
     "step-user":"Creating system user","step-user-d":"",
     "step-aur":"Installing AUR packages (yay)","step-aur-d":"microsoft-edge-stable-bin",
-    "step-hypr":"Configuring Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.conf",
+    "step-hypr":"Configuring Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.lua",
     "step-umount":"Unmounting and finalizing","step-umount-d":"",
-    "lang-warning":"⚠  UI language pack only · Mirrors are optimized for US, MX & GT — downloads may be slow for mainland China or regions far from these countries.",
+    "lang-warning":"⚠  UI language pack only · Mirrors are optimized for SV, US, MX & GT — downloads may be slow for mainland China or regions far from these countries.",
   },
   es: {
     "title":"AvalOS — Instalador","topbar":"● AvalOS Installer",
@@ -1244,13 +1322,19 @@ const STRINGS = {
     "lbl-user":"Usuario","lbl-pass":"Contraseña","lbl-confirm-pass":"Confirmar contraseña",
     "lbl-show-hide":"Mostrar/ocultar","lbl-hostname":"Nombre del equipo","lbl-timezone":"Zona horaria",
     "lbl-locale":"Configuración regional","lbl-keymap":"Distribución de teclado",
-    "lbl-bootloader":"Cargador de arranque","lbl-install-type":"Tipo de instalación",
+    "lbl-bootloader":"Cargador de arranque","lbl-install-type":"Tipo de instalación","lbl-extras":"Extras",
     "btn-install":"▶ Instalar AvalOS","btn-abort":"⛔ Abortar","btn-retry":"↺ Reintentar",
     "btn-reboot":"⟳ Reiniciar ahora","btn-close":"Cerrar",
     "opt-no-boot":"Sin bootloader","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 USB Persistente",
-    "opt-pc-desc":"ext4 con journal — instalación estándar en PC.",
+    "opt-pc-desc":"Btrfs con subvolúmenes — snapshots automáticos, menú de rollback en GRUB.",
+    "req-len-ok":"✓ 8+ caracteres","req-len-x":"✗ 8+ caracteres",
+    "req-upper-ok":"✓ Mayúscula","req-upper-x":"✗ Mayúscula",
+    "req-lower-ok":"✓ Minúscula","req-lower-x":"✗ Minúscula",
+    "req-num-ok":"✓ Número","req-num-x":"✗ Número",
+    "req-sym-ok":"✓ Símbolo","req-sym-x":"✗ Símbolo",
     "log-title":"▸ Log de instalación","cd-title":"⚠ ZONA DE NO RETORNO",
     "err-title":"⛔ Error crítico","done-title":"AvalOS instalado correctamente",
+    "done-desc":"Retira el USB y reinicia el equipo. SDDM te pedirá iniciar sesión — selecciona Hyprland.",
     "val-select-disk":"Selecciona un disco de destino",
     "val-invalid-user":"Escribe un nombre de usuario válido (mínimo 2 caracteres)",
     "val-min-user":"Mínimo 2 caracteres, máximo 32",
@@ -1260,13 +1344,20 @@ const STRINGS = {
     "val-reserved-user":"Ese nombre de usuario está reservado por el sistema",
     "val-uefi-req":"requiere UEFI y esta máquina arranca en BIOS Legacy. Usa GRUB.",
     "val-uefi-warn":"solo funciona en UEFI. Asegúrate de que tu equipo no sea BIOS Legacy.",
+    "opt-grub-desc":"Universal. BIOS + UEFI, dual-boot. Menú de snapshots Btrfs en el arranque.",
+    "opt-sdboot-desc":"Solo UEFI, rápido. Snapshots disponibles vía terminal, sin menú visual en el arranque.",
+    "opt-refind-desc":"Solo UEFI. Detecta kernels automáticamente. Snapshots requieren configuración manual.",
+    "chk-gaming-title":"🎮 Gaming",
+    "chk-gaming-desc":"Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)",
+    "warn-sdboot-snaps":"<b>⚠ systemd-boot — Snapshots sin menú en el arranque</b><br>AvalOS usa <b>Btrfs + snapper</b> para snapshots automáticos (antes/después de cada actualización). Con systemd-boot los snapshots funcionan correctamente y <code>snapper rollback &lt;N&gt;</code> permite restaurar desde la terminal.<br><br>Lo que <b>no tendrás</b>: un menú visual de snapshots en el arranque como GRUB ofrece. Si el sistema no arranca, necesitarás el USB live para hacer el rollback desde ahí.<br><br>✦ Los snapshots siguen siendo <b>completamente funcionales</b> — solo falta el menú visual en el boot.",
+    "warn-refind-snaps":"<b>⚠ rEFInd — Snapshots requieren configuración manual</b><br>AvalOS usa <b>Btrfs + snapper</b> para snapshots automáticos. Con rEFInd, las entradas de snapshots en el menú de arranque <b>no se generan automáticamente</b> — cada snapshot habría que añadirlo manualmente a <code>refind.conf</code>.<br><br><code>snapper rollback &lt;N&gt;</code> funciona desde la terminal. Para el menú visual habría que configurar rEFInd manualmente después de la instalación.<br><br>✦ Los snapshots siguen siendo <b>completamente funcionales</b> — solo la integración con el menú de boot es manual.",
     "status-error":"Error — revisa el log o pulsa Reintentar",
     "err-timeout":"Tiempo de espera agotado. Cierra y vuelve a abrir el instalador.",
     "step-uefi":"Detectando modo de arranque","step-uefi-d":"UEFI / BIOS Legacy",
     "step-net":"Verificando conexión a internet","step-net-d":"Requerida para pacstrap",
     "step-tools":"Verificando herramientas","step-tools-d":"parted, mkfs, pacstrap…",
     "step-part":"Particionando disco destino","step-part-d":"",
-    "step-format":"Formateando particiones","step-format-d":"FAT32 (EFI) + ext4 (root)",
+    "step-format":"Formateando particiones","step-format-d":"FAT32 (EFI) + Btrfs (root)",
     "step-mount":"Montando sistema de archivos","step-mount-d":"",
     "step-mirrors":"Optimizando mirrors con reflector","step-mirrors-d":"Seleccionando mirrors más rápidos",
     "step-pacstrap":"Instalando sistema base","step-pacstrap-d":"pacstrap — puede tardar varios minutos",
@@ -1276,9 +1367,9 @@ const STRINGS = {
     "step-services":"Habilitando servicios","step-services-d":"NetworkManager · bluetooth · SDDM",
     "step-user":"Creando usuario del sistema","step-user-d":"",
     "step-aur":"Instalando paquetes AUR (yay)","step-aur-d":"microsoft-edge-stable-bin",
-    "step-hypr":"Configurando Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.conf",
+    "step-hypr":"Configurando Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.lua",
     "step-umount":"Desmontando y finalizando","step-umount-d":"",
-    "lang-warning":"⚠  Solo paquete de idioma · Los mirrors están optimizados para US, MX y GT — las descargas pueden ser lentas para China continental o regiones alejadas de estos países.",
+    "lang-warning":"⚠  Solo paquete de idioma · Los mirrors están optimizados para SV, US, MX y GT — las descargas pueden ser lentas para China continental o regiones alejadas de estos países.",
   },
   zh: {
     "title":"AvalOS — 安装程序","topbar":"● AvalOS 安装程序",
@@ -1291,13 +1382,19 @@ const STRINGS = {
     "lbl-user":"用户名","lbl-pass":"密码","lbl-confirm-pass":"确认密码",
     "lbl-show-hide":"显示/隐藏","lbl-hostname":"主机名","lbl-timezone":"时区",
     "lbl-locale":"区域设置","lbl-keymap":"键盘布局","lbl-bootloader":"引导程序",
-    "lbl-install-type":"安装类型",
+    "lbl-install-type":"安装类型","lbl-extras":"附加选项",
     "btn-install":"▶ 安装 AvalOS","btn-abort":"⛔ 中止","btn-retry":"↺ 重试",
     "btn-reboot":"⟳ 立即重启","btn-close":"关闭",
     "opt-no-boot":"无引导程序","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 持久化 USB",
-    "opt-pc-desc":"ext4 带日志 — 标准 PC 安装。",
+    "opt-pc-desc":"Btrfs 子卷 — 自动快照，GRUB 回滚菜单。",
+    "req-len-ok":"✓ 8+ 字符","req-len-x":"✗ 8+ 字符",
+    "req-upper-ok":"✓ 大写字母","req-upper-x":"✗ 大写字母",
+    "req-lower-ok":"✓ 小写字母","req-lower-x":"✗ 小写字母",
+    "req-num-ok":"✓ 数字","req-num-x":"✗ 数字",
+    "req-sym-ok":"✓ 符号","req-sym-x":"✗ 符号",
     "log-title":"▸ 安装日志","cd-title":"⚠ 不可回头点",
     "err-title":"⛔ 严重错误","done-title":"AvalOS 安装成功",
+    "done-desc":"请取出 USB 设备并重启电脑。SDDM 将提示登录 — 请选择 Hyprland。",
     "val-select-disk":"请选择目标磁盘",
     "val-invalid-user":"请输入有效的用户名（至少 2 个字符）",
     "val-min-user":"最少 2 个字符，最多 32 个",
@@ -1307,13 +1404,20 @@ const STRINGS = {
     "val-reserved-user":"该用户名已被系统保留",
     "val-uefi-req":"需要 UEFI，而此机器以 BIOS Legacy 模式启动。请使用 GRUB。",
     "val-uefi-warn":"仅支持 UEFI。请确认您的电脑不是 BIOS Legacy 模式。",
+    "opt-grub-desc":"通用。BIOS + UEFI，双系统。启动时显示 Btrfs 快照菜单。",
+    "opt-sdboot-desc":"仅 UEFI，启动快。快照可通过终端使用，启动菜单中无可视快照列表。",
+    "opt-refind-desc":"仅 UEFI。自动检测内核。快照需手动配置。",
+    "chk-gaming-title":"🎮 游戏",
+    "chk-gaming-desc":"Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE（约 2.5 GB 额外空间）",
+    "warn-sdboot-snaps":"<b>⚠ systemd-boot — 快照无启动菜单</b><br>AvalOS 使用 <b>Btrfs + snapper</b> 进行自动快照（每次更新前后）。使用 systemd-boot 时，快照正常工作，可通过 <code>snapper rollback &lt;N&gt;</code> 从终端还原。<br><br><b>没有的功能</b>：像 GRUB 那样在启动菜单中显示快照列表。若系统无法启动，需使用 Live USB 进行回滚。<br><br>✦ 快照功能<b>完全可用</b> — 仅缺少启动菜单中的可视化列表。",
+    "warn-refind-snaps":"<b>⚠ rEFInd — 快照需手动配置</b><br>AvalOS 使用 <b>Btrfs + snapper</b> 进行自动快照。使用 rEFInd 时，启动菜单中的快照条目<b>不会自动生成</b> — 每个快照都需手动添加到 <code>refind.conf</code>。<br><br><code>snapper rollback &lt;N&gt;</code> 可在终端中使用。如需启动菜单集成，需在安装后手动配置 rEFInd。<br><br>✦ 快照功能<b>完全可用</b> — 仅启动菜单集成需手动操作。",
     "status-error":"出错 — 请查看日志或点击重试",
     "err-timeout":"等待超时，请关闭并重新打开安装程序。",
     "step-uefi":"检测启动模式","step-uefi-d":"UEFI / BIOS Legacy",
     "step-net":"验证网络连接","step-net-d":"pacstrap 所需",
     "step-tools":"验证工具","step-tools-d":"parted, mkfs, pacstrap…",
     "step-part":"分区目标磁盘","step-part-d":"",
-    "step-format":"格式化分区","step-format-d":"FAT32 (EFI) + ext4 (root)",
+    "step-format":"格式化分区","step-format-d":"FAT32 (EFI) + Btrfs (root)",
     "step-mount":"挂载文件系统","step-mount-d":"",
     "step-mirrors":"使用 reflector 优化镜像","step-mirrors-d":"选择最快的镜像源",
     "step-pacstrap":"安装基础系统","step-pacstrap-d":"pacstrap — 可能需要几分钟",
@@ -1323,9 +1427,9 @@ const STRINGS = {
     "step-services":"启用服务","step-services-d":"NetworkManager · bluetooth · SDDM",
     "step-user":"创建系统用户","step-user-d":"",
     "step-aur":"安装 AUR 包 (yay)","step-aur-d":"microsoft-edge-stable-bin",
-    "step-hypr":"配置 Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.conf",
+    "step-hypr":"配置 Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.lua",
     "step-umount":"卸载并完成","step-umount-d":"",
-    "lang-warning":"⚠  仅界面语言包 · 镜像源已针对美国、墨西哥及危地马拉优化——中国大陆及其他较远地区的下载速度可能较慢。",
+    "lang-warning":"⚠  仅界面语言包 · 镜像源已针对萨尔瓦多、美国、墨西哥及危地马拉优化——中国大陆及其他较远地区的下载速度可能较慢。",
   },
 };
 
@@ -1343,8 +1447,8 @@ function applyLang(code) {
     if (val) el.innerHTML = val;
   });
   // Update install steps with translated labels
-  if (typeof _steps !== 'undefined') {
-    _steps.forEach(s => {
+  if (typeof PASOS !== 'undefined') {
+    PASOS.forEach(s => {
       const lbl  = t('step-' + s.id);
       const det  = t('step-' + s.id + '-d');
       if (lbl) s.label  = lbl;
@@ -1545,8 +1649,8 @@ function checkPass() {
     const { checks, score } = _passStrength(p1);
     // update req indicators
     const map = { len: 'req-len', upper: 'req-upper', lower: 'req-lower', num: 'req-num', sym: 'req-sym' };
-    const labels = { len: '✓ 8+ caracteres', upper: '✓ mayúscula', lower: '✓ minúscula', num: '✓ número', sym: '✓ símbolo' };
-    const labelsX = { len: '✗ 8+ caracteres', upper: '✗ mayúscula', lower: '✗ minúscula', num: '✗ número', sym: '✗ símbolo' };
+    const labels  = { len: t('req-len-ok'), upper: t('req-upper-ok'), lower: t('req-lower-ok'), num: t('req-num-ok'), sym: t('req-sym-ok') };
+    const labelsX = { len: t('req-len-x'),  upper: t('req-upper-x'),  lower: t('req-lower-x'),  num: t('req-num-x'),  sym: t('req-sym-x')  };
     Object.entries(map).forEach(([k, id]) => {
       const el = document.getElementById(id);
       el.className = 'req' + (checks[k] ? ' ok' : '');
@@ -1586,9 +1690,22 @@ function selBootloader(val) {
   Object.entries(map).forEach(([k,id]) => {
     document.getElementById(id).classList.toggle('sel', k === val);
   });
-  // Mostrar advertencia si elige rEFInd o sd-boot:
-  //   - _esUEFI === false  → ya confirmado BIOS: advertencia firme
-  //   - _esUEFI === undefined → aún no detectado (página config): advertencia preventiva
+
+  // ── Advertencia de snapshots para non-GRUB ──────────────────────────────
+  const snapWarn = document.getElementById('snap-boot-warning');
+  if (snapWarn) {
+    if (val === 'sd-boot') {
+      snapWarn.style.display = 'block';
+      snapWarn.innerHTML = t('warn-sdboot-snaps');
+    } else if (val === 'refind') {
+      snapWarn.style.display = 'block';
+      snapWarn.innerHTML = t('warn-refind-snaps');
+    } else {
+      snapWarn.style.display = 'none';
+    }
+  }
+
+  // Advertencia UEFI requerido para sd-boot y rEFInd
   if (val === 'refind' || val === 'sd-boot') {
     const name = val === 'refind' ? 'rEFInd' : 'systemd-boot';
     if (window._esUEFI === false) {
@@ -1631,7 +1748,8 @@ function validarEIniciar() {
 
   // Pasar a la página de instalación y avisar a Python
   showPage('install');
-  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap);
+  const _gaming = window._installGaming === true;
+  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap, _gaming);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1642,7 +1760,7 @@ const PASOS = [
   { id:'net',      label:'Verificando conexión a internet',    detail:'Requerida para pacstrap' },
   { id:'tools',    label:'Verificando herramientas',           detail:'parted, mkfs, pacstrap…' },
   { id:'part',     label:'Particionando disco destino',        detail:'' },
-  { id:'format',   label:'Formateando particiones',            detail:'FAT32 (EFI) + ext4 (root)' },
+  { id:'format',   label:'Formateando particiones',            detail:'FAT32 (EFI) + Btrfs (root)' },
   { id:'mount',    label:'Montando sistema de archivos',       detail:'' },
   { id:'mirrors',  label:'Optimizando mirrors con reflector',  detail:'Seleccionando mirrors más rápidos' },
   { id:'pacstrap', label:'Instalando sistema base',            detail:'pacstrap — puede tardar varios minutos' },
@@ -1652,7 +1770,7 @@ const PASOS = [
   { id:'services', label:'Habilitando servicios',              detail:'NetworkManager · bluetooth · SDDM' },
   { id:'user',     label:'Creando usuario del sistema',        detail:'' },
   { id:'aur',      label:'Instalando paquetes AUR (yay)',      detail:'microsoft-edge-stable-bin' },
-  { id:'hyprland', label:'Configurando Hyprland + Wayland',    detail:'SDDM · Waybar · hyprland.conf' },
+  { id:'hypr', label:'Configurando Hyprland + Wayland',    detail:'SDDM · Waybar · hyprland.lua' },
   { id:'umount',   label:'Desmontando y finalizando',          detail:'' },
 ];
 
@@ -1854,7 +1972,7 @@ class InstaladorAPI:
 
     def iniciar_instalacion(self, username: str, password: str, hostname: str,
                              timezone: str, disco: str, bootloader: str, usb: bool,
-                             locale: str = "", keymap: str = ""):
+                             locale: str = "", keymap: str = "", gaming: bool = False):
         """El usuario pulsó 'Instalar AvalOS' con configuración válida."""
         _username = username.strip()
         if not _username:
@@ -1873,6 +1991,7 @@ class InstaladorAPI:
         self._v._disco_destino = disco
         self._v._bootloader = bootloader if bootloader in ('grub','sd-boot','refind','none') else 'grub'
         self._v._modo_usb  = bool(usb)
+        self._v._install_gaming = bool(gaming)
         self._v._config_lista.set()
         return True
 
@@ -1929,6 +2048,7 @@ class VentanaInstalador:
         self._keymap     = DEFAULT_KEYMAP
         self._disco_destino: str | None = None
         self._bootloader = 'grub'  # 'grub' | 'sd-boot' | 'refind' | 'none'
+        self._install_gaming = False  # True si el usuario marcó el checkbox de Gaming
         self._modo_usb   = False
         self._config_lista = threading.Event()
         self._lock         = threading.Lock()   # protege _instalando en reintentar()
@@ -1961,7 +2081,10 @@ class VentanaInstalador:
     # ── Subprocess con streaming ──────────────────────────────────────────────
 
     def _run_cmd(self, cmd: list[str], timeout: int = 300,
-                 log_cls: str = "info") -> tuple[int, str]:
+                 log_cls: str = "info",
+                 pre_mkdir: str | None = None) -> tuple[int, str]:
+        if pre_mkdir:
+            Path(pre_mkdir).mkdir(parents=True, exist_ok=True)
         self._log(f"$ {' '.join(cmd)}", "cmd")
         salida: list[str] = []
         proc: "subprocess.Popen[str] | None" = None
@@ -2038,14 +2161,25 @@ class VentanaInstalador:
     def _limpiar_montajes(self):
         self._log("\n── Limpiando montajes ──", "warn")
         puntos = [
+            # EFI primero
             str(MOUNT_EFI),
             str(MOUNT_ROOT / "boot"),
+            # Bind mounts del chroot (arch-chroot los crea automáticamente)
             str(MOUNT_ROOT / "proc"),
             str(MOUNT_ROOT / "sys" / "firmware" / "efi" / "efivars"),
             str(MOUNT_ROOT / "sys"),
             str(MOUNT_ROOT / "dev" / "pts"),
             str(MOUNT_ROOT / "dev"),
             str(MOUNT_ROOT / "run"),
+            # Subvolúmenes Btrfs — deben desmontarse ANTES del subvolumen raíz (@)
+            # Si se desmonta MOUNT_ROOT primero con -l, los submounts quedan huérfanos
+            # y pueden causar "device busy" o dejar el disco bloqueado.
+            str(MOUNT_ROOT / "tmp"),
+            str(MOUNT_ROOT / "var" / "cache"),
+            str(MOUNT_ROOT / "var" / "log"),
+            str(MOUNT_ROOT / ".snapshots"),
+            str(MOUNT_ROOT / "home"),
+            # Raíz al final (subvolumen @)
             str(MOUNT_ROOT),
             str(MOUNT_ISO),
         ]
@@ -2120,6 +2254,181 @@ class VentanaInstalador:
                     _default_cfg.touch()
         except Exception as e:
             self._log(f"[WARN] config de archivos: {e}", "warn")
+
+        # ── Centro de Control AvalOS (avalos-settings + avalos-wallpaper + avalos-about) ──
+        self._log("  Instalando scripts de configuración AvalOS…", "info")
+        _settings_scripts = {
+            "avalos-settings": """\
+#!/usr/bin/env bash
+# AvalOS Settings Hub — Centro de Control del sistema instalado.
+# Requiere: rofi, nwg-look, nwg-displays, pavucontrol, nm-connection-editor, blueman, kitty
+LANG_CODE="${LANG%%_*}"
+case "$LANG_CODE" in
+  es)
+    T_TITLE="  Configuración AvalOS"
+    T_APPEARANCE=" Apariencia  GTK · Íconos · Cursor · Fuentes"
+    T_DISPLAY=" Pantallas  Resolución · Disposición"
+    T_AUDIO=" Audio  Volumen · Dispositivos de sonido"
+    T_NETWORK=" Red  Conexiones · Wi-Fi · VPN"
+    T_BLUETOOTH=" Bluetooth  Dispositivos inalámbricos"
+    T_WALLPAPER=" Fondo de pantalla  Cambiar imagen"
+    T_FILES=" Archivos  Explorador de archivos"
+    T_USERS="  Usuario  Contraseña · Perfil"
+    T_SNAPSHOTS=" Snapshots  Instantáneas del sistema"
+    T_ABOUT="  Acerca de  Info del sistema"
+    T_NO_APP="❌ Aplicación no instalada"
+    ;;
+  zh)
+    T_TITLE="  AvalOS 设置"
+    T_APPEARANCE=" 外观  GTK · 图标 · 光标 · 字体"
+    T_DISPLAY=" 显示器  分辨率 · 布局"
+    T_AUDIO=" 音频  音量 · 声音设备"
+    T_NETWORK=" 网络  连接 · Wi-Fi · VPN"
+    T_BLUETOOTH=" 蓝牙  无线设备"
+    T_WALLPAPER=" 壁纸  更换壁纸"
+    T_FILES=" 文件  文件管理器"
+    T_USERS="  用户  密码 · 个人设置"
+    T_SNAPSHOTS=" 快照  系统快照管理"
+    T_ABOUT="  关于  系统信息"
+    T_NO_APP="❌ 未安装该应用程序"
+    ;;
+  *)
+    T_TITLE="  AvalOS Settings"
+    T_APPEARANCE=" Appearance  GTK · Icons · Cursor · Fonts"
+    T_DISPLAY=" Displays  Resolution · Layout"
+    T_AUDIO=" Audio  Volume · Sound devices"
+    T_NETWORK=" Network  Connections · Wi-Fi · VPN"
+    T_BLUETOOTH=" Bluetooth  Wireless devices"
+    T_WALLPAPER=" Wallpaper  Change background"
+    T_FILES=" Files  File manager"
+    T_USERS="  User  Password · Profile"
+    T_SNAPSHOTS=" Snapshots  System snapshots"
+    T_ABOUT="  About  System info"
+    T_NO_APP="❌ Application not installed"
+    ;;
+esac
+_run() {
+  local cmd="$1"; shift
+  if command -v "$cmd" &>/dev/null; then
+    "$cmd" "$@" & disown
+  else
+    notify-send "AvalOS Settings" "$T_NO_APP: $cmd" -i preferences-system -t 4000 2>/dev/null || true
+  fi
+}
+chosen=$(printf '%s\\n' "$T_APPEARANCE" "$T_DISPLAY" "$T_AUDIO" "$T_NETWORK" "$T_BLUETOOTH" "$T_WALLPAPER" "$T_FILES" "$T_USERS" "$T_SNAPSHOTS" "$T_ABOUT" \\
+  | rofi -dmenu -i -no-custom -p "$T_TITLE" -theme-str 'window {width: 480px;} listview {lines: 10;}')
+[[ -z "$chosen" ]] && exit 0
+if   [[ "$chosen" == "$T_APPEARANCE" ]]; then _run nwg-look
+elif [[ "$chosen" == "$T_DISPLAY"    ]]; then _run nwg-displays
+elif [[ "$chosen" == "$T_AUDIO"      ]]; then _run pavucontrol
+elif [[ "$chosen" == "$T_NETWORK"    ]]; then _run nm-connection-editor
+elif [[ "$chosen" == "$T_BLUETOOTH"  ]]; then _run blueman-manager
+elif [[ "$chosen" == "$T_WALLPAPER"  ]]; then command -v avalos-wallpaper &>/dev/null && avalos-wallpaper
+elif [[ "$chosen" == "$T_FILES"      ]]; then _run thunar
+elif [[ "$chosen" == "$T_USERS"      ]]; then
+  kitty --title "AvalOS — Usuario" -- bash -c 'echo "  Usuario: $(whoami)  UID: $(id -u)  Grupos: $(groups)"; echo ""; echo "[1] Cambiar contraseña / Change password"; read -rp "Opción: " o; [[ "$o" == "1" ]] && passwd; read -rp "Enter to close" _'
+elif [[ "$chosen" == "$T_SNAPSHOTS"  ]]; then
+  command -v snapper-gui &>/dev/null && _run snapper-gui || \\
+    kitty --title "AvalOS Snapshots" -- bash -c 'snapper -c root list 2>/dev/null || echo "snapper no configurado"; read -rp "Enter to close" _'
+elif [[ "$chosen" == "$T_ABOUT"      ]]; then
+  command -v avalos-about &>/dev/null && avalos-about || \\
+    command -v fastfetch &>/dev/null && kitty --title "AvalOS — About" -- bash -c 'fastfetch; read -rp "Enter to close" _'
+fi
+""",
+            "avalos-wallpaper": """\
+#!/usr/bin/env bash
+# AvalOS Wallpaper Picker — selecciona fondo de pantalla vía rofi + hyprpaper.
+LANG_CODE="${LANG%%_*}"
+case "$LANG_CODE" in
+  es) PROMPT="  Elige fondo de pantalla" ; MSG_NONE="No se encontraron imágenes." ; MSG_OK="Fondo aplicado:" ;;
+  zh) PROMPT="  选择壁纸"                ; MSG_NONE="未找到壁纸文件。"            ; MSG_OK="壁纸已更换："   ;;
+  *)  PROMPT="  Choose wallpaper"        ; MSG_NONE="No wallpaper images found."  ; MSG_OK="Wallpaper set:" ;;
+esac
+WALLPAPER_DIRS=("$HOME/.local/share/wallpapers" "$HOME/Pictures" "$HOME/Imágenes" "$HOME/Images" "/usr/share/backgrounds" "/usr/share/wallpapers")
+mapfile -t WALLPAPERS < <(for d in "${WALLPAPER_DIRS[@]}"; do [[ -d "$d" ]] && find "$d" -maxdepth 4 -type f \\( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \\) 2>/dev/null; done | sort -u)
+if [[ ${#WALLPAPERS[@]} -eq 0 ]]; then
+  notify-send "AvalOS Wallpaper" "$MSG_NONE" -i preferences-desktop-wallpaper -t 5000 2>/dev/null || true; exit 0
+fi
+declare -A N2P
+display_list=()
+for p in "${WALLPAPERS[@]}"; do n=$(basename "$p"); N2P["$n"]="$p"; display_list+=("$n"); done
+chosen=$(printf '%s\\n' "${display_list[@]}" | rofi -dmenu -i -no-custom -p "$PROMPT" -theme-str 'window {width: 480px;} listview {lines: 12;}')
+[[ -z "$chosen" ]] && exit 0
+WP="${N2P[$chosen]}"
+[[ -z "$WP" || ! -f "$WP" ]] && { notify-send "AvalOS" "❌ $chosen" -i error -t 3000 2>/dev/null; exit 1; }
+HYPR_CONF="$HOME/.config/hypr/hyprpaper.conf"
+mkdir -p "$(dirname "$HYPR_CONF")"
+printf 'preload = %s\\nwallpaper = ,%s\\nsplash = false\\n' "$WP" "$WP" > "$HYPR_CONF"
+if ! hyprctl hyprpaper preload "$WP" &>/dev/null || ! hyprctl hyprpaper wallpaper ",$WP" &>/dev/null; then
+  pkill hyprpaper 2>/dev/null || true; sleep 0.3; hyprpaper & disown
+fi
+notify-send "AvalOS Wallpaper" "$MSG_OK $chosen" -i preferences-desktop-wallpaper -t 2000 2>/dev/null || true
+""",
+            "avalos-about": """\
+#!/usr/bin/env bash
+# AvalOS About — información del sistema.
+kitty --title "AvalOS — About / Acerca de" -- bash -c '
+  clear
+  command -v fastfetch &>/dev/null && fastfetch
+  echo ""
+  echo "  ╔══════════════════════════════════════════════════════════╗"
+  echo "  ║   AvalOS — Arch Linux · Hyprland · Tokyo Night          ║"
+  echo "  ╚══════════════════════════════════════════════════════════╝"
+  echo ""
+  _kver=$(uname -r)
+  echo "$_kver" | grep -q "avalos" && echo "  Kernel AvalOS  : $_kver" || echo "  Kernel         : $_kver"
+  echo "  Hyprland       : $(hyprctl version 2>/dev/null | grep -o v[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]* | head -1 || echo N/A)"
+  _mfree=$(free -h | awk /^Mem:/{print\\$7})
+  _mtotal=$(free -h | awk /^Mem:/{print\\$2})
+  echo "  Memoria libre  : $_mfree libre de $_mtotal"
+  _dfree=$(df -h / | awk NR==2{print\\$4})
+  _dtotal=$(df -h / | awk NR==2{print\\$2})
+  echo "  Disco raíz     : $_dfree libre de $_dtotal"
+  echo "  Uptime         : $(uptime -p)"
+  [[ -f /etc/avalos-install-date ]] && echo "  Instalado      : $(cat /etc/avalos-install-date)"
+  echo ""
+  echo "  GitHub  : https://github.com/jeffreysama/avalos"
+  echo ""
+  read -rp "  Enter to close / Enter para cerrar: " _
+'
+""",
+        }
+
+        for _script_name, _script_content in _settings_scripts.items():
+            _script_path = _bin_dir / _script_name
+            _script_path.write_text(_script_content, encoding="utf-8")
+            _script_path.chmod(0o755)
+            self._log(f"  /usr/local/bin/{_script_name} instalado", "ok")
+
+        # ── Desktop entry para avalos-settings ────────────────────────────
+        _apps_dir = MOUNT_ROOT / "usr" / "share" / "applications"
+        _apps_dir.mkdir(parents=True, exist_ok=True)
+        (_apps_dir / "avalos-settings.desktop").write_text(
+            "[Desktop Entry]\n"
+            "Name=AvalOS Settings\n"
+            "Name[es]=Configuración de AvalOS\n"
+            "Name[zh]=AvalOS 设置\n"
+            "Comment=Configure your AvalOS system\n"
+            "Comment[es]=Configura tu sistema AvalOS\n"
+            "Comment[zh]=配置您的 AvalOS 系统\n"
+            "Exec=avalos-settings\n"
+            "Icon=preferences-system\n"
+            "Terminal=false\n"
+            "Type=Application\n"
+            "Categories=Settings;System;\n"
+            "Keywords=settings;config;system;appearance;network;\n"
+            "Keywords[es]=configuración;ajustes;apariencia;red;sistema;\n"
+            "Keywords[zh]=设置;配置;系统;外观;网络;\n"
+            "StartupNotify=false\n",
+            encoding="utf-8"
+        )
+        self._log("  avalos-settings.desktop instalado", "ok")
+
+        # ── Marca de fecha de instalación (usada por avalos-about) ───────
+        (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
+            __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M"),
+            encoding="utf-8"
+        )
 
         # ── ZRAM con zstd ─────────────────────────────────────────────────────
         zram_path = MOUNT_ROOT / "etc" / "systemd" / "zram-generator.conf"
@@ -2327,17 +2636,21 @@ DISTRIB_DESCRIPTION="AvalOS"
         except OSError as e:
             self._log(f"[WARN] pacman.conf: {e}", "warn")
 
-        # hyprland.conf — leído desde /usr/share/avalos/configs/
-        _gpu_env_amd  = "env = AMD_VULKAN_ICD,RADV\nenv = VDPAU_DRIVER,radeonsi\nenv = LIBVA_DRIVER_NAME,radeonsi"
-        _gpu_env_intel = "env = LIBVA_DRIVER_NAME,iHD\nenv = VDPAU_DRIVER,va_gl"
+        # hyprland.lua — leído desde /usr/share/avalos/configs/
+        _gpu_env_amd  = ('hl.env("AMD_VULKAN_ICD",    "RADV")\n'
+                          'hl.env("VDPAU_DRIVER",      "radeonsi")\n'
+                          'hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
+        _gpu_env_intel = ('hl.env("LIBVA_DRIVER_NAME", "iHD")\n'
+                           'hl.env("VDPAU_DRIVER",      "va_gl")')
         _gpu_env_str  = _gpu_env_amd if _gpu_vendor == "amd" else _gpu_env_intel
 
-        _hypr_tmpl = _leer_config("hyprland/hyprland.conf.template")
+        _hypr_tmpl = _leer_config("hyprland/hyprland_conf_lua.template")
         if _hypr_tmpl:
-            self._escribir(f"{home}/.config/hypr/hyprland.conf",
-                           _hypr_tmpl.replace("%%GPU_ENV%%", _gpu_env_str).replace("%%KEYMAP%%", self._keymap))
+            self._escribir(f"{home}/.config/hypr/hyprland.lua",
+                           _hypr_tmpl.replace("%%GPU_ENV%%", _gpu_env_str)
+                                      .replace("%%KEYMAP%%", _VCONSOLE_TO_XKB.get(self._keymap, self._keymap)))
         else:
-            self._log("[WARN] hyprland.conf.template no encontrado — usando config embebida", "warn")
+            self._log("[WARN] hyprland_conf_lua.template no encontrado — hyprland.lua no generado", "warn")
 
         # hyprpaper.conf
         _contenido = _leer_config("hyprland/hyprpaper.conf")
@@ -2590,7 +2903,7 @@ export XDG_SESSION_TYPE=wayland
         # reflector timer
         ref_conf = MOUNT_ROOT / "etc" / "xdg" / "reflector" / "reflector.conf"
         ref_conf.parent.mkdir(parents=True, exist_ok=True)
-        ref_conf.write_text("--country US,MX,GT\n--latest 10\n--sort rate\n--protocol https\n")
+        ref_conf.write_text("--country SV,US,MX,GT\n--latest 10\n--sort rate\n--protocol https\n")
         self._run_chroot(["systemctl", "enable", "reflector.timer"])
 
         # linger service (PipeWire user services sin login interactivo)
@@ -2637,9 +2950,14 @@ WantedBy=multi-user.target
         passw    = self._password
         hostname = self._hostname
         timezone = self._timezone
+        # BUG-3 FIX: copiar explícitamente _install_gaming desde el atributo de instancia
+        # que setea iniciar_instalacion() vía self._v._install_gaming.
+        # Aunque self._v IS self (mismo objeto VentanaInstalador), la asignación explícita
+        # aquí deja claro el flujo y evita confusión con el valor inicial False del __init__.
+        self._install_gaming = getattr(self, '_install_gaming', False)
 
         self._info("user", usuario, "ok")
-        self._info("modo", "USB (noatime)" if self._modo_usb else "Disco (ext4)", "ok")
+        self._info("modo", "USB (ext4 noatime)" if self._modo_usb else "PC (Btrfs + subvolúmenes)", "ok")
         _bl_labels = {"grub": "GRUB", "sd-boot": "systemd-boot", "refind": "rEFInd", "none": "Omitido"}
         self._info("grub", _bl_labels.get(self._bootloader, "GRUB"),
                    "ok" if self._bootloader != "none" else "warn")
@@ -2647,7 +2965,7 @@ WantedBy=multi-user.target
         PASOS_IDS = [
             "uefi","net","tools","part","format","mount","mirrors",
             "pacstrap","fstab","config","grub","services","user",
-            "aur","hyprland","umount",
+            "aur","hypr","umount",
         ]
         total = len(PASOS_IDS); paso = 0
 
@@ -2854,22 +3172,55 @@ WantedBy=multi-user.target
                     self._jsc("pyErrorPaso", f"mkfs.fat falló en {dev_efi}")
                     self._limpiar_montajes(); return
 
+            # ── Formatear raíz como Btrfs ────────────────────────────────────
+            # Btrfs es requerido para snapshots con snapper + grub-btrfs.
+            # ext4 sin journal se mantiene SOLO en modo USB (sin snapshots).
             if self._modo_usb:
                 rc, _ = self._run_cmd(["mkfs.ext4", "-O", "^has_journal", "-F", dev_root])
             else:
-                rc, _ = self._run_cmd(["mkfs.ext4", "-F", dev_root])
+                rc, _ = self._run_cmd(["mkfs.btrfs", "-f", "-L", "AvalOS", dev_root])
 
             if rc != 0:
                 self._step("format", "error")
-                self._jsc("pyErrorPaso", f"mkfs.ext4 falló en {dev_root}")
+                self._jsc("pyErrorPaso", f"mkfs falló en {dev_root}")
                 self._limpiar_montajes(); return
+
+            # ── Crear subvolúmenes Btrfs (solo modo PC) ──────────────────────
+            # Estructura:
+            #   @       → raíz del sistema  (se monta en /)
+            #   @home   → directorio home   (se monta en /home)
+            #   @snapshots → snapshots de snapper (se monta en /.snapshots)
+            #   @log    → logs del sistema  (se monta en /var/log)
+            #   @cache  → caché del sistema (se monta en /var/cache)
+            #   @tmp    → /tmp              (sin CoW para reducir fragmentación)
+            #
+            # @log y @cache en subvolúmenes separados evitan que los snapshots
+            # de @ incluyan logs y cachés que crecen rápido y no necesitan rollback.
+            if not self._modo_usb:
+                _btrfs_tmp = "/tmp/btrfs_setup"
+                rc_mnt, _ = self._run_cmd(["mount", dev_root, _btrfs_tmp, "-o", "compress=zstd"],
+                                          pre_mkdir=_btrfs_tmp)
+                if rc_mnt != 0:
+                    self._step("format", "error")
+                    self._jsc("pyErrorPaso", "No se pudo montar Btrfs para crear subvolúmenes.")
+                    self._limpiar_montajes(); return
+
+                _subvols = ["@", "@home", "@snapshots", "@log", "@cache", "@tmp"]
+                for sv in _subvols:
+                    rc_sv, _ = self._run_cmd(["btrfs", "subvolume", "create",
+                                              f"{_btrfs_tmp}/{sv}"])
+                    if rc_sv != 0:
+                        self._log(f"[WARN] No se pudo crear subvolumen {sv}", "warn")
+
+                self._run_cmd(["umount", _btrfs_tmp])
+                self._log("  Subvolúmenes Btrfs creados: " + ", ".join(_subvols), "ok")
 
             if uefi and self._modo_usb:
                 _fmt_label = "FAT32 + ext4 sin journal (USB)"
             elif uefi:
-                _fmt_label = "FAT32 + ext4"
+                _fmt_label = "FAT32 + Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
             else:
-                _fmt_label = "ext4 sin journal (USB)" if self._modo_usb else "ext4"
+                _fmt_label = "ext4 sin journal (USB)" if self._modo_usb else "Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
             self._step("format", "done", _fmt_label)
             # Segundo settle: esperar que el kernel actualice los nodos de bloque
             # después del formateo antes de intentar montar
@@ -2884,11 +3235,49 @@ WantedBy=multi-user.target
             # ── PASO 6: Montar ───────────────────────────────────────────────
             self._step("mount", "active")
             MOUNT_ROOT.mkdir(parents=True, exist_ok=True)
-            rc, _ = self._run_cmd(["mount", dev_root, str(MOUNT_ROOT)])
-            if rc != 0:
-                self._step("mount", "error")
-                self._jsc("pyErrorPaso", f"Error montando {dev_root}")
-                self._limpiar_montajes(); return
+
+            if self._modo_usb:
+                # USB: ext4 sin journal — montaje simple
+                rc, _ = self._run_cmd(["mount", dev_root, str(MOUNT_ROOT)])
+                if rc != 0:
+                    self._step("mount", "error")
+                    self._jsc("pyErrorPaso", f"Error montando {dev_root}")
+                    self._limpiar_montajes(); return
+            else:
+                # PC: Btrfs con subvolúmenes y opciones de rendimiento
+                # compress=zstd: compresión transparente (ahorra ~20-30% espacio)
+                # noatime: no actualizar atime en cada lectura (mejora rendimiento)
+                # space_cache=v2: caché de espacio libre más eficiente
+                _btrfs_opts = "compress=zstd,noatime,space_cache=v2"
+
+                # Montar subvolumen @ en raíz
+                rc, _ = self._run_cmd(["mount", "-o",
+                                       f"subvol=@,{_btrfs_opts}",
+                                       dev_root, str(MOUNT_ROOT)])
+                if rc != 0:
+                    self._step("mount", "error")
+                    self._jsc("pyErrorPaso", f"Error montando subvolumen @ de {dev_root}")
+                    self._limpiar_montajes(); return
+
+                # Crear puntos de montaje y montar subvolúmenes adicionales
+                _sv_mounts = [
+                    ("@home",      MOUNT_ROOT / "home"),
+                    ("@snapshots", MOUNT_ROOT / ".snapshots"),
+                    ("@log",       MOUNT_ROOT / "var" / "log"),
+                    ("@cache",     MOUNT_ROOT / "var" / "cache"),
+                    ("@tmp",       MOUNT_ROOT / "tmp"),
+                ]
+                for sv_name, sv_path in _sv_mounts:
+                    sv_path.mkdir(parents=True, exist_ok=True)
+                    _sv_opts = f"subvol={sv_name},{_btrfs_opts}"
+                    # @tmp: sin CoW para evitar fragmentación excesiva
+                    if sv_name == "@tmp":
+                        _sv_opts += ",nodatacow"
+                    rc_sv, _ = self._run_cmd(["mount", "-o", _sv_opts, dev_root, str(sv_path)])
+                    if rc_sv != 0:
+                        self._log(f"[WARN] No se pudo montar subvolumen {sv_name} en {sv_path}", "warn")
+
+                self._log("  Subvolúmenes Btrfs montados correctamente", "ok")
 
             if uefi:
                 MOUNT_EFI.mkdir(parents=True, exist_ok=True)
@@ -2909,7 +3298,7 @@ WantedBy=multi-user.target
             self._log("\n── Optimizando mirrors ──\n", "step")
             self._run_cmd(["pacman", "-Sy", "--noconfirm", "--needed", "reflector"], timeout=120)
             rc, _ = self._run_cmd([
-                "reflector", "--country", "US,MX,GT",
+                "reflector", "--country", "SV,US,MX,GT",
                 "--latest", "10", "--sort", "rate",
                 "--protocol", "https", "--save", "/etc/pacman.d/mirrorlist",
             ], timeout=120)
@@ -3007,10 +3396,16 @@ WantedBy=multi-user.target
                 self._log(f"  Kernel: linux (error al consultar repo [avalos]: {_e})", "warn")
 
             pkgs += [_kernel_pkg, _headers_pkg]
-            # ── Drivers GPU + entorno gráfico + gaming ───────────────────────
+            # ── Drivers GPU + entorno gráfico ─────────────────────────────────
             # Si ucode es string vacío (CPU no reconocida), no incluir en pkgs:
             # pacstrap falla con error si recibe un nombre de paquete vacío.
-            pkgs += gpu_info["pkgs"] + HYPRLAND_PKGS + GAMING_PKGS + ([ucode] if ucode else [])
+            pkgs += gpu_info["pkgs"] + HYPRLAND_PKGS + ([ucode] if ucode else [])
+            # ── Gaming: solo si el usuario marcó el checkbox ───────────────────
+            if self._install_gaming:
+                pkgs += GAMING_PKGS
+                self._log("  Gaming activado — añadidos paquetes Steam, Wine, DXVK, MangoHUD…", "ok")
+            else:
+                self._log("  Gaming omitido — el usuario no lo seleccionó", "info")
             self._log(f"GPU detectada: {gpu_info['vendor'].upper()} → drivers: {', '.join(gpu_info['pkgs'][:3])}…", "info")
             self._log(f"Total: {len(pkgs)} paquetes ({', '.join(pkgs[:8])}… +{max(0, len(pkgs)-8)} más)", "info")
 
@@ -3112,9 +3507,50 @@ WantedBy=multi-user.target
                 self._log(f"[ERROR] chpasswd root falló (rc={rc_pw}): {out_pw}", "err")
                 self._limpiar_montajes()
                 return
-            self._run_chroot(["mkinitcpio", "-P"])
 
-            self._step("config", "done", "locale · timezone · hostname · initramfs")
+            # ── mkinitcpio: añadir hook btrfs si el FS es Btrfs ──────────────
+            # CRÍTICO: sin el hook "btrfs" en HOOKS, el initramfs no puede montar
+            # el sistema de archivos raíz en el arranque → kernel panic garantizado.
+            # El hook btrfs es parte del paquete btrfs-progs y se añade después de
+            # "filesystems" en los HOOKS de mkinitcpio.conf.
+            if not self._modo_usb:
+                _mkinit_path = MOUNT_ROOT / "etc" / "mkinitcpio.conf"
+                if _mkinit_path.exists():
+                    _mkinit_txt = _mkinit_path.read_text()
+                    # Insertar "btrfs" después de "filesystems" en los HOOKS si no está
+                    if "btrfs" not in _mkinit_txt:
+                        _mkinit_txt = _mkinit_txt.replace(
+                            "filesystems", "btrfs filesystems"
+                        )
+                        _mkinit_path.write_text(_mkinit_txt)
+                        self._log("  mkinitcpio.conf: hook btrfs añadido", "ok")
+                    else:
+                        self._log("  mkinitcpio.conf: hook btrfs ya presente", "ok")
+
+                # ── /etc/default/grub: activar soporte btrfs en grub-btrfsd ───
+                # GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=true es necesario
+                # cuando la partición EFI (boot) no está en el mismo disco Btrfs.
+                # Sin esto grub-btrfsd puede no detectar el subvolumen raíz correcto.
+                _grub_default = MOUNT_ROOT / "etc" / "default" / "grub"
+                if _grub_default.exists():
+                    _grub_txt = _grub_default.read_text()
+                    _grub_btrfs_additions = []
+                    if "GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION" not in _grub_txt:
+                        _grub_btrfs_additions.append(
+                            "GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=true"
+                        )
+                    # Habilitar os-prober para detectar otros SO en entradas de snapshot
+                    if "GRUB_DISABLE_OS_PROBER" not in _grub_txt:
+                        _grub_btrfs_additions.append("GRUB_DISABLE_OS_PROBER=false")
+                    if _grub_btrfs_additions:
+                        _grub_txt += "\n# AvalOS Btrfs snapshot support\n"
+                        _grub_txt += "\n".join(_grub_btrfs_additions) + "\n"
+                        _grub_default.write_text(_grub_txt)
+                        self._log("  /etc/default/grub: GRUB_BTRFS configurado", "ok")
+
+            self._run_chroot(["mkinitcpio", "-P"])
+            self._step("config", "done", "locale · timezone · hostname · initramfs · btrfs-hook"
+                       if not self._modo_usb else "locale · timezone · hostname · initramfs")
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
@@ -3132,7 +3568,12 @@ WantedBy=multi-user.target
                 if uefi:
                     grub_cmd = ["grub-install", "--target=x86_64-efi",
                                 "--efi-directory=/boot/efi", "--bootloader-id=GRUB"]
-                    if GRUB_UEFI_REMOVABLE:
+                    # BUG-2 FIX: en modo USB activar --removable siempre.
+                    # Algunas BIOS UEFI no guardan la entrada NVRAM para discos externos,
+                    # lo que impide que el USB arranque en otros equipos.
+                    # --removable instala el bootloader en la ruta estándar de fallback
+                    # (/EFI/BOOT/BOOTX64.EFI) que TODAS las BIOS UEFI reconocen.
+                    if GRUB_UEFI_REMOVABLE or self._modo_usb:
                         grub_cmd.append("--removable")
                     rc, _ = self._run_chroot(grub_cmd)
                 else:
@@ -3330,8 +3771,10 @@ WantedBy=multi-user.target
             self._status("Habilitando servicios…")
 
             # Crear avalos-gpu-detect.service en el sistema instalado
-            # (igual que en el live — detecta GPU antes de SDDM para que
-            #  hyprland.conf pueda hacer `source` de gpu-env.conf ya escrito)
+            # NOTA: Con la migración a Lua, el sistema instalado ya tiene las vars de GPU
+            # bakeadas en hyprland.lua vía %%GPU_ENV%%. Este servicio escribe gpu-env.conf
+            # (formato hyprlang) que ya no se lee. Se conserva como fallback de detección
+            # dinámica por si el usuario reemplaza la GPU sin reinstalar.
             _svc_dir = MOUNT_ROOT / "etc/systemd/system"
             _svc_dir.mkdir(parents=True, exist_ok=True)
             (_svc_dir / "avalos-gpu-detect.service").write_text(
@@ -3359,7 +3802,77 @@ WantedBy=multi-user.target
             self._run_chroot(["systemctl", "--global", "enable",
                               "pipewire", "pipewire-pulse", "wireplumber"])
             self._log("  [INFO] sensors-detect omitido — ejecutar manualmente tras el reinicio: sudo sensors-detect --auto", "warn")
-            self._step("services", "done", "NetworkManager · bluetooth · sddm · pipewire · avalos-gpu-detect")
+
+            # ── Snapshots: snapper + grub-btrfs (solo modo PC / Btrfs) ──────
+            if not self._modo_usb:
+                self._log("\n── Configurando snapper + grub-btrfs ──\n", "step")
+
+                # 1. Crear configuración de snapper para /
+                #    snapper crea automáticamente el subvolumen .snapshots dentro de @snapshots
+                #    -c root: nombre de la configuración
+                rc_snap, out_snap = self._run_chroot(["snapper", "-c", "root", "create-config", "/"])
+                if rc_snap != 0:
+                    self._log(f"  snapper: create-config falló (rc={rc_snap}): {out_snap}", "err")
+                    self._step("services", "error")
+                    self._abortado = True
+                    self._limpiar_montajes()
+                    return
+                self._log("  snapper: config 'root' creada", "ok")
+
+                # 2. Ajustar límites de retención de snapshots en /etc/snapper/configs/root
+                #    Valores conservadores para no llenar el disco:
+                #    TIMELINE: 5 hourly, 7 daily, 4 weekly, 3 monthly, 0 yearly
+                #    NUMBER:   10 snapshots manuales/pacman máximo
+                _snapper_cfg = MOUNT_ROOT / "etc" / "snapper" / "configs" / "root"
+                if _snapper_cfg.exists():
+                    _cfg_txt = _snapper_cfg.read_text()
+                    _snapper_replacements = {
+                        'TIMELINE_LIMIT_HOURLY="10"':  'TIMELINE_LIMIT_HOURLY="5"',
+                        'TIMELINE_LIMIT_DAILY="10"':   'TIMELINE_LIMIT_DAILY="7"',
+                        'TIMELINE_LIMIT_WEEKLY="0"':   'TIMELINE_LIMIT_WEEKLY="4"',
+                        'TIMELINE_LIMIT_MONTHLY="10"': 'TIMELINE_LIMIT_MONTHLY="3"',
+                        'TIMELINE_LIMIT_YEARLY="10"':  'TIMELINE_LIMIT_YEARLY="0"',
+                        'NUMBER_LIMIT="50"':            'NUMBER_LIMIT="10"',
+                        'NUMBER_LIMIT_IMPORTANT="50"':  'NUMBER_LIMIT_IMPORTANT="10"',
+                    }
+                    for old, new in _snapper_replacements.items():
+                        _cfg_txt = _cfg_txt.replace(old, new)
+                    _snapper_cfg.write_text(_cfg_txt)
+                    self._log("  snapper: límites de retención configurados", "ok")
+
+                # 3. Habilitar servicios de snapper
+                #    snapper-timeline.timer: snapshots automáticos cada hora
+                #    snapper-cleanup.timer: limpia snapshots antiguos según límites
+                for svc in ["snapper-timeline.timer", "snapper-cleanup.timer"]:
+                    self._run_chroot(["systemctl", "enable", svc])
+                self._log("  snapper: timers habilitados (timeline + cleanup)", "ok")
+
+                # 4. Configurar grub-btrfs
+                #    grub-btrfsd: daemon que detecta nuevos snapshots y regenera grub.cfg
+                #    Solo se habilita si el bootloader es GRUB — no tiene sentido
+                #    con systemd-boot ni rEFInd (que no leen entradas de grub.cfg).
+                if self._bootloader == "grub":
+                    self._run_chroot(["systemctl", "enable", "grub-btrfsd"])
+                    # Forzar regeneración inicial de grub.cfg con entradas de snapshots
+                    # (se volverá a ejecutar automáticamente después de grub-install)
+                    self._run_chroot(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
+                    self._log("  grub-btrfs: daemon habilitado · menú de snapshots activo en GRUB", "ok")
+                else:
+                    self._log("  grub-btrfs: omitido (bootloader no es GRUB)", "warn")
+                    self._log("  → Los snapshots siguen funcionando con snapper.", "warn")
+                    self._log("  → Rollback manual desde TTY: snapper rollback <número>", "warn")
+
+                # 5. Permisos del directorio .snapshots
+                #    Solo root debe poder ver los snapshots (snapper lo requiere)
+                _snap_dir = MOUNT_ROOT / ".snapshots"
+                if _snap_dir.exists():
+                    self._run_cmd(["chmod", "750", str(_snap_dir)])
+                    self._log("  .snapshots: permisos 750 aplicados", "ok")
+
+                self._log("  ✓ Snapshots configurados: snapper + snap-pac + grub-btrfs", "ok")
+
+            self._step("services", "done", "NetworkManager · bluetooth · sddm · pipewire · snapper"
+                       if not self._modo_usb else "NetworkManager · bluetooth · sddm · pipewire · avalos-gpu-detect")
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
@@ -3434,7 +3947,7 @@ WantedBy=multi-user.target
                 self._log("[WARN] yay no se instaló — paquetes AUR omitidos.", "warn")
                 self._step("aur", "skip", "yay falló")
             else:
-                all_aur = HYPRLAND_AUR_PKGS + GAMING_AUR_PKGS
+                all_aur = HYPRLAND_AUR_PKGS + (GAMING_AUR_PKGS if self._install_gaming else [])
                 if all_aur:
                     rc_aur, _ = self._run_chroot(
                         ["sudo", "-H", "-u", usuario, "yay", "-S", "--noconfirm", "--needed"]
@@ -3452,48 +3965,49 @@ WantedBy=multi-user.target
                 else:
                     self._step("aur", "done", "0 paquetes AUR")
 
-                # ── Gaming post-install ───────────────────────────────────────
-                # Agregar usuario al grupo gamemode
-                self._run_chroot(["usermod", "-aG", "gamemode", usuario])
+                # ── Gaming post-install (solo si gaming fue seleccionado) ──────
+                if self._install_gaming:
+                    # Agregar usuario al grupo gamemode
+                    self._run_chroot(["usermod", "-aG", "gamemode", usuario])
 
-                # GameMode config
-                gamemode_conf = (
-                    "[general]\n"
-                    "reaper_freq=5\n"
-                    "defaultgov=performance\n"
-                    "desiredgov=performance\n"
-                    "softrealtime=auto\n"
-                    "renice=-10\n\n"
-                    "[gpu]\n"
-                    "apply_gpu_optimisations=accept-responsibility\n"
-                    "gpu_device=0\n"
-                    "amd_performance_level=high\n\n"
-                    "[filter]\n"
-                    "whitelist=steam\nwhitelist=lutris\nwhitelist=heroic\n"
-                )
-                try:
-                    gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
-                    gm_path.write_text(gamemode_conf, encoding="utf-8")
-                    self._log("  gamemode.ini configurado", "ok")
-                except OSError as e:
-                    self._log(f"[WARN] gamemode.ini: {e}", "warn")
+                    # GameMode config
+                    gamemode_conf = (
+                        "[general]\n"
+                        "reaper_freq=5\n"
+                        "defaultgov=performance\n"
+                        "desiredgov=performance\n"
+                        "softrealtime=auto\n"
+                        "renice=-10\n\n"
+                        "[gpu]\n"
+                        "apply_gpu_optimisations=accept-responsibility\n"
+                        "gpu_device=0\n"
+                        "amd_performance_level=high\n\n"
+                        "[filter]\n"
+                        "whitelist=steam\nwhitelist=lutris\nwhitelist=heroic\n"
+                    )
+                    try:
+                        gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
+                        gm_path.write_text(gamemode_conf, encoding="utf-8")
+                        self._log("  gamemode.ini configurado", "ok")
+                    except OSError as e:
+                        self._log(f"[WARN] gamemode.ini: {e}", "warn")
 
-                # MangoHUD config global
-                _contenido_mango = _leer_config("mangohud/MangoHud.conf")
-                if _contenido_mango:
-                    mango_dir = MOUNT_ROOT / "etc" / "MangoHud"
-                    mango_dir.mkdir(parents=True, exist_ok=True)
-                    (mango_dir / "MangoHud.conf").write_text(_contenido_mango, encoding="utf-8")
-                    self._log("  MangoHud.conf configurado", "ok")
+                    # MangoHUD config global
+                    _contenido_mango = _leer_config("mangohud/MangoHud.conf")
+                    if _contenido_mango:
+                        mango_dir = MOUNT_ROOT / "etc" / "MangoHud"
+                        mango_dir.mkdir(parents=True, exist_ok=True)
+                        (mango_dir / "MangoHud.conf").write_text(_contenido_mango, encoding="utf-8")
+                        self._log("  MangoHud.conf configurado", "ok")
 
-                # Flatpak: instalar Heroic si no entró por AUR
-                self._run_chroot(
-                    ["sudo", "-H", "-u", usuario, "flatpak", "remote-add",
-                     "--if-not-exists", "flathub",
-                     "https://dl.flathub.org/repo/flathub.flatpakrepo"],
-                    timeout=120
-                )
-                self._log("  Flathub configurado", "ok")
+                    # Flatpak: añadir Flathub como remote para el usuario (flatpak instalado con gaming)
+                    self._run_chroot(
+                        ["sudo", "-H", "-u", usuario, "flatpak", "remote-add",
+                         "--if-not-exists", "flathub",
+                         "https://dl.flathub.org/repo/flathub.flatpakrepo"],
+                        timeout=120
+                    )
+                    self._log("  Flathub configurado", "ok")
 
             if sudoers_tmp and sudoers_tmp.exists():
                 try: sudoers_tmp.unlink()
@@ -3502,12 +4016,12 @@ WantedBy=multi-user.target
             avanzar()
 
             # ── PASO 15: Hyprland config ──────────────────────────────────────
-            self._step("hyprland", "active")
+            self._step("hypr", "active")
             self._status("Configurando Hyprland + entorno Wayland…")
             self._label("configurando Hyprland…")
             self._log("\n── Configurando Hyprland + Wayland ──\n", "step")
             self._configurar_hyprland(usuario, gpu_info)
-            self._step("hyprland", "done", "SDDM · Waybar · hyprland.conf · rofi · kitty")
+            self._step("hypr", "done", "SDDM · Waybar · hyprland.lua · rofi · kitty")
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
@@ -3526,10 +4040,10 @@ WantedBy=multi-user.target
                 f"<strong>Usuario:</strong> {usuario}<br>"
                 f"<strong>Hostname:</strong> {hostname}<br>"
                 f"<strong>Timezone:</strong> {timezone}<br>"
-                f"<strong>Modo:</strong> {'USB (noatime)' if self._modo_usb else 'Disco (ext4)'}<br>"
+                f"<strong>Modo:</strong> {'USB (ext4 noatime)' if self._modo_usb else 'Disco (Btrfs)'}<br>"
                 f"<strong>Bootloader:</strong> { {'grub':'GRUB','sd-boot':'systemd-boot','refind':'rEFInd','none':'Omitido'}.get(self._bootloader,'?') }<br>"
                 f"<strong>DE/WM:</strong> Hyprland · Wayland · SDDM<br>"
-                f"<strong>⚠ Contraseña:</strong> cambio requerido en el primer login"
+                f"<strong>✓ Contraseña:</strong> establecida correctamente"
             )
             self._jsc("pyInstalacionCompleta", done_info)
             self._label("✓ completado")
