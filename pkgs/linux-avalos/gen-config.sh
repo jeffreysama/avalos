@@ -60,29 +60,27 @@ fi
 # Arch publica su config en el repo extra de paquetes; la descargamos de ALA
 # (Arch Linux Archive) para la versión exacta del kernel si está disponible.
 #
-# FIX: el pkgrel en ALA no siempre es -1 — frecuentemente hay rebuilds (-2, -3).
-# Si pkgrel-1 no existe, se prueba hasta -3 antes de caer al paquete actual.
-# Esto evita descargar un config de una versión diferente del kernel (ej. 7.0.9
-# cuando compilamos 7.0.10), que generaría miles de advertencias en olddefconfig.
-
-ARCH_CONFIG_URLS=()
-
-# ALA — versión exacta con pkgrel 1, 2 y 3
-for pkgrel in 1 2 3; do
-    ARCH_CONFIG_URLS+=(
-        "https://archive.archlinux.org/packages/l/linux/linux-${PKGVER}-${pkgrel}-x86_64.pkg.tar.zst"
-    )
-done
-
-# Paquete actual de Arch (siempre existe, sin importar pkgrel — URL canónica)
-ARCH_CONFIG_URLS+=(
+# BUG-FIX: el pkgver REAL del paquete linux de Arch incluye un sufijo ".archN"
+# entre la versión y el pkgrel (ej. "linux-7.0.3.arch1-2-x86_64.pkg.tar.zst",
+# "linux-6.17.5.arch1-1-x86_64.pkg.tar.zst" — confirmado contra nombres reales
+# en archive.archlinux.org y mirrors oficiales). Nuestro PKGVER sigue la
+# numeración de kernel.org sin ese sufijo (ej. "7.0.11"), así que las URLs
+# "linux-${PKGVER}-${pkgrel}-x86_64.pkg.tar.zst" (pkgrel 1, 2, 3) NUNCA
+# coinciden con un archivo real — el ".archN" no es adivinable a partir de
+# PKGVER. Esas 3 URLs SIEMPRE fallaban (404) y el script terminaba cayendo
+# de todos modos a la URL canónica de abajo; solo desperdiciaban 3 intentos
+# de curl y dejaban un log confuso de "Intentando: ..." sin éxito.
+#
+# Fix: usar directamente la URL canónica de "descarga actual" como única
+# fuente de Arch. No garantiza la versión EXACTA que estamos compilando
+# (Arch podría estar en una versión de kernel.org distinta a la nuestra en
+# este momento), pero es la única forma de obtener un archivo que realmente
+# existe sin depender de conocer el sufijo ".archN" de antemano. Si la
+# versión difiere bastante, olddefconfig generará más preguntas/avisos de lo
+# ideal, pero sigue siendo una base mucho mejor que defconfig vacío.
+ARCH_CONFIG_URLS=(
     "https://archlinux.org/packages/core/x86_64/linux/download/"
 )
-
-# WARN-02 FIX: geo.mirror con pkgrel=1 es redundante con el primer intento de ALA.
-# Se elimina — si los 3 intentos de ALA y la URL canónica fallan, ya hay suficientes
-# alternativas antes de caer al defconfig fallback.
-# (Eliminado: "https://geo.mirror.pkgbuild.com/core/os/x86_64/linux-${PKGVER}-1-x86_64.pkg.tar.zst")
 
 echo "    Fuente: config de Arch Linux (descarga)"
 _tmpdir=$(mktemp -d)

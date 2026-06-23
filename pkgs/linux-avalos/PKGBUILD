@@ -49,6 +49,21 @@ prepare() {
         cp ../config .config
     fi
 
+    # ── LOCALVERSION: identifica el kernel en uname/modules ─────────────────
+    # Sin esto, `make kernelrelease` devuelve solo "${pkgver}" (ej. "7.0.11"),
+    # idéntico para linux-avalos, -bore y -compat, y sin el sufijo que
+    # linux-avalos.install busca con `grep -- "-${_pkgbase#linux-}$"`.
+    #
+    # BUG-FIX: derivar _expected_lv de pkgbase en lugar de hardcodear "-avalos".
+    # build-kernel.yml transforma pkgbase (pkgbase=linux-avalos → linux-avalos-bore),
+    # por lo que _expected_lv se calcula correctamente para cada variante
+    # sin necesidad de seds adicionales sobre el check de verificación.
+    #   linux-avalos        → _expected_lv="-avalos"
+    #   linux-avalos-bore   → _expected_lv="-avalos-bore"
+    #   linux-avalos-compat → _expected_lv="-avalos-compat"
+    local _expected_lv="-${pkgbase#linux-}"
+    scripts/config --set-str CONFIG_LOCALVERSION "${_expected_lv}"
+
     # ── CPU target: x86-64-v3 genérico (AMD + Intel, AVX2+) ──────────────
     # CONFIG_GENERIC_CPU3 = x86-64-v3: activa AVX2, BMI2, FMA, MOVBE, XSAVE
     # para cualquier CPU que soporte estos flags — AMD Ryzen 1xxx+ e Intel
@@ -172,6 +187,16 @@ prepare() {
         echo "[ERROR] CONFIG_GENERIC_CPU3 no activo en .config — el kernel NO tiene optimizaciones v3"
         echo "        Verificar Kconfig del kernel ${pkgver}. Opciones CPU disponibles:"
         grep -E 'CONFIG_(GENERIC_CPU|MNATIVE)' .config || true
+        exit 1
+    fi
+
+    # FIX: verificar que CONFIG_LOCALVERSION quedó aplicado tras olddefconfig.
+    # Es necesario para que _kver contenga el sufijo correcto (ver linux-avalos.install).
+    # _expected_lv se deriva de pkgbase → funciona igual para -avalos, -bore y -compat.
+    if ! grep -q "^CONFIG_LOCALVERSION=\"${_expected_lv}\"$" .config; then
+        echo "[ERROR] CONFIG_LOCALVERSION no es \"${_expected_lv}\" en .config tras olddefconfig"
+        echo "        _kver no contendrá el sufijo correcto y linux-avalos.install fallará al detectarlo."
+        grep -E '^CONFIG_LOCALVERSION=' .config || echo "        (CONFIG_LOCALVERSION no presente en .config)"
         exit 1
     fi
 }

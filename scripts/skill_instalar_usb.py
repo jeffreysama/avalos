@@ -20,8 +20,15 @@
 """
 
 from __future__ import annotations
-import glob, json, os, re, shutil, subprocess, sys, threading, time
+import datetime, glob, json, os, re, shutil, subprocess, sys, threading, time
 from pathlib import Path
+
+# FIX (unificación i18n): translations.py es la única fuente de verdad para
+# los textos del wizard (STRINGS, inyectado en _build_html) y para las
+# etiquetas ff-*/pm-*/cd-* de fastfetch/powermenu del sistema instalado.
+# Vive junto a este script en /usr/share/avalos/installer/ (ver build-iso.yml),
+# así que el import es siempre estático — sin try/except.
+import translations
 
 try:
     import webview  # type: ignore
@@ -186,6 +193,12 @@ HYPRLAND_PKGS = [
     "file-roller", "thunar-archive-plugin", "thunar-volman",
     "gvfs-mtp", "gvfs-smb", "nwg-look", "nwg-displays", "papirus-icon-theme",
     "lm_sensors", "acpi", "capitaine-cursors",
+    # BUG-17 FIX: avalos-wallpaper se reescribió como app pywebview (grid de
+    # miniaturas + selector de fit_mode) y necesitaba estas 3 — antes solo
+    # estaban disponibles vía pip en el live USB (ver skill_instalar_usb.py
+    # línea ~36), nunca se instalaban en el sistema final. python-pywebview
+    # está en el repo oficial "extra" de Arch, no en AUR.
+    "python-pywebview", "python-gobject", "webkit2gtk-4.1",
 ]
 
 HYPRLAND_AUR_PKGS = ["microsoft-edge-stable-bin"]
@@ -228,6 +241,12 @@ GAMING_AUR_PKGS = [
     # Heroic Games Launcher — Epic Games + GOG en Linux
     "heroic-games-launcher-bin",
 ]
+
+
+# ── Tema SDDM AvalOS (Tokyo Night) — generado por el instalador ──────────
+_SDDM_META = '[SddmGreeterTheme]\nName=AvalOS\nDescription=AvalOS SDDM Theme — Tokyo Night\nAuthor=AvalOS Team\nLicense=GPL-3.0\nType=sddm-theme\nVersion=1.0\nWebsite=https://github.com/jeffreysama/avalos\nScreenshot=\n'
+
+_SDDM_MAIN_QML = 'import QtQuick 2.15\nimport QtQuick.Controls 2.15\nimport QtQuick.Layouts 1.15\n\nItem {\n    id: root\n\n    // ── Tokyo Night palette ───────────────────────────────────────\n    readonly property color c_bg:     "#1a1b26"\n    readonly property color c_card:   "#24283b"\n    readonly property color c_input:  "#1f2335"\n    readonly property color c_hover:  "#292e42"\n    readonly property color c_fg:     "#c0caf5"\n    readonly property color c_dim:    "#565f89"\n    readonly property color c_blue:   "#7aa2f7"\n    readonly property color c_purple: "#bb9af7"\n    readonly property color c_red:    "#f7768e"\n    readonly property color c_border: "#414868"\n    readonly property string c_font:  "JetBrainsMono Nerd Font, monospace"\n\n    property bool loginFailed: false\n\n    // ── Fondo ─────────────────────────────────────────────────────\n    Rectangle { anchors.fill: parent; color: c_bg }\n\n    // ── Tarjeta central ──────────────────────────────────────────\n    Rectangle {\n        id: card\n        anchors.centerIn: parent\n        width: 360\n        height: col.implicitHeight + 56\n        radius: 12\n        color: c_card\n        border.color: loginFailed ? c_red : c_border\n        border.width: 1\n\n        Behavior on border.color { ColorAnimation { duration: 250 } }\n\n        // Barra de acento superior (blue → purple)\n        Rectangle {\n            anchors { top: parent.top; left: parent.left; right: parent.right }\n            height: 2; radius: 2\n            gradient: Gradient {\n                orientation: Gradient.Horizontal\n                GradientStop { position: 0.0;  color: "transparent" }\n                GradientStop { position: 0.2;  color: c_blue        }\n                GradientStop { position: 0.8;  color: c_purple      }\n                GradientStop { position: 1.0;  color: "transparent" }\n            }\n        }\n\n        ColumnLayout {\n            id: col\n            anchors {\n                top: parent.top; left: parent.left; right: parent.right\n                margins: 24; topMargin: 28\n            }\n            spacing: 14\n\n            // ── Logo ──────────────────────────────────────────────\n            Text {\n                Layout.fillWidth: true\n                text: "AvalOS"\n                horizontalAlignment: Text.AlignHCenter\n                font { pixelSize: 28; bold: true; family: c_font }\n                color: c_blue\n            }\n\n            // ── Reloj + hostname ──────────────────────────────────\n            Text {\n                id: clockText\n                Layout.fillWidth: true\n                horizontalAlignment: Text.AlignHCenter\n                font { pixelSize: 12; family: c_font }\n                color: c_dim\n                Timer {\n                    interval: 1000; running: true; repeat: true\n                    onTriggered: clockText.text =\n                        Qt.formatDateTime(new Date(), "hh:mm") +\n                        "  \\u00b7  " + sddm.hostName +\n                        "  \\u00b7  " + Qt.formatDateTime(new Date(), "ddd d MMM")\n                }\n                Component.onCompleted: text =\n                    Qt.formatDateTime(new Date(), "hh:mm") +\n                    "  \\u00b7  " + sddm.hostName +\n                    "  \\u00b7  " + Qt.formatDateTime(new Date(), "ddd d MMM")\n            }\n\n            // ── Separador ─────────────────────────────────────────\n            Rectangle {\n                Layout.fillWidth: true; height: 1\n                color: c_border; opacity: 0.5\n                Layout.topMargin: 2; Layout.bottomMargin: 2\n            }\n\n            // ── Campo usuario ─────────────────────────────────────\n            TextField {\n                id: userField\n                Layout.fillWidth: true\n                text: sddm.lastUser\n                placeholderText: "%%SDDM_USER%%"\n                font { pixelSize: 13; family: c_font }\n                color: c_fg\n                placeholderTextColor: c_dim\n                selectionColor: c_blue\n                selectedTextColor: c_bg\n                leftPadding: 12\n                background: Rectangle {\n                    radius: 6; color: c_input\n                    border.color: userField.activeFocus ? c_blue : c_border\n                    border.width: 1\n                    Behavior on border.color { ColorAnimation { duration: 150 } }\n                }\n                Keys.onTabPressed:   passField.forceActiveFocus()\n                Keys.onReturnPressed: passField.forceActiveFocus()\n            }\n\n            // ── Campo contraseña ──────────────────────────────────\n            TextField {\n                id: passField\n                Layout.fillWidth: true\n                placeholderText: "%%SDDM_PASS%%"\n                echoMode: TextInput.Password\n                font { pixelSize: 13; family: c_font }\n                color: c_fg\n                placeholderTextColor: c_dim\n                selectionColor: c_blue\n                selectedTextColor: c_bg\n                leftPadding: 12\n                rightPadding: 44\n                background: Rectangle {\n                    radius: 6; color: c_input\n                    border.color: passField.activeFocus ? c_blue : c_border\n                    border.width: 1\n                    Behavior on border.color { ColorAnimation { duration: 150 } }\n\n                    // Toggle mostrar/ocultar\n                    Rectangle {\n                        anchors {\n                            right: parent.right; rightMargin: 2\n                            verticalCenter: parent.verticalCenter\n                        }\n                        width: 36; height: parent.height - 4; radius: 5\n                        color: eyeArea.containsMouse ? c_hover : "transparent"\n                        Behavior on color { ColorAnimation { duration: 120 } }\n                        Text {\n                            anchors.centerIn: parent\n                            text: passField.echoMode === TextInput.Normal ? "\\u2731" : "\\u00b7\\u00b7\\u00b7"\n                            color: c_dim\n                            font.pixelSize: passField.echoMode === TextInput.Normal ? 14 : 11\n                        }\n                        MouseArea {\n                            id: eyeArea\n                            anchors.fill: parent\n                            hoverEnabled: true\n                            cursorShape: Qt.PointingHandCursor\n                            onClicked: passField.echoMode =\n                                (passField.echoMode === TextInput.Password)\n                                    ? TextInput.Normal : TextInput.Password\n                        }\n                    }\n                }\n                Keys.onTabPressed:    userField.forceActiveFocus()\n                Keys.onReturnPressed: root.doLogin()\n            }\n\n            // ── Botón Sign In ─────────────────────────────────────\n            Rectangle {\n                Layout.fillWidth: true\n                height: 40; radius: 6\n                color: signArea.pressed       ? Qt.darker(c_blue, 1.25)\n                     : signArea.containsMouse ? Qt.lighter(c_blue, 1.08)\n                     : c_blue\n                Behavior on color { ColorAnimation { duration: 130 } }\n                Text {\n                    anchors.centerIn: parent\n                    text: "%%SDDM_SIGNIN%%"\n                    font { pixelSize: 14; bold: true; family: c_font }\n                    color: c_bg\n                }\n                MouseArea {\n                    id: signArea\n                    anchors.fill: parent\n                    hoverEnabled: true\n                    cursorShape: Qt.PointingHandCursor\n                    onClicked: root.doLogin()\n                }\n            }\n\n            // ── Error ─────────────────────────────────────────────\n            Text {\n                Layout.fillWidth: true\n                horizontalAlignment: Text.AlignHCenter\n                text: "%%SDDM_FAIL%%"\n                font { pixelSize: 12; family: c_font }\n                color: c_red\n                visible: loginFailed\n                opacity: loginFailed ? 1.0 : 0.0\n                Behavior on opacity { NumberAnimation { duration: 200 } }\n            }\n\n            // ── Separador ─────────────────────────────────────────\n            Rectangle {\n                Layout.fillWidth: true; height: 1\n                color: c_border; opacity: 0.4\n                Layout.topMargin: 2; Layout.bottomMargin: 2\n            }\n\n            // ── Selector de sesión ────────────────────────────────\n            RowLayout {\n                Layout.fillWidth: true\n                spacing: 8\n                Text {\n                    text: "%%SDDM_SESSION%%"\n                    font { pixelSize: 11; family: c_font }\n                    color: c_dim\n                }\n                ComboBox {\n                    id: sessionCombo\n                    Layout.fillWidth: true\n                    model: sessionModel\n                    textRole: "name"\n                    currentIndex: sessionModel.lastIndex\n                    font { pixelSize: 12; family: c_font }\n                    contentItem: Text {\n                        leftPadding: 8\n                        text: sessionCombo.displayText\n                        font: sessionCombo.font\n                        color: c_fg\n                        verticalAlignment: Text.AlignVCenter\n                        elide: Text.ElideRight\n                    }\n                    background: Rectangle {\n                        radius: 6; color: c_input\n                        border.color: sessionCombo.popup.visible ? c_blue : c_border\n                        border.width: 1\n                        Behavior on border.color { ColorAnimation { duration: 150 } }\n                    }\n                    indicator: Text {\n                        x: sessionCombo.width - width - 8\n                        y: (sessionCombo.height - height) / 2\n                        text: sessionCombo.popup.visible ? "\\u25b4" : "\\u25be"\n                        font.pixelSize: 9\n                        color: c_dim\n                    }\n                    popup: Popup {\n                        y: sessionCombo.height + 2\n                        width: sessionCombo.width\n                        implicitHeight: Math.min(contentItem.implicitHeight, 180) + 4\n                        padding: 2\n                        background: Rectangle {\n                            radius: 6; color: c_card\n                            border.color: c_border; border.width: 1\n                        }\n                        contentItem: ListView {\n                            clip: true\n                            model: sessionCombo.popup.visible ? sessionCombo.delegateModel : null\n                            implicitHeight: contentHeight\n                        }\n                    }\n                    delegate: ItemDelegate {\n                        id: sessItem\n                        width: sessionCombo.width - 4\n                        height: 30\n                        contentItem: Text {\n                            leftPadding: 8\n                            text: model.name || ""\n                            font { pixelSize: 12; family: c_font }\n                            color: sessionCombo.currentIndex === index ? c_blue : c_fg\n                            verticalAlignment: Text.AlignVCenter\n                        }\n                        background: Rectangle {\n                            radius: 4\n                            color: sessItem.hovered ? c_hover : "transparent"\n                        }\n                    }\n                }\n            }\n\n            // ── Botones de energía ────────────────────────────────\n            RowLayout {\n                Layout.fillWidth: true\n                Layout.bottomMargin: 4\n                spacing: 8\n\n                Item { Layout.fillWidth: true }\n\n                Rectangle {\n                    width: 78; height: 28; radius: 6\n                    visible: sddm.canSuspend\n                    color: suspArea.containsMouse ? c_hover : "transparent"\n                    border.color: c_border; border.width: 1\n                    Behavior on color { ColorAnimation { duration: 120 } }\n                    Text {\n                        anchors.centerIn: parent\n                        text: "%%SDDM_SUSPEND%%"\n                        color: c_dim\n                        font { pixelSize: 11; family: c_font }\n                    }\n                    MouseArea {\n                        id: suspArea; anchors.fill: parent\n                        hoverEnabled: true; cursorShape: Qt.PointingHandCursor\n                        onClicked: sddm.suspend()\n                    }\n                }\n\n                Rectangle {\n                    width: 78; height: 28; radius: 6\n                    visible: sddm.canReboot\n                    color: rstArea.containsMouse ? c_hover : "transparent"\n                    border.color: c_border; border.width: 1\n                    Behavior on color { ColorAnimation { duration: 120 } }\n                    Text {\n                        anchors.centerIn: parent\n                        text: "%%SDDM_RESTART%%"\n                        color: c_dim\n                        font { pixelSize: 11; family: c_font }\n                    }\n                    MouseArea {\n                        id: rstArea; anchors.fill: parent\n                        hoverEnabled: true; cursorShape: Qt.PointingHandCursor\n                        onClicked: sddm.reboot()\n                    }\n                }\n\n                Rectangle {\n                    width: 78; height: 28; radius: 6\n                    visible: sddm.canPowerOff\n                    color: offArea.containsMouse ? c_hover : "transparent"\n                    border.color: c_border; border.width: 1\n                    Behavior on color { ColorAnimation { duration: 120 } }\n                    Text {\n                        anchors.centerIn: parent\n                        text: "%%SDDM_SHUTDOWN%%"\n                        color: c_red\n                        font { pixelSize: 11; family: c_font }\n                    }\n                    MouseArea {\n                        id: offArea; anchors.fill: parent\n                        hoverEnabled: true; cursorShape: Qt.PointingHandCursor\n                        onClicked: sddm.powerOff()\n                    }\n                }\n\n                Item { Layout.fillWidth: true }\n            }\n        }\n    }\n\n    // ── Lógica ────────────────────────────────────────────────────\n    function doLogin() {\n        sddm.login(userField.text, passField.text, sessionCombo.currentIndex)\n    }\n\n    Connections {\n        target: sddm\n        function onLoginFailed() {\n            loginFailed = true\n            passField.text = ""\n            passField.forceActiveFocus()\n            failTimer.restart()\n        }\n        function onLoginSucceeded() {\n            loginFailed = false\n        }\n    }\n\n    Timer {\n        id: failTimer\n        interval: 4000\n        onTriggered: loginFailed = false\n    }\n\n    Component.onCompleted: {\n        if (userField.text.length > 0)\n            passField.forceActiveFocus()\n        else\n            userField.forceActiveFocus()\n    }\n}\n'
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1134,6 +1153,16 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
                 <span class="opt-desc" style="display:block;margin-top:2px;" data-i18n="chk-gaming-desc">Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)</span>
               </span>
             </label>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;
+                          background:var(--tn-bg2);border:1px solid var(--tn-border);
+                          border-radius:8px;padding:9px 12px;">
+              <input type="checkbox" id="chk-bore" onchange="window._installBore=this.checked"
+                     style="width:15px;height:15px;accent-color:var(--tn-blue);flex-shrink:0;">
+              <span>
+                <span class="opt-title" style="font-size:12.5px;" data-i18n="chk-bore-title">⚡ Scheduler BORE</span>
+                <span class="opt-desc" style="display:block;margin-top:2px;" data-i18n="chk-bore-desc">Kernel linux-avalos-bore — mejor respuesta en juegos. Requiere CPU con AVX2 (x86-64-v3+); si no es compatible, se ignora y se usa el kernel estándar.</span>
+              </span>
+            </label>
           </div>
         </div>
 
@@ -1248,195 +1277,25 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 
 // ══════════════════════════════════════════════════════════════════
 //  INTERNACIONALIZACIÓN (i18n)
-//  Añadir idioma: copiar un bloque en STRINGS y traducir los valores.
+//  STRINGS se inyecta en runtime desde translations.TRANSLATIONS
+//  (ver _build_html). Para añadir/editar un idioma o clave, editar
+//  translations.py — es la única fuente de verdad para los textos
+//  del wizard y de fastfetch.
 // ══════════════════════════════════════════════════════════════════
-const STRINGS = {
-  en: {
-    "title":"AvalOS — Installer","topbar":"● AvalOS Installer",
-    "step-hint":"Select disk and configure the system",
-    "welcome-sub":"Arch Linux · Hyprland · Wayland · Tokyo Night",
-    "welcome-desc":"Welcome to the <strong>AvalOS</strong> installer.<br>This wizard will configure and install the system on your chosen disk.",
-    "btn-start":"Start installation →",
-    "sec-disk":"▸ Destination disk","sec-user":"▸ User account",
-    "sec-host":"▸ Computer name","sec-lang":"▸ Language & keyboard","sec-advanced":"▸ Advanced options",
-    "lbl-user":"Username","lbl-pass":"Password","lbl-confirm-pass":"Confirm password",
-    "lbl-show-hide":"Show/hide","lbl-hostname":"Hostname","lbl-timezone":"Time zone",
-    "lbl-locale":"Locale","lbl-keymap":"Keyboard layout","lbl-bootloader":"Bootloader",
-    "lbl-install-type":"Installation type","lbl-extras":"Extras",
-    "btn-install":"▶ Install AvalOS","btn-abort":"⛔ Abort","btn-retry":"↺ Retry",
-    "btn-reboot":"⟳ Reboot now","btn-close":"Close",
-    "opt-no-boot":"No bootloader","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 Persistent USB",
-    "opt-pc-desc":"Btrfs with subvolumes — automatic snapshots, GRUB rollback menu.",
-    "req-len-ok":"✓ 8+ characters","req-len-x":"✗ 8+ characters",
-    "req-upper-ok":"✓ Uppercase","req-upper-x":"✗ Uppercase",
-    "req-lower-ok":"✓ Lowercase","req-lower-x":"✗ Lowercase",
-    "req-num-ok":"✓ Number","req-num-x":"✗ Number",
-    "req-sym-ok":"✓ Symbol","req-sym-x":"✗ Symbol",
-    "log-title":"▸ Installation log","cd-title":"⚠ POINT OF NO RETURN",
-    "err-title":"⛔ Critical error","done-title":"AvalOS installed successfully",
-    "done-desc":"Remove the USB drive and reboot. SDDM will ask you to log in — select Hyprland.",
-    "val-select-disk":"Select a destination disk",
-    "val-invalid-user":"Enter a valid username (minimum 2 characters)",
-    "val-min-user":"Minimum 2 characters, maximum 32",
-    "val-pass-short":"Password must be at least 8 characters",
-    "val-pass-weak":"Password is too weak — add uppercase letters, numbers or symbols",
-    "val-pass-mismatch":"✗ Passwords do not match","val-pass-ok":"✓ Passwords match",
-    "val-reserved-user":"That username is reserved by the system",
-    "val-uefi-req":"requires UEFI and this machine boots in BIOS Legacy. Use GRUB.",
-    "val-uefi-warn":"only works on UEFI. Make sure your computer is not BIOS Legacy.",
-    "opt-grub-desc":"Universal. BIOS + UEFI, dual-boot. Btrfs snapshot menu at boot.",
-    "opt-sdboot-desc":"UEFI only, fast. Snapshots available via terminal — no visual boot menu.",
-    "opt-refind-desc":"UEFI only. Auto-detects kernels. Snapshots require manual configuration.",
-    "chk-gaming-title":"🎮 Gaming",
-    "chk-gaming-desc":"Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)",
-    "warn-sdboot-snaps":"<b>⚠ systemd-boot — Snapshots without boot menu</b><br>AvalOS uses <b>Btrfs + snapper</b> for automatic snapshots (pre/post every update). With systemd-boot, snapshots work correctly and <code>snapper rollback &lt;N&gt;</code> lets you restore from terminal.<br><br>What you <b>won't have</b>: a visual snapshot menu at boot like GRUB offers. If the system fails to boot, you'll need to boot from the live USB and run the rollback from there.<br><br>✦ Snapshots are still <b>fully functional</b> — only the visual boot menu is missing.",
-    "warn-refind-snaps":"<b>⚠ rEFInd — Snapshots require manual setup</b><br>AvalOS uses <b>Btrfs + snapper</b> for automatic snapshots. With rEFInd, snapshot entries in the boot menu are <b>not generated automatically</b> — each snapshot would need to be added manually to <code>refind.conf</code>.<br><br><code>snapper rollback &lt;N&gt;</code> works from terminal. For the visual menu you'd need to configure rEFInd manually after installation.<br><br>✦ Snapshots are still <b>fully functional</b> — the boot menu integration is manual only.",
-    "status-error":"Error — check the log or press Retry",
-    "err-timeout":"Timeout expired. Close and reopen the installer.",
-    "step-uefi":"Detecting boot mode","step-uefi-d":"UEFI / BIOS Legacy",
-    "step-net":"Verifying internet connection","step-net-d":"Required for pacstrap",
-    "step-tools":"Verifying tools","step-tools-d":"parted, mkfs, pacstrap…",
-    "step-part":"Partitioning target disk","step-part-d":"",
-    "step-format":"Formatting partitions","step-format-d":"FAT32 (EFI) + Btrfs (root)",
-    "step-mount":"Mounting filesystem","step-mount-d":"",
-    "step-mirrors":"Optimizing mirrors with reflector","step-mirrors-d":"Selecting fastest mirrors",
-    "step-pacstrap":"Installing base system","step-pacstrap-d":"pacstrap — may take several minutes",
-    "step-fstab":"Generating fstab","step-fstab-d":"",
-    "step-config":"Configuring system","step-config-d":"locale · hostname · timezone · initramfs",
-    "step-grub":"Installing bootloader","step-grub-d":"",
-    "step-services":"Enabling services","step-services-d":"NetworkManager · bluetooth · SDDM",
-    "step-user":"Creating system user","step-user-d":"",
-    "step-aur":"Installing AUR packages (yay)","step-aur-d":"microsoft-edge-stable-bin",
-    "step-hypr":"Configuring Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.lua",
-    "step-umount":"Unmounting and finalizing","step-umount-d":"",
-    "lang-warning":"⚠  UI language pack only · Mirrors are optimized for SV, US, MX & GT — downloads may be slow for mainland China or regions far from these countries.",
-  },
-  es: {
-    "title":"AvalOS — Instalador","topbar":"● AvalOS Installer",
-    "step-hint":"Selecciona disco y configura el sistema",
-    "welcome-sub":"Arch Linux · Hyprland · Wayland · Tokyo Night",
-    "welcome-desc":"Bienvenido al instalador de <strong>AvalOS</strong>.<br>Este asistente configurará e instalará el sistema en el disco de tu elección.",
-    "btn-start":"Comenzar instalación →",
-    "sec-disk":"▸ Disco de destino","sec-user":"▸ Cuenta de usuario",
-    "sec-host":"▸ Nombre del equipo","sec-lang":"▸ Idioma y teclado","sec-advanced":"▸ Opciones avanzadas",
-    "lbl-user":"Usuario","lbl-pass":"Contraseña","lbl-confirm-pass":"Confirmar contraseña",
-    "lbl-show-hide":"Mostrar/ocultar","lbl-hostname":"Nombre del equipo","lbl-timezone":"Zona horaria",
-    "lbl-locale":"Configuración regional","lbl-keymap":"Distribución de teclado",
-    "lbl-bootloader":"Cargador de arranque","lbl-install-type":"Tipo de instalación","lbl-extras":"Extras",
-    "btn-install":"▶ Instalar AvalOS","btn-abort":"⛔ Abortar","btn-retry":"↺ Reintentar",
-    "btn-reboot":"⟳ Reiniciar ahora","btn-close":"Cerrar",
-    "opt-no-boot":"Sin bootloader","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 USB Persistente",
-    "opt-pc-desc":"Btrfs con subvolúmenes — snapshots automáticos, menú de rollback en GRUB.",
-    "req-len-ok":"✓ 8+ caracteres","req-len-x":"✗ 8+ caracteres",
-    "req-upper-ok":"✓ Mayúscula","req-upper-x":"✗ Mayúscula",
-    "req-lower-ok":"✓ Minúscula","req-lower-x":"✗ Minúscula",
-    "req-num-ok":"✓ Número","req-num-x":"✗ Número",
-    "req-sym-ok":"✓ Símbolo","req-sym-x":"✗ Símbolo",
-    "log-title":"▸ Log de instalación","cd-title":"⚠ ZONA DE NO RETORNO",
-    "err-title":"⛔ Error crítico","done-title":"AvalOS instalado correctamente",
-    "done-desc":"Retira el USB y reinicia el equipo. SDDM te pedirá iniciar sesión — selecciona Hyprland.",
-    "val-select-disk":"Selecciona un disco de destino",
-    "val-invalid-user":"Escribe un nombre de usuario válido (mínimo 2 caracteres)",
-    "val-min-user":"Mínimo 2 caracteres, máximo 32",
-    "val-pass-short":"La contraseña debe tener al menos 8 caracteres",
-    "val-pass-weak":"La contraseña es demasiado débil — añade letras mayúsculas, números o símbolos",
-    "val-pass-mismatch":"✗ Las contraseñas no coinciden","val-pass-ok":"✓ Las contraseñas coinciden",
-    "val-reserved-user":"Ese nombre de usuario está reservado por el sistema",
-    "val-uefi-req":"requiere UEFI y esta máquina arranca en BIOS Legacy. Usa GRUB.",
-    "val-uefi-warn":"solo funciona en UEFI. Asegúrate de que tu equipo no sea BIOS Legacy.",
-    "opt-grub-desc":"Universal. BIOS + UEFI, dual-boot. Menú de snapshots Btrfs en el arranque.",
-    "opt-sdboot-desc":"Solo UEFI, rápido. Snapshots disponibles vía terminal, sin menú visual en el arranque.",
-    "opt-refind-desc":"Solo UEFI. Detecta kernels automáticamente. Snapshots requieren configuración manual.",
-    "chk-gaming-title":"🎮 Gaming",
-    "chk-gaming-desc":"Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)",
-    "warn-sdboot-snaps":"<b>⚠ systemd-boot — Snapshots sin menú en el arranque</b><br>AvalOS usa <b>Btrfs + snapper</b> para snapshots automáticos (antes/después de cada actualización). Con systemd-boot los snapshots funcionan correctamente y <code>snapper rollback &lt;N&gt;</code> permite restaurar desde la terminal.<br><br>Lo que <b>no tendrás</b>: un menú visual de snapshots en el arranque como GRUB ofrece. Si el sistema no arranca, necesitarás el USB live para hacer el rollback desde ahí.<br><br>✦ Los snapshots siguen siendo <b>completamente funcionales</b> — solo falta el menú visual en el boot.",
-    "warn-refind-snaps":"<b>⚠ rEFInd — Snapshots requieren configuración manual</b><br>AvalOS usa <b>Btrfs + snapper</b> para snapshots automáticos. Con rEFInd, las entradas de snapshots en el menú de arranque <b>no se generan automáticamente</b> — cada snapshot habría que añadirlo manualmente a <code>refind.conf</code>.<br><br><code>snapper rollback &lt;N&gt;</code> funciona desde la terminal. Para el menú visual habría que configurar rEFInd manualmente después de la instalación.<br><br>✦ Los snapshots siguen siendo <b>completamente funcionales</b> — solo la integración con el menú de boot es manual.",
-    "status-error":"Error — revisa el log o pulsa Reintentar",
-    "err-timeout":"Tiempo de espera agotado. Cierra y vuelve a abrir el instalador.",
-    "step-uefi":"Detectando modo de arranque","step-uefi-d":"UEFI / BIOS Legacy",
-    "step-net":"Verificando conexión a internet","step-net-d":"Requerida para pacstrap",
-    "step-tools":"Verificando herramientas","step-tools-d":"parted, mkfs, pacstrap…",
-    "step-part":"Particionando disco destino","step-part-d":"",
-    "step-format":"Formateando particiones","step-format-d":"FAT32 (EFI) + Btrfs (root)",
-    "step-mount":"Montando sistema de archivos","step-mount-d":"",
-    "step-mirrors":"Optimizando mirrors con reflector","step-mirrors-d":"Seleccionando mirrors más rápidos",
-    "step-pacstrap":"Instalando sistema base","step-pacstrap-d":"pacstrap — puede tardar varios minutos",
-    "step-fstab":"Generando fstab","step-fstab-d":"",
-    "step-config":"Configurando sistema","step-config-d":"locale · hostname · timezone · initramfs",
-    "step-grub":"Instalando bootloader","step-grub-d":"",
-    "step-services":"Habilitando servicios","step-services-d":"NetworkManager · bluetooth · SDDM",
-    "step-user":"Creando usuario del sistema","step-user-d":"",
-    "step-aur":"Instalando paquetes AUR (yay)","step-aur-d":"microsoft-edge-stable-bin",
-    "step-hypr":"Configurando Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.lua",
-    "step-umount":"Desmontando y finalizando","step-umount-d":"",
-    "lang-warning":"⚠  Solo paquete de idioma · Los mirrors están optimizados para SV, US, MX y GT — las descargas pueden ser lentas para China continental o regiones alejadas de estos países.",
-  },
-  zh: {
-    "title":"AvalOS — 安装程序","topbar":"● AvalOS 安装程序",
-    "step-hint":"选择磁盘并配置系统",
-    "welcome-sub":"Arch Linux · Hyprland · Wayland · Tokyo Night",
-    "welcome-desc":"欢迎使用 <strong>AvalOS</strong> 安装程序。<br>此向导将在您选择的磁盘上配置并安装系统。",
-    "btn-start":"开始安装 →",
-    "sec-disk":"▸ 目标磁盘","sec-user":"▸ 用户账户",
-    "sec-host":"▸ 计算机名","sec-lang":"▸ 语言与键盘","sec-advanced":"▸ 高级选项",
-    "lbl-user":"用户名","lbl-pass":"密码","lbl-confirm-pass":"确认密码",
-    "lbl-show-hide":"显示/隐藏","lbl-hostname":"主机名","lbl-timezone":"时区",
-    "lbl-locale":"区域设置","lbl-keymap":"键盘布局","lbl-bootloader":"引导程序",
-    "lbl-install-type":"安装类型","lbl-extras":"附加选项",
-    "btn-install":"▶ 安装 AvalOS","btn-abort":"⛔ 中止","btn-retry":"↺ 重试",
-    "btn-reboot":"⟳ 立即重启","btn-close":"关闭",
-    "opt-no-boot":"无引导程序","opt-pc":"💾 PC / HDD / SSD","opt-usb":"🔌 持久化 USB",
-    "opt-pc-desc":"Btrfs 子卷 — 自动快照，GRUB 回滚菜单。",
-    "req-len-ok":"✓ 8+ 字符","req-len-x":"✗ 8+ 字符",
-    "req-upper-ok":"✓ 大写字母","req-upper-x":"✗ 大写字母",
-    "req-lower-ok":"✓ 小写字母","req-lower-x":"✗ 小写字母",
-    "req-num-ok":"✓ 数字","req-num-x":"✗ 数字",
-    "req-sym-ok":"✓ 符号","req-sym-x":"✗ 符号",
-    "log-title":"▸ 安装日志","cd-title":"⚠ 不可回头点",
-    "err-title":"⛔ 严重错误","done-title":"AvalOS 安装成功",
-    "done-desc":"请取出 USB 设备并重启电脑。SDDM 将提示登录 — 请选择 Hyprland。",
-    "val-select-disk":"请选择目标磁盘",
-    "val-invalid-user":"请输入有效的用户名（至少 2 个字符）",
-    "val-min-user":"最少 2 个字符，最多 32 个",
-    "val-pass-short":"密码至少需要 8 个字符",
-    "val-pass-weak":"密码过于简单 — 请添加大写字母、数字或符号",
-    "val-pass-mismatch":"✗ 两次密码不一致","val-pass-ok":"✓ 密码一致",
-    "val-reserved-user":"该用户名已被系统保留",
-    "val-uefi-req":"需要 UEFI，而此机器以 BIOS Legacy 模式启动。请使用 GRUB。",
-    "val-uefi-warn":"仅支持 UEFI。请确认您的电脑不是 BIOS Legacy 模式。",
-    "opt-grub-desc":"通用。BIOS + UEFI，双系统。启动时显示 Btrfs 快照菜单。",
-    "opt-sdboot-desc":"仅 UEFI，启动快。快照可通过终端使用，启动菜单中无可视快照列表。",
-    "opt-refind-desc":"仅 UEFI。自动检测内核。快照需手动配置。",
-    "chk-gaming-title":"🎮 游戏",
-    "chk-gaming-desc":"Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE（约 2.5 GB 额外空间）",
-    "warn-sdboot-snaps":"<b>⚠ systemd-boot — 快照无启动菜单</b><br>AvalOS 使用 <b>Btrfs + snapper</b> 进行自动快照（每次更新前后）。使用 systemd-boot 时，快照正常工作，可通过 <code>snapper rollback &lt;N&gt;</code> 从终端还原。<br><br><b>没有的功能</b>：像 GRUB 那样在启动菜单中显示快照列表。若系统无法启动，需使用 Live USB 进行回滚。<br><br>✦ 快照功能<b>完全可用</b> — 仅缺少启动菜单中的可视化列表。",
-    "warn-refind-snaps":"<b>⚠ rEFInd — 快照需手动配置</b><br>AvalOS 使用 <b>Btrfs + snapper</b> 进行自动快照。使用 rEFInd 时，启动菜单中的快照条目<b>不会自动生成</b> — 每个快照都需手动添加到 <code>refind.conf</code>。<br><br><code>snapper rollback &lt;N&gt;</code> 可在终端中使用。如需启动菜单集成，需在安装后手动配置 rEFInd。<br><br>✦ 快照功能<b>完全可用</b> — 仅启动菜单集成需手动操作。",
-    "status-error":"出错 — 请查看日志或点击重试",
-    "err-timeout":"等待超时，请关闭并重新打开安装程序。",
-    "step-uefi":"检测启动模式","step-uefi-d":"UEFI / BIOS Legacy",
-    "step-net":"验证网络连接","step-net-d":"pacstrap 所需",
-    "step-tools":"验证工具","step-tools-d":"parted, mkfs, pacstrap…",
-    "step-part":"分区目标磁盘","step-part-d":"",
-    "step-format":"格式化分区","step-format-d":"FAT32 (EFI) + Btrfs (root)",
-    "step-mount":"挂载文件系统","step-mount-d":"",
-    "step-mirrors":"使用 reflector 优化镜像","step-mirrors-d":"选择最快的镜像源",
-    "step-pacstrap":"安装基础系统","step-pacstrap-d":"pacstrap — 可能需要几分钟",
-    "step-fstab":"生成 fstab","step-fstab-d":"",
-    "step-config":"配置系统","step-config-d":"locale · hostname · timezone · initramfs",
-    "step-grub":"安装引导程序","step-grub-d":"",
-    "step-services":"启用服务","step-services-d":"NetworkManager · bluetooth · SDDM",
-    "step-user":"创建系统用户","step-user-d":"",
-    "step-aur":"安装 AUR 包 (yay)","step-aur-d":"microsoft-edge-stable-bin",
-    "step-hypr":"配置 Hyprland + Wayland","step-hypr-d":"SDDM · Waybar · hyprland.lua",
-    "step-umount":"卸载并完成","step-umount-d":"",
-    "lang-warning":"⚠  仅界面语言包 · 镜像源已针对萨尔瓦多、美国、墨西哥及危地马拉优化——中国大陆及其他较远地区的下载速度可能较慢。",
-  },
-};
+const STRINGS = STRINGS_PLACEHOLDER;
 
 let _lang = 'en';
 
 function t(key) {
-  return (STRINGS[_lang] || STRINGS.en)[key] || STRINGS.en[key] || key;
+  // BUG-FIX: no usar || para encadenar fallbacks — en JS, "" es falsy, así que
+  // (dict[key] || fallback) devolvería 'key' en lugar de "" para las claves
+  // step-*-d con detail vacío intencional. Esto corrompía PASOS en applyLang()
+  // (s.detail = "step-part-d") y al hacer Retry se renderizaba la clave cruda en la UI.
+  // Fix: comprobar explícitamente si la clave existe en el dict antes de recurrir al fallback.
+  const dict = STRINGS[_lang] || STRINGS.en;
+  if (key in dict) return dict[key];
+  if (key in STRINGS.en) return STRINGS.en[key];
+  return key;
 }
 
 function applyLang(code) {
@@ -1446,13 +1305,32 @@ function applyLang(code) {
     const val = t(key);
     if (val) el.innerHTML = val;
   });
-  // Update install steps with translated labels
+  // BUG-i18n FIX: actualizar PASOS array Y nodos del DOM ya renderizados.
+  // initSteps() se ejecuta en pywebviewready (antes de seleccionar idioma),
+  // por lo que el DOM inicial queda en español. applyLang() actualizaba el
+  // array PASOS pero no los elementos step-label / step-detail del DOM,
+  // ya que no tienen data-i18n y se renderizan desde PASOS directamente.
+  // Fix: también actualizar los nodos del DOM si el paso ya está renderizado.
   if (typeof PASOS !== 'undefined') {
     PASOS.forEach(s => {
-      const lbl  = t('step-' + s.id);
-      const det  = t('step-' + s.id + '-d');
-      if (lbl) s.label  = lbl;
+      const lbl = t('step-' + s.id);
+      const det = t('step-' + s.id + '-d');
+      if (lbl !== undefined) s.label = lbl;
       if (det !== undefined) s.detail = det;
+      // Actualizar DOM si el step ya está renderizado
+      const stepEl = document.getElementById('step-' + s.id);
+      if (stepEl) {
+        const lblEl = stepEl.querySelector('.step-label');
+        const detEl = stepEl.querySelector('.step-detail');
+        // BUG-12 FIX: "if (lblEl && lbl)" / "if (detEl && det)" usaban chequeo
+        // truthy — el mismo problema que t() ya resuelve explícitamente (una
+        // traducción vacía "" es válida y no debe tratarse como "no hay
+        // traducción"). Con detail = "" en algún idioma y no vacío en otro,
+        // el texto viejo se quedaba pegado en el DOM al cambiar de idioma.
+        // Misma condición que ya se usa 2 líneas arriba para s.detail.
+        if (lblEl && lbl !== undefined) lblEl.textContent = lbl;
+        if (detEl && det !== undefined) detEl.textContent = det;
+      }
     });
   }
   document.title = t('title');
@@ -1565,7 +1443,13 @@ function selectDisk(name) {
     const dc = document.getElementById('dc-' + name);
     const meta = dc ? dc.querySelector('.disk-meta') : null;
     const metaTxt = meta ? meta.textContent.toLowerCase() : '';
-    const isUsb = metaTxt.includes('usb') || metaTxt.includes('usb 3') || name.startsWith('sd');
+    // BUG-FIX: name.startsWith('sd') marcaba como USB cualquier disco SATA
+    // interno (sda, sdb... también son SATA, no solo USB), activando el modo
+    // "USB Persistente" (ext4 sin journal) en instalaciones normales sobre un
+    // SSD/HDD SATA interno en lugar del modo PC/Btrfs correcto. metaTxt ya
+    // incluye d.tran (el transporte real reportado por lsblk: "usb"/"sata"/
+    // "nvme"), que es la señal correcta — sin heurística de nombre de archivo.
+    const isUsb = metaTxt.includes('usb');
     // Only auto-switch if user hasn't manually picked
     if (isUsb && !window._modoManuallySet) {
       selModo('usb');
@@ -1743,13 +1627,25 @@ function validarEIniciar() {
   if (pass.length < 8)              return showFormError(t('val-pass-short'));
   if (_passStrength(pass).score < 2) return showFormError(t('val-pass-weak'));
   if (pass !== pass2)               return showFormError(t('val-pass-mismatch'));
-  if (['root','daemon','bin','sys','nobody'].includes(user))
+  // FIX: lista ampliada con usernames de sistema reales en Arch/systemd
+  // (la original solo tenía 5; hay decenas de usernames reservados por paquetes)
+  const _RESERVED = [
+    'root','daemon','bin','sys','sync','games','man','lp','mail','news',
+    'uucp','proxy','backup','list','irc','nobody',
+    // Arch / systemd específicos
+    'http','ftp','git','sshd','dbus','polkitd','avahi','colord','rtkit',
+    'uuidd','nm-openconnect','ntp','systemd-network','systemd-resolve',
+    'systemd-timesync','tss','messagebus','cups','gdm','lightdm','sddm',
+    'mysql','postgres','redis','mongodb','www','nobody','operator',
+  ];
+  if (_RESERVED.includes(user))
                                     return showFormError(t('val-reserved-user'));
 
   // Pasar a la página de instalación y avisar a Python
   showPage('install');
   const _gaming = window._installGaming === true;
-  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap, _gaming);
+  const _bore   = window._installBore === true;
+  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap, _gaming, _bore);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1958,7 +1854,12 @@ class InstaladorAPI:
     def set_language(self, code: str) -> bool:
         """Llamado desde JS al elegir idioma. Guarda el código para
         usarlo al generar archivos de configuración (fastfetch, etc.)."""
-        allowed = ("en", "es", "zh")
+        # BUG-11 FIX: "allowed" era un tuple hardcodeado, segunda fuente
+        # de verdad además de translations.SUPPORTED_LANGS. Si se agrega
+        # un idioma nuevo en translations.py y se olvida actualizar este
+        # método, set_language() lo rechaza en silencio (return False)
+        # aunque el wizard ya lo ofrezca como opción seleccionable.
+        allowed = tuple(c for c, _ in translations.SUPPORTED_LANGS)
         if code in allowed:
             self._v._lang = code
             return True
@@ -1972,7 +1873,8 @@ class InstaladorAPI:
 
     def iniciar_instalacion(self, username: str, password: str, hostname: str,
                              timezone: str, disco: str, bootloader: str, usb: bool,
-                             locale: str = "", keymap: str = "", gaming: bool = False):
+                             locale: str = "", keymap: str = "", gaming: bool = False,
+                             bore: bool = False):
         """El usuario pulsó 'Instalar AvalOS' con configuración válida."""
         _username = username.strip()
         if not _username:
@@ -1992,6 +1894,7 @@ class InstaladorAPI:
         self._v._bootloader = bootloader if bootloader in ('grub','sd-boot','refind','none') else 'grub'
         self._v._modo_usb  = bool(usb)
         self._v._install_gaming = bool(gaming)
+        self._v._install_bore = bool(bore)
         self._v._config_lista.set()
         return True
 
@@ -2049,6 +1952,7 @@ class VentanaInstalador:
         self._disco_destino: str | None = None
         self._bootloader = 'grub'  # 'grub' | 'sd-boot' | 'refind' | 'none'
         self._install_gaming = False  # True si el usuario marcó el checkbox de Gaming
+        self._install_bore   = False  # True si el usuario marcó el checkbox de BORE (solo CPU v3+)
         self._modo_usb   = False
         self._config_lista = threading.Event()
         self._lock         = threading.Lock()   # protege _instalando en reintentar()
@@ -2209,224 +2113,94 @@ class VentanaInstalador:
 
         self._log("\n── Optimizaciones del sistema ──\n", "step")
 
-        # ── avalos-gpu-env: detecta GPU y escribe gpu-env.conf para Hyprland ──
+        # ── avalos-gpu-env: detecta GPU y actualiza hyprland.lua de cada usuario ──
         # El servicio avalos-gpu-detect.service (creado en _run_instalacion) llama
-        # a este binario antes de que SDDM arranque, resolviendo la condición de
-        # carrera con el `source` de hyprland.conf.
+        # a este binario antes de que SDDM arranque.
+        #
+        # FIX (fallback GPU real): versiones anteriores escribían
+        # /etc/hypr/gpu-env.conf (formato hyprlang), que hyprland.lua NUNCA carga
+        # (Lua no usa `source`) — el fallback no tenía ningún efecto real.
+        # Ahora el script edita directamente el bloque
+        #   -- AVALOS_GPU_ENV_START ... -- AVALOS_GPU_ENV_END
+        # dentro de ~/.config/hypr/hyprland.lua de cada usuario (bakeado ahí por
+        # _configurar_hyprland durante la instalación), de modo que si el usuario
+        # cambia de GPU sin reinstalar, las líneas hl.env(...) se actualizan
+        # de verdad en el siguiente arranque.
         _bin_dir = MOUNT_ROOT / "usr/local/bin"
         _bin_dir.mkdir(parents=True, exist_ok=True)
         _gpu_env_bin = _bin_dir / "avalos-gpu-env"
         _gpu_env_bin.write_text(
             "#!/bin/bash\n"
-            "# AvalOS: detecta GPU y escribe gpu-env.conf para Hyprland\n"
-            "# BUG FIX: los servicios systemd corren como root, $HOME apunta a /root,\n"
-            "# no al home del usuario. Se usa /etc/hypr/gpu-env.conf como ruta fija;\n"
-            "# hyprland.conf hace source desde ahí para la detección dinámica de GPU.\n"
-            "HYPR_CFG=\"/etc/hypr/gpu-env.conf\"\n"
-            "mkdir -p \"$(dirname \"$HYPR_CFG\")\"\n\n"
+            "# AvalOS: detecta GPU y actualiza el bloque hl.env(...) de hyprland.lua\n"
+            "# para cada usuario, entre los marcadores AVALOS_GPU_ENV_START/END.\n"
+            "set -uo pipefail\n\n"
             "if lspci 2>/dev/null | grep -qiE 'amd|radeon|amdgpu'; then\n"
-            "    cat > \"$HYPR_CFG\" << 'EOF'\n"
-            "env = AMD_VULKAN_ICD,RADV\n"
-            "env = VDPAU_DRIVER,radeonsi\n"
-            "env = LIBVA_DRIVER_NAME,radeonsi\n"
-            "EOF\n"
+            "    GPU_BLOCK='hl.env(\"AMD_VULKAN_ICD\",    \"RADV\")\n"
+            "hl.env(\"VDPAU_DRIVER\",      \"radeonsi\")\n"
+            "hl.env(\"LIBVA_DRIVER_NAME\", \"radeonsi\")'\n"
             "elif lspci 2>/dev/null | grep -qiE 'intel.*(graphics|vga|display)'; then\n"
-            "    cat > \"$HYPR_CFG\" << 'EOF'\n"
-            "env = LIBVA_DRIVER_NAME,iHD\n"
-            "env = VDPAU_DRIVER,va_gl\n"
-            "EOF\n"
+            "    GPU_BLOCK='hl.env(\"LIBVA_DRIVER_NAME\", \"iHD\")\n"
+            "hl.env(\"VDPAU_DRIVER\",      \"va_gl\")'\n"
             "else\n"
-            "    # Fallback: archivo vacío (mesa auto-detecta)\n"
-            "    : > \"$HYPR_CFG\"\n"
-            "fi\n"
+            "    # GPU desconocida: no tocar hyprland.lua, dejar el bloque existente.\n"
+            "    exit 0\n"
+            "fi\n\n"
+            "for hypr_conf in /home/*/.config/hypr/hyprland.lua; do\n"
+            "    [[ -f \"$hypr_conf\" ]] || continue\n"
+            "    if ! grep -q 'AVALOS_GPU_ENV_START' \"$hypr_conf\"; then\n"
+            "        # Marcadores no presentes (instalación antigua o editados por\n"
+            "        # el usuario) — no reemplazar a ciegas, evitar corromper el archivo.\n"
+            "        continue\n"
+            "    fi\n"
+            "    tmp=\"$(mktemp)\"\n"
+            "    awk -v block=\"$GPU_BLOCK\" '\n"
+            "        /-- AVALOS_GPU_ENV_START/ { print; print block; skip=1; next }\n"
+            "        /-- AVALOS_GPU_ENV_END/   { skip=0; print; next }\n"
+            "        skip { next }\n"
+            "        { print }\n"
+            "    ' \"$hypr_conf\" > \"$tmp\" && mv \"$tmp\" \"$hypr_conf\"\n"
+            "    owner=\"$(stat -c '%U:%G' \"$hypr_conf\")\"\n"
+            "    chown \"$owner\" \"$hypr_conf\"\n"
+            "done\n"
         )
         _gpu_env_bin.chmod(0o755)
         self._log("  /usr/local/bin/avalos-gpu-env instalado (chmod 755)", "ok")
 
-        # Crear gpu-env.conf vacío por defecto (se sobreescribe por el servicio)
-        # BUG-005 FIX: gpu_info no tiene '_usuario'; usar self._username (usuario real).
-        # Sin este fix la ruta era "…/home//.config/…" (doble barra, directorio inexistente).
-        try:
-            if self._username:
-                _default_cfg = MOUNT_ROOT / f"home/{self._username}" / ".config/hypr/gpu-env.conf"
-                _default_cfg.parent.mkdir(parents=True, exist_ok=True)
-                if not _default_cfg.exists():
-                    _default_cfg.touch()
-        except Exception as e:
-            self._log(f"[WARN] config de archivos: {e}", "warn")
-
         # ── Centro de Control AvalOS (avalos-settings + avalos-wallpaper + avalos-about) ──
+        # FIX (refactor i18n/configs, mismo patrón que mako/rofi/kitty/waybar):
+        # estos 3 scripts antes vivían embebidos como strings Python en este
+        # archivo (dict _settings_scripts), con un bug real: la primera línea
+        # de los 3 era "\\#!/usr/bin/env bash" (backslash espurio) en vez de
+        # "#!/usr/bin/env bash" — shebang roto, "command not found" en cada
+        # invocación. Ahora se leen desde configs/scripts/ (única fuente de
+        # verdad, sin duplicación) vía _leer_config, igual que el resto de
+        # configs. Si falta alguno, se loggea y se omite — no se genera una
+        # versión vieja embebida.
         self._log("  Instalando scripts de configuración AvalOS…", "info")
-        _settings_scripts = {
-            "avalos-settings": """\
-#!/usr/bin/env bash
-# AvalOS Settings Hub — Centro de Control del sistema instalado.
-# Requiere: rofi, nwg-look, nwg-displays, pavucontrol, nm-connection-editor, blueman, kitty
-LANG_CODE="${LANG%%_*}"
-case "$LANG_CODE" in
-  es)
-    T_TITLE="  Configuración AvalOS"
-    T_APPEARANCE=" Apariencia  GTK · Íconos · Cursor · Fuentes"
-    T_DISPLAY=" Pantallas  Resolución · Disposición"
-    T_AUDIO=" Audio  Volumen · Dispositivos de sonido"
-    T_NETWORK=" Red  Conexiones · Wi-Fi · VPN"
-    T_BLUETOOTH=" Bluetooth  Dispositivos inalámbricos"
-    T_WALLPAPER=" Fondo de pantalla  Cambiar imagen"
-    T_FILES=" Archivos  Explorador de archivos"
-    T_USERS="  Usuario  Contraseña · Perfil"
-    T_SNAPSHOTS=" Snapshots  Instantáneas del sistema"
-    T_ABOUT="  Acerca de  Info del sistema"
-    T_NO_APP="❌ Aplicación no instalada"
-    ;;
-  zh)
-    T_TITLE="  AvalOS 设置"
-    T_APPEARANCE=" 外观  GTK · 图标 · 光标 · 字体"
-    T_DISPLAY=" 显示器  分辨率 · 布局"
-    T_AUDIO=" 音频  音量 · 声音设备"
-    T_NETWORK=" 网络  连接 · Wi-Fi · VPN"
-    T_BLUETOOTH=" 蓝牙  无线设备"
-    T_WALLPAPER=" 壁纸  更换壁纸"
-    T_FILES=" 文件  文件管理器"
-    T_USERS="  用户  密码 · 个人设置"
-    T_SNAPSHOTS=" 快照  系统快照管理"
-    T_ABOUT="  关于  系统信息"
-    T_NO_APP="❌ 未安装该应用程序"
-    ;;
-  *)
-    T_TITLE="  AvalOS Settings"
-    T_APPEARANCE=" Appearance  GTK · Icons · Cursor · Fonts"
-    T_DISPLAY=" Displays  Resolution · Layout"
-    T_AUDIO=" Audio  Volume · Sound devices"
-    T_NETWORK=" Network  Connections · Wi-Fi · VPN"
-    T_BLUETOOTH=" Bluetooth  Wireless devices"
-    T_WALLPAPER=" Wallpaper  Change background"
-    T_FILES=" Files  File manager"
-    T_USERS="  User  Password · Profile"
-    T_SNAPSHOTS=" Snapshots  System snapshots"
-    T_ABOUT="  About  System info"
-    T_NO_APP="❌ Application not installed"
-    ;;
-esac
-_run() {
-  local cmd="$1"; shift
-  if command -v "$cmd" &>/dev/null; then
-    "$cmd" "$@" & disown
-  else
-    notify-send "AvalOS Settings" "$T_NO_APP: $cmd" -i preferences-system -t 4000 2>/dev/null || true
-  fi
-}
-chosen=$(printf '%s\\n' "$T_APPEARANCE" "$T_DISPLAY" "$T_AUDIO" "$T_NETWORK" "$T_BLUETOOTH" "$T_WALLPAPER" "$T_FILES" "$T_USERS" "$T_SNAPSHOTS" "$T_ABOUT" \\
-  | rofi -dmenu -i -no-custom -p "$T_TITLE" -theme-str 'window {width: 480px;} listview {lines: 10;}')
-[[ -z "$chosen" ]] && exit 0
-if   [[ "$chosen" == "$T_APPEARANCE" ]]; then _run nwg-look
-elif [[ "$chosen" == "$T_DISPLAY"    ]]; then _run nwg-displays
-elif [[ "$chosen" == "$T_AUDIO"      ]]; then _run pavucontrol
-elif [[ "$chosen" == "$T_NETWORK"    ]]; then _run nm-connection-editor
-elif [[ "$chosen" == "$T_BLUETOOTH"  ]]; then _run blueman-manager
-elif [[ "$chosen" == "$T_WALLPAPER"  ]]; then command -v avalos-wallpaper &>/dev/null && avalos-wallpaper
-elif [[ "$chosen" == "$T_FILES"      ]]; then _run thunar
-elif [[ "$chosen" == "$T_USERS"      ]]; then
-  kitty --title "AvalOS — Usuario" -- bash -c 'echo "  Usuario: $(whoami)  UID: $(id -u)  Grupos: $(groups)"; echo ""; echo "[1] Cambiar contraseña / Change password"; read -rp "Opción: " o; [[ "$o" == "1" ]] && passwd; read -rp "Enter to close" _'
-elif [[ "$chosen" == "$T_SNAPSHOTS"  ]]; then
-  command -v snapper-gui &>/dev/null && _run snapper-gui || \\
-    kitty --title "AvalOS Snapshots" -- bash -c 'snapper -c root list 2>/dev/null || echo "snapper no configurado"; read -rp "Enter to close" _'
-elif [[ "$chosen" == "$T_ABOUT"      ]]; then
-  command -v avalos-about &>/dev/null && avalos-about || \\
-    command -v fastfetch &>/dev/null && kitty --title "AvalOS — About" -- bash -c 'fastfetch; read -rp "Enter to close" _'
-fi
-""",
-            "avalos-wallpaper": """\
-#!/usr/bin/env bash
-# AvalOS Wallpaper Picker — selecciona fondo de pantalla vía rofi + hyprpaper.
-LANG_CODE="${LANG%%_*}"
-case "$LANG_CODE" in
-  es) PROMPT="  Elige fondo de pantalla" ; MSG_NONE="No se encontraron imágenes." ; MSG_OK="Fondo aplicado:" ;;
-  zh) PROMPT="  选择壁纸"                ; MSG_NONE="未找到壁纸文件。"            ; MSG_OK="壁纸已更换："   ;;
-  *)  PROMPT="  Choose wallpaper"        ; MSG_NONE="No wallpaper images found."  ; MSG_OK="Wallpaper set:" ;;
-esac
-WALLPAPER_DIRS=("$HOME/.local/share/wallpapers" "$HOME/Pictures" "$HOME/Imágenes" "$HOME/Images" "/usr/share/backgrounds" "/usr/share/wallpapers")
-mapfile -t WALLPAPERS < <(for d in "${WALLPAPER_DIRS[@]}"; do [[ -d "$d" ]] && find "$d" -maxdepth 4 -type f \\( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \\) 2>/dev/null; done | sort -u)
-if [[ ${#WALLPAPERS[@]} -eq 0 ]]; then
-  notify-send "AvalOS Wallpaper" "$MSG_NONE" -i preferences-desktop-wallpaper -t 5000 2>/dev/null || true; exit 0
-fi
-declare -A N2P
-display_list=()
-for p in "${WALLPAPERS[@]}"; do n=$(basename "$p"); N2P["$n"]="$p"; display_list+=("$n"); done
-chosen=$(printf '%s\\n' "${display_list[@]}" | rofi -dmenu -i -no-custom -p "$PROMPT" -theme-str 'window {width: 480px;} listview {lines: 12;}')
-[[ -z "$chosen" ]] && exit 0
-WP="${N2P[$chosen]}"
-[[ -z "$WP" || ! -f "$WP" ]] && { notify-send "AvalOS" "❌ $chosen" -i error -t 3000 2>/dev/null; exit 1; }
-HYPR_CONF="$HOME/.config/hypr/hyprpaper.conf"
-mkdir -p "$(dirname "$HYPR_CONF")"
-printf 'preload = %s\\nwallpaper = ,%s\\nsplash = false\\n' "$WP" "$WP" > "$HYPR_CONF"
-if ! hyprctl hyprpaper preload "$WP" &>/dev/null || ! hyprctl hyprpaper wallpaper ",$WP" &>/dev/null; then
-  pkill hyprpaper 2>/dev/null || true; sleep 0.3; hyprpaper & disown
-fi
-notify-send "AvalOS Wallpaper" "$MSG_OK $chosen" -i preferences-desktop-wallpaper -t 2000 2>/dev/null || true
-""",
-            "avalos-about": """\
-#!/usr/bin/env bash
-# AvalOS About — información del sistema.
-kitty --title "AvalOS — About / Acerca de" -- bash -c '
-  clear
-  command -v fastfetch &>/dev/null && fastfetch
-  echo ""
-  echo "  ╔══════════════════════════════════════════════════════════╗"
-  echo "  ║   AvalOS — Arch Linux · Hyprland · Tokyo Night          ║"
-  echo "  ╚══════════════════════════════════════════════════════════╝"
-  echo ""
-  _kver=$(uname -r)
-  echo "$_kver" | grep -q "avalos" && echo "  Kernel AvalOS  : $_kver" || echo "  Kernel         : $_kver"
-  echo "  Hyprland       : $(hyprctl version 2>/dev/null | grep -o v[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]* | head -1 || echo N/A)"
-  _mfree=$(free -h | awk /^Mem:/{print\\$7})
-  _mtotal=$(free -h | awk /^Mem:/{print\\$2})
-  echo "  Memoria libre  : $_mfree libre de $_mtotal"
-  _dfree=$(df -h / | awk NR==2{print\\$4})
-  _dtotal=$(df -h / | awk NR==2{print\\$2})
-  echo "  Disco raíz     : $_dfree libre de $_dtotal"
-  echo "  Uptime         : $(uptime -p)"
-  [[ -f /etc/avalos-install-date ]] && echo "  Instalado      : $(cat /etc/avalos-install-date)"
-  echo ""
-  echo "  GitHub  : https://github.com/jeffreysama/avalos"
-  echo ""
-  read -rp "  Enter to close / Enter para cerrar: " _
-'
-""",
-        }
-
-        for _script_name, _script_content in _settings_scripts.items():
-            _script_path = _bin_dir / _script_name
-            _script_path.write_text(_script_content, encoding="utf-8")
-            _script_path.chmod(0o755)
-            self._log(f"  /usr/local/bin/{_script_name} instalado", "ok")
+        for _script_name in ("avalos-settings", "avalos-wallpaper", "avalos-about"):
+            _contenido = _leer_config(f"scripts/{_script_name}")
+            if _contenido:
+                _script_path = _bin_dir / _script_name
+                _script_path.write_text(_contenido, encoding="utf-8")
+                _script_path.chmod(0o755)
+                self._log(f"  /usr/local/bin/{_script_name} instalado", "ok")
+            else:
+                self._log(f"[WARN] configs/scripts/{_script_name} no encontrado — {_script_name} no instalado", "warn")
 
         # ── Desktop entry para avalos-settings ────────────────────────────
         _apps_dir = MOUNT_ROOT / "usr" / "share" / "applications"
         _apps_dir.mkdir(parents=True, exist_ok=True)
-        (_apps_dir / "avalos-settings.desktop").write_text(
-            "[Desktop Entry]\n"
-            "Name=AvalOS Settings\n"
-            "Name[es]=Configuración de AvalOS\n"
-            "Name[zh]=AvalOS 设置\n"
-            "Comment=Configure your AvalOS system\n"
-            "Comment[es]=Configura tu sistema AvalOS\n"
-            "Comment[zh]=配置您的 AvalOS 系统\n"
-            "Exec=avalos-settings\n"
-            "Icon=preferences-system\n"
-            "Terminal=false\n"
-            "Type=Application\n"
-            "Categories=Settings;System;\n"
-            "Keywords=settings;config;system;appearance;network;\n"
-            "Keywords[es]=configuración;ajustes;apariencia;red;sistema;\n"
-            "Keywords[zh]=设置;配置;系统;外观;网络;\n"
-            "StartupNotify=false\n",
-            encoding="utf-8"
-        )
-        self._log("  avalos-settings.desktop instalado", "ok")
+        _contenido = _leer_config("scripts/avalos-settings.desktop")
+        if _contenido:
+            (_apps_dir / "avalos-settings.desktop").write_text(_contenido, encoding="utf-8")
+            self._log("  avalos-settings.desktop instalado", "ok")
+        else:
+            self._log("[WARN] configs/scripts/avalos-settings.desktop no encontrado — entrada de menú no instalada", "warn")
 
         # ── Marca de fecha de instalación (usada por avalos-about) ───────
+        # FIX: usar datetime importado globalmente en lugar de __import__("datetime")
         (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
-            __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M"),
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
             encoding="utf-8"
         )
 
@@ -2568,7 +2342,14 @@ kitty --title "AvalOS — About / Acerca de" -- bash -c '
             _gpu_env = "VDPAU_DRIVER=radeonsi\nLIBVA_DRIVER_NAME=radeonsi\n"
 
         self._escribir("etc/environment", f"""\
-QT_QPA_PLATFORM=wayland:xcb
+# BUG-8 FIX: separador ':' en vez de ';' en QT_QPA_PLATFORM.
+# Qt parsea esta variable como lista separada por ';' (no ':') de plugins
+# de plataforma a probar en orden, con fallback al siguiente si el primero
+# no carga. Con ':', Qt busca un plugin llamado literalmente "wayland:xcb",
+# no lo encuentra, y cae a su comportamiento por defecto — rompiendo el
+# fallback wayland→xcb para toda app Qt que lea /etc/environment (vía PAM/
+# systemd), aunque hl.env() en hyprland.lua sí lo tenga bien con ';'.
+QT_QPA_PLATFORM=wayland;xcb
 QT_AUTO_SCREEN_SCALE_FACTOR=1
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 GDK_BACKEND=wayland,x11
@@ -2613,14 +2394,14 @@ DISTRIB_DESCRIPTION="AvalOS"
 
         pac_path = MOUNT_ROOT / "etc" / "pacman.conf"
         try:
-            import re as _re
             existing = pac_path.read_text(encoding="utf-8") if pac_path.exists() else ""
             to_append = ""
             if "[avalos]" not in existing:
                 to_append += avalos_repo
             if "[multilib]" not in existing:
                 # Descomentar el bloque multilib con regex (tolerante a variaciones de espacio)
-                existing_new = _re.sub(
+                # FIX: usar re (ya importado globalmente) en lugar de import re as _re local
+                existing_new = re.sub(
                     r'#\s*\[multilib\]\s*\n#\s*Include\s*=\s*/etc/pacman\.d/mirrorlist',
                     "[multilib]\nInclude = /etc/pacman.d/mirrorlist",
                     existing
@@ -2637,12 +2418,21 @@ DISTRIB_DESCRIPTION="AvalOS"
             self._log(f"[WARN] pacman.conf: {e}", "warn")
 
         # hyprland.lua — leído desde /usr/share/avalos/configs/
+        # FIX (fallback GPU real): el bloque se envuelve en marcadores únicos
+        # para que avalos-gpu-detect.service (oneshot, vía avalos-gpu-env)
+        # pueda reemplazarlo de forma idempotente si el usuario cambia de GPU
+        # sin reinstalar — en vez de regenerar gpu-env.conf (que Lua no lee).
         _gpu_env_amd  = ('hl.env("AMD_VULKAN_ICD",    "RADV")\n'
                           'hl.env("VDPAU_DRIVER",      "radeonsi")\n'
                           'hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
         _gpu_env_intel = ('hl.env("LIBVA_DRIVER_NAME", "iHD")\n'
                            'hl.env("VDPAU_DRIVER",      "va_gl")')
-        _gpu_env_str  = _gpu_env_amd if _gpu_vendor == "amd" else _gpu_env_intel
+        _gpu_env_body = _gpu_env_amd if _gpu_vendor == "amd" else _gpu_env_intel
+        _gpu_env_str = (
+            "-- AVALOS_GPU_ENV_START\n"
+            f"{_gpu_env_body}\n"
+            "-- AVALOS_GPU_ENV_END"
+        )
 
         _hypr_tmpl = _leer_config("hyprland/hyprland_conf_lua.template")
         if _hypr_tmpl:
@@ -2650,140 +2440,116 @@ DISTRIB_DESCRIPTION="AvalOS"
                            _hypr_tmpl.replace("%%GPU_ENV%%", _gpu_env_str)
                                       .replace("%%KEYMAP%%", _VCONSOLE_TO_XKB.get(self._keymap, self._keymap)))
         else:
-            self._log("[WARN] hyprland_conf_lua.template no encontrado — hyprland.lua no generado", "warn")
+            # FIX: sin hyprland.lua el sistema instalado arranca sin configuración
+            # de Hyprland (sin keybindings, monitores, ni apps) → pantalla en negro.
+            # Esto es un error fatal de la imagen ISO, no un warning recuperable.
+            self._log("[ERROR] hyprland_conf_lua.template no encontrado en configs/hyprland/. ISO incompleta.", "err")
+            raise RuntimeError(
+                "hyprland_conf_lua.template no encontrado en /usr/share/avalos/configs/hyprland/.\n"
+                "La imagen ISO está incompleta — reconstruye con build-iso.yml."
+            )
 
         # hyprpaper.conf
         _contenido = _leer_config("hyprland/hyprpaper.conf")
         if _contenido:
             self._escribir(f"{home}/.config/hypr/hyprpaper.conf", _contenido)
         else:
+            # BUG-13 FIX: el fallback usaba "preload = ...\nwallpaper = ,...\n",
+            # sintaxis que hyprpaper retiró (rewrite sobre hyprtoolkit, dic-2025/
+            # ene-2026 — confirmado en wiki.hypr.land y el README oficial del
+            # repo: "fill, tile, cover or contain modes"). preload ya no existe
+            # como directiva de config; todo va dentro de un bloque wallpaper{}
+            # con fit_mode. Con la sintaxis vieja, hyprpaper tira error de config
+            # y ningún monitor recibe wallpaper ("Monitor ... does not have a
+            # target!"). Mismo formato que ahora escribe avalos-wallpaper.
             self._escribir(f"{home}/.config/hypr/hyprpaper.conf",
-                           "preload = ~/.config/hypr/wallpaper.png\nwallpaper = ,~/.config/hypr/wallpaper.png\nsplash = false\n")
-        # Wallpaper PNG Tokyo Night (#1a1b26) sin dependencias externas
+                           "wallpaper {\n    monitor =\n"
+                           "    path = ~/.config/hypr/wallpaper.png\n"
+                           "    fit_mode = cover\n}\nsplash = false\nipc = on\n")
+        # Wallpaper — copiar el de marca AvalOS (logo + "AvalOS" + "An Arch-based
+        # Distro", generado en build-iso.yml vía ImageMagick) si está disponible
+        # en el live ISO. ImageMagick no forma parte de packages.x86_64, así que
+        # no puede invocarse aquí en runtime — pero el PNG ya renderizado SÍ
+        # está disponible como archivo en /usr/share/avalos/wallpaper-default.png
+        # (parte del live ISO desde el paso "Branding completo"). Si no existe
+        # (build local sin ese paso, o testing fuera del ISO oficial), fallback
+        # al PNG sólido Tokyo Night (#1a1b26) generado en Python puro, sin
+        # dependencias externas.
+        wp_path = MOUNT_ROOT / f"{home}/.config/hypr/wallpaper.png"
+        _default_wp = Path("/usr/share/avalos/wallpaper-default.png")
         try:
-            import struct as _struct, zlib as _zlib
-            def _make_chunk(tag, data):
-                crc = _zlib.crc32(tag + data) & 0xffffffff
-                return _struct.pack('>I', len(data)) + tag + data + _struct.pack('>I', crc)
-            _w, _h, _R, _G, _B = 1920, 1080, 26, 27, 38
-            _rows = (b'\x00' + bytes([_R, _G, _B]) * _w) * _h
-            _png = (
-                b'\x89PNG\r\n\x1a\n'
-                + _make_chunk(b'IHDR', _struct.pack('>IIBBBBB', _w, _h, 8, 2, 0, 0, 0))
-                + _make_chunk(b'IDAT', _zlib.compress(_rows, 9))
-                + _make_chunk(b'IEND', b'')
-            )
-            wp_path = MOUNT_ROOT / f"{home}/.config/hypr/wallpaper.png"
-            wp_path.write_bytes(_png)
-            self._log("  wallpaper.png generado (Tokyo Night #1a1b26)", "ok")
+            if _default_wp.is_file():
+                wp_path.write_bytes(_default_wp.read_bytes())
+                self._log("  wallpaper.png copiado (branding AvalOS: logo + texto)", "ok")
+            else:
+                import struct as _struct, zlib as _zlib
+                def _make_chunk(tag, data):
+                    crc = _zlib.crc32(tag + data) & 0xffffffff
+                    return _struct.pack('>I', len(data)) + tag + data + _struct.pack('>I', crc)
+                _w, _h, _R, _G, _B = 1920, 1080, 26, 27, 38
+                _rows = (b'\x00' + bytes([_R, _G, _B]) * _w) * _h
+                _png = (
+                    b'\x89PNG\r\n\x1a\n'
+                    + _make_chunk(b'IHDR', _struct.pack('>IIBBBBB', _w, _h, 8, 2, 0, 0, 0))
+                    + _make_chunk(b'IDAT', _zlib.compress(_rows, 9))
+                    + _make_chunk(b'IEND', b'')
+                )
+                wp_path.write_bytes(_png)
+                self._log("  [WARN] wallpaper-default.png no encontrado — wallpaper.png generado (Tokyo Night #1a1b26 sólido)", "warn")
         except Exception as _e:
             self._log(f"  [WARN] wallpaper: {_e}", "warn")
 
         # hypridle.conf
+        # FIX: se eliminó el fallback embebido — estaba desincronizado del
+        # archivo real (configs/hyprland/hypridle.conf): timeouts distintos
+        # (sin el listener de brillo a 240s, DPMS en 300s vs 300s del real),
+        # y sin los listeners encadenados correctos. Mismo patrón que waybar:
+        # si falta el archivo del repo, se loggea y omite en lugar de generar
+        # una versión desincronizada.
         _contenido = _leer_config("hyprland/hypridle.conf")
         if _contenido:
             self._escribir(f"{home}/.config/hypr/hypridle.conf", _contenido)
         else:
-            self._escribir(f"{home}/.config/hypr/hypridle.conf", """\
-general {
-    lock_cmd = pidof hyprlock || hyprlock
-    before_sleep_cmd = loginctl lock-session
-    after_sleep_cmd = hyprctl dispatch dpms on
-}
-listener { timeout = 300;  on-timeout = hyprctl dispatch dpms off; on-resume = hyprctl dispatch dpms on; }
-listener { timeout = 600;  on-timeout = loginctl lock-session; }
-listener { timeout = 1800; on-timeout = systemctl suspend; }
-""")
+            self._log("[WARN] configs/hyprland/hypridle.conf no encontrado — hypridle.conf no generado", "warn")
 
         # hyprlock.conf
+        # FIX: se eliminó el fallback embebido — tenía exactamente los bugs
+        # que hyprlock.conf del repo ya corrigió: propiedades con ";" en la
+        # misma línea (BUG-1/2/4 — hyprlock las ignora silenciosamente),
+        # font_color incorrecto, sin check_color/fail_color/capslock_color
+        # (BUG-3), fecha hardcodeada en español "%d de %B" sin respetar
+        # LC_TIME (BUG-6), y sin label de hostname (BUG-7). Mismo patrón
+        # que waybar/hypridle: si falta el archivo del repo, se loggea.
         _contenido = _leer_config("hyprland/hyprlock.conf")
         if _contenido:
             self._escribir(f"{home}/.config/hypr/hyprlock.conf", _contenido)
         else:
-            self._escribir(f"{home}/.config/hypr/hyprlock.conf", """\
-background {
-    monitor =
-    path = ~/.config/hypr/wallpaper.png
-    blur_size = 5; blur_passes = 3; brightness = 0.65
-}
-input-field {
-    monitor =
-    size = 300, 50
-    outline_thickness = 2
-    outer_color = rgb(7aa2f7); inner_color = rgb(1a1b26)
-    font_color = rgb(7aa2f7)
-    placeholder_text = <span foreground="#565f89">Password…</span>
-    position = 0, -80; halign = center; valign = center
-}
-label {
-    monitor =
-    text = cmd[update:1000] date +"%H:%M"
-    color = rgba(187, 154, 247, 1.0)
-    font_size = 70; font_family = JetBrainsMono Nerd Font
-    position = 0, 150; halign = center; valign = center
-}
-label {
-    monitor =
-    text = cmd[update:60000] date '+%A, %d de %B'
-    color = rgba(122, 162, 247, 0.8)
-    font_size = 18; font_family = JetBrainsMono Nerd Font
-    position = 0, 70; halign = center; valign = center
-}
-""")
+            self._log("[WARN] configs/hyprland/hyprlock.conf no encontrado — hyprlock.conf no generado", "warn")
 
         # Waybar config
+        # FIX: se eliminó el fallback embebido (JSON hardcodeado aquí) — estaba
+        # desincronizado de configs/waybar/config.jsonc (sin los fixes BUG-2..16:
+        # on-click en workspaces, persistent-workspaces, rewrite-rules, etc.,
+        # e incluía un módulo "temperature" que ni siquiera está en
+        # modules-right del config real). Mismo patrón que mako/rofi/kitty
+        # abajo: si falta el archivo del repo, se loggea y se omite — no se
+        # genera una versión vieja y desincronizada.
         _contenido = _leer_config("waybar/config.jsonc")
         if _contenido:
             self._escribir(f"{home}/.config/waybar/config.jsonc", _contenido)
         else:
-            self._escribir(f"{home}/.config/waybar/config.jsonc", """\
-{
-  "layer": "top", "position": "top", "height": 30, "spacing": 4,
-  "modules-left":   ["hyprland/workspaces", "hyprland/window"],
-  "modules-center": ["clock"],
-  "modules-right":  ["pulseaudio","network","battery","cpu","memory","temperature","tray","custom/powermenu"],
-  "hyprland/workspaces": {
-    "format": "{icon}",
-    "format-icons": {"1":"①","2":"②","3":"③","4":"④","5":"⑤","6":"⑥","7":"⑦","8":"⑧","9":"⑨","active":"","default":""},
-    "persistent-workspaces": {"*": 5}
-  },
-  "hyprland/window": {"max-length": 50, "separate-outputs": true},
-  "clock": {"format": "{:%H:%M  %a %d/%m/%Y}", "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"},
-  "cpu": {"format": "󰻠 {usage}%", "interval": 2},
-  "memory": {"format": "󰍛 {}%", "interval": 5},
-  "temperature": {"critical-threshold": 80, "format": "{icon} {temperatureC}°C", "format-icons": ["","",""]},
-  "battery": {"states": {"warning":30,"critical":15}, "format": "{icon} {capacity}%", "format-charging": "󰂄 {capacity}%", "format-icons": ["󰁺","󰁻","󰁼","󰁽","󰁾","󰁿","󰂀","󰂁","󰂂","󰁹"]},
-  "network": {"format-wifi":"󰤨 {signalStrength}%","format-ethernet":"󰈀 {ipaddr}","format-disconnected":"󰤭 Sin red"},
-  "pulseaudio": {"format":"{icon} {volume}%","format-muted":"󰝟","format-icons":{"default":["󰕿","󰖀","󰕾"]},"on-click":"pavucontrol"},
-  "tray": {"spacing": 8},
-  "custom/powermenu": {"format":"","tooltip":false,"on-click":"~/.config/rofi/scripts/powermenu.sh"}
-}
-""")
+            self._log("[WARN] configs/waybar/config.jsonc no encontrado — waybar/config.jsonc no generado", "warn")
 
         # Waybar style — Tokyo Night
+        # FIX: mismo motivo que arriba — fallback embebido eliminado (estaba
+        # desincronizado de configs/waybar/style.css, sin los 14 fixes
+        # BUG-1..14: box-sizing, tooltips, transitions, estados urgent/warning/
+        # critical, animation-fill-mode, etc.).
         _contenido = _leer_config("waybar/style.css")
         if _contenido:
             self._escribir(f"{home}/.config/waybar/style.css", _contenido)
         else:
-            self._escribir(f"{home}/.config/waybar/style.css", """\
-* { font-family: "JetBrainsMono Nerd Font", monospace; font-size: 13px; border: none; border-radius: 0; min-height: 0; }
-window#waybar { background-color: rgba(26,27,38,0.92); border-bottom: 2px solid rgba(122,162,247,.4); color: #c0caf5; }
-.modules-left, .modules-center, .modules-right { padding: 0 6px; }
-#workspaces button { color: #414868; padding: 0 4px; background: transparent; transition: color 0.15s; }
-#workspaces button:hover, #workspaces button.active { color: #7aa2f7; background: rgba(122,162,247,.18); border-radius: 4px; }
-#workspaces button.urgent { color: #f7768e; }
-#window { color: #565f89; }
-#clock { color: #bb9af7; font-weight: 700; }
-#cpu { color: #7dcfff; } #memory { color: #9ece6a; }
-#temperature { color: #c0caf5; } #temperature.critical { color: #f7768e; }
-#battery { color: #c0caf5; } #battery.warning { color: #e0af68; } #battery.critical { color: #f7768e; }
-#battery.charging { color: #9ece6a; }
-#network { color: #7dcfff; } #network.disconnected { color: #f7768e; }
-#pulseaudio { color: #c0caf5; } #pulseaudio.muted { color: #414868; }
-#tray { padding: 0 4px; }
-#custom-powermenu { color: #f7768e; padding: 0 8px; font-size: 16px; }
-tooltip { background: rgba(26,27,38,.95); border: 1px solid rgba(122,162,247,.3); color: #c0caf5; font-size: 11px; border-radius: 4px; }
-""")
+            self._log("[WARN] configs/waybar/style.css no encontrado — waybar/style.css no generado", "warn")
 
         # mako (reemplaza dunst — BUG-011: dunst <1.9 no soporta Wayland puro)
         _contenido = _leer_config("mako/config")
@@ -2809,6 +2575,36 @@ tooltip { background: rgba(26,27,38,.95); border: 1px solid rgba(122,162,247,.3)
         _contenido = _leer_config("kitty/kitty.conf")
         if _contenido:
             self._escribir(f"{home}/.config/kitty/kitty.conf", _contenido)
+
+        # ── SDDM theme: AvalOS Tokyo Night ───────────────────────────────────
+        # BUG-SDDM FIX: el conf apuntaba a Current=avalos pero el tema nunca
+        # existía — SDDM caía al tema por defecto (breeze). Se instalan 2 archivos
+        # mínimos: metadata.desktop y Main.qml con QML puro, sin imágenes ni
+        # shaders pesados. Solo QML shapes, colores y texto.
+        #
+        # BUG-10 FIX: Main.qml se escribía tal cual, 100% hardcodeado en
+        # inglés ("Username"/"Password"/"Sign In"/"Authentication failed.
+        # Try again."/"Session"/"Suspend"/"Restart"/"Shutdown"), sin pasar
+        # por translations.py — la única pantalla de TODO el sistema que
+        # no respetaba el idioma elegido en el wizard, y la que el usuario
+        # ve primero en cada arranque. Mismo patrón que _build_html()
+        # (LOGO_PLACEHOLDER/STRINGS_PLACEHOLDER): placeholders %%SDDM_*%%
+        # en el QML, reemplazados acá con translations.TRANSLATIONS[lang].
+        _tr_sddm = translations.TRANSLATIONS.get(self._lang, translations.TRANSLATIONS["en"])
+        _sddm_qml = (_SDDM_MAIN_QML
+            .replace("%%SDDM_USER%%",     _tr_sddm.get("lbl-user",      "Username"))
+            .replace("%%SDDM_PASS%%",     _tr_sddm.get("lbl-pass",      "Password"))
+            .replace("%%SDDM_SIGNIN%%",   _tr_sddm.get("sddm-signin",   "Sign In"))
+            .replace("%%SDDM_FAIL%%",     _tr_sddm.get("sddm-fail",     "Authentication failed. Try again."))
+            .replace("%%SDDM_SESSION%%",  _tr_sddm.get("sddm-session",  "Session"))
+            .replace("%%SDDM_SUSPEND%%",  _tr_sddm.get("sddm-suspend",  "Suspend"))
+            .replace("%%SDDM_RESTART%%",  _tr_sddm.get("sddm-restart",  "Restart"))
+            .replace("%%SDDM_SHUTDOWN%%", _tr_sddm.get("sddm-shutdown", "Shutdown")))
+        _sddm_dir = MOUNT_ROOT / "usr" / "share" / "sddm" / "themes" / "avalos"
+        _sddm_dir.mkdir(parents=True, exist_ok=True)
+        (_sddm_dir / "metadata.desktop").write_text(_SDDM_META, encoding="utf-8")
+        (_sddm_dir / "Main.qml").write_text(_sddm_qml, encoding="utf-8")
+        self._log("  Tema SDDM 'avalos' instalado (metadata + Main.qml, Tokyo Night)", "ok")
 
         # SDDM config
         self._escribir("etc/sddm.conf.d/hyprland.conf", """\
@@ -2863,25 +2659,38 @@ export XDG_SESSION_TYPE=wayland
         # fastfetch config — claves traducidas al idioma elegido en el wizard
         _contenido = _leer_config("fastfetch/config.jsonc")
         if _contenido:
-            try:
-                from translations import TRANSLATIONS as _TR
-                _tr = _TR.get(self._lang, _TR["en"])
-                # Las claves en config.jsonc del repo están en inglés (baseline).
-                # Mapeamos inglés → traducción del idioma elegido.
-                _ff_keys = {
-                    '" OS"':              f'"{_tr.get("ff-os",     " OS")}"',
-                    '"\\uf0e4 Host"':     f'"{_tr.get("ff-host",   "\\uf0e4 Host")}"',
-                    '" Kernel"':          f'"{_tr.get("ff-kernel",  " Kernel")}"',
-                    '"\\uf55f Uptime"':   f'"{_tr.get("ff-uptime",  "\\uf55f Uptime")}"',
-                    '"\\uf439 Packages"': f'"{_tr.get("ff-packages","\\uf439 Packages")}"',
-                    '"\\uf879 Resolution"':f'"{_tr.get("ff-display","\\uf879 Resolution")}"',
-                    '"\\uf4cb Disk"':     f'"{_tr.get("ff-disk",    "\\uf4cb Disk")}"',
-                    '"\\uf55b RAM"':      f'"{_tr.get("ff-ram",     "\\uf55b RAM")}"',
-                }
-                for _old_k, _new_k in _ff_keys.items():
-                    _contenido = _contenido.replace(_old_k, _new_k)
-            except ImportError:
-                pass  # translations.py no disponible — usar config tal cual
+            # FIX (unificación i18n): translations ya se importa a nivel de
+            # módulo (siempre presente junto a este script), por lo que ya
+            # no se necesita el try/except ImportError anterior.
+            _tr = translations.TRANSLATIONS.get(self._lang, translations.TRANSLATIONS["en"])
+            # Las claves en config.jsonc del repo están en inglés (baseline).
+            # Mapeamos inglés → traducción del idioma elegido.
+            # BUG-9 FIX: faltaban 5 de las 13 claves ff-* definidas en
+            # translations.py (shell, wm, terminal, cpu, gpu) — quedaban
+            # hardcodeadas en el baseline en inglés sin importar el idioma
+            # elegido. Verificado contra translations.py: hoy esas 5 valen
+            # lo mismo en en/es/zh ("Shell"/"WM"/"Terminal"/"CPU"/"GPU" no
+            # se traducen a propósito), así que no se nota visualmente
+            # todavía — pero si en el futuro se traduce alguna, o se agrega
+            # un 4º idioma, el mapeo ya está completo y no haría falta
+            # acordarse de este punto.
+            _ff_keys = {
+                '" OS"':              f'"{_tr.get("ff-os",     " OS")}"',
+                '"\\uf0e4 Host"':     f'"{_tr.get("ff-host",   "\\uf0e4 Host")}"',
+                '" Kernel"':          f'"{_tr.get("ff-kernel",  " Kernel")}"',
+                '"\\uf55f Uptime"':   f'"{_tr.get("ff-uptime",  "\\uf55f Uptime")}"',
+                '"\\uf439 Packages"': f'"{_tr.get("ff-packages","\\uf439 Packages")}"',
+                '" Shell"':           f'"{_tr.get("ff-shell",   " Shell")}"',
+                '"\\uf879 Resolution"':f'"{_tr.get("ff-display","\\uf879 Resolution")}"',
+                '" WM"':              f'"{_tr.get("ff-wm",      " WM")}"',
+                '" Terminal"':        f'"{_tr.get("ff-terminal"," Terminal")}"',
+                '" CPU"':             f'"{_tr.get("ff-cpu",     " CPU")}"',
+                '"\\uf43f GPU"':      f'"{_tr.get("ff-gpu",     "\\uf43f GPU")}"',
+                '"\\uf4cb Disk"':     f'"{_tr.get("ff-disk",    "\\uf4cb Disk")}"',
+                '"\\uf55b RAM"':      f'"{_tr.get("ff-ram",     "\\uf55b RAM")}"',
+            }
+            for _old_k, _new_k in _ff_keys.items():
+                _contenido = _contenido.replace(_old_k, _new_k)
             self._escribir(f"{home}/.config/fastfetch/config.jsonc", _contenido)
 
         # Logo ASCII de fastfetch — copiar del live ISO al sistema instalado.
@@ -2891,8 +2700,8 @@ export XDG_SESSION_TYPE=wayland
         _dst_logo = MOUNT_ROOT / "etc" / "fastfetch" / "avalos.txt"
         _dst_logo.parent.mkdir(parents=True, exist_ok=True)
         if _src_logo.exists():
-            import shutil as _shutil
-            _shutil.copy2(_src_logo, _dst_logo)
+            # FIX: usar shutil (ya importado globalmente) en lugar de import shutil as _shutil local
+            shutil.copy2(_src_logo, _dst_logo)
             self._log("  ✓ /etc/fastfetch/avalos.txt copiado al sistema instalado")
         else:
             self._log("  [WARN] avalos.txt no encontrado en el live — fastfetch usará logo genérico", "warn")
@@ -2955,6 +2764,7 @@ WantedBy=multi-user.target
         # Aunque self._v IS self (mismo objeto VentanaInstalador), la asignación explícita
         # aquí deja claro el flujo y evita confusión con el valor inicial False del __init__.
         self._install_gaming = getattr(self, '_install_gaming', False)
+        self._install_bore   = getattr(self, '_install_bore', False)
 
         self._info("user", usuario, "ok")
         self._info("modo", "USB (ext4 noatime)" if self._modo_usb else "PC (Btrfs + subvolúmenes)", "ok")
@@ -2985,7 +2795,12 @@ WantedBy=multi-user.target
             cpu_arch = detectar_cpu_arch_level()
             gpu_info = detectar_gpu()
             _es_v3 = cpu_arch in ("x86-64-v3", "x86-64-v4")
-            _kernel_display = "linux-avalos" if _es_v3 else "linux-avalos-compat"
+            if self._install_bore and _es_v3:
+                _kernel_display = "linux-avalos-bore"
+            elif _es_v3:
+                _kernel_display = "linux-avalos"
+            else:
+                _kernel_display = "linux-avalos-compat"
             self._log(
                 f"\nCPU arch: {cpu_arch} | GPU: {gpu_info['vendor'].upper()} ({gpu_info['model']})\n"
                 f"Kernel seleccionado: {_kernel_display}",
@@ -3276,6 +3091,15 @@ WantedBy=multi-user.target
                     rc_sv, _ = self._run_cmd(["mount", "-o", _sv_opts, dev_root, str(sv_path)])
                     if rc_sv != 0:
                         self._log(f"[WARN] No se pudo montar subvolumen {sv_name} en {sv_path}", "warn")
+                    elif sv_name == "@tmp":
+                        # FIX: nodatacow como opción de montaje no deshabilita CoW de
+                        # forma permanente — solo afecta a archivos creados en ese mount
+                        # exacto y no persiste tras un reinicio. chattr +C establece el
+                        # atributo C en el inodo del directorio, que Btrfs interpreta como
+                        # "desactivar CoW para todos los archivos creados aquí", y SÍ
+                        # persiste entre reinicios como parte del árbol de inodos de Btrfs.
+                        self._run_cmd(["chattr", "+C", str(sv_path)])
+                        self._log("  @tmp: CoW deshabilitado con chattr +C (permanente, persiste tras desmontaje)", "ok")
 
                 self._log("  Subvolúmenes Btrfs montados correctamente", "ok")
 
@@ -3329,8 +3153,12 @@ WantedBy=multi-user.target
 
             # ── Selección dinámica del kernel según CPU + repo [avalos] ──────
             # cpu_arch viene de detectar_cpu_arch_level():
-            #   x86-64-v3 / x86-64-v4 → linux-avalos      (compilado con -march=x86-64-v3)
+            #   x86-64-v3 / x86-64-v4 → linux-avalos        (compilado con -march=x86-64-v3)
+            #                           o linux-avalos-bore  si el usuario marcó BORE en "Extras"
             #   x86-64-v2 / x86-64    → linux-avalos-compat (compilado con -march=x86-64)
+            #                           BORE no disponible en compat (no existe
+            #                           linux-avalos-compat-bore — decisión de diseño,
+            #                           ver discusión: 3 variantes de kernel, no 4)
             #
             # Ejemplos de CPUs "compat":
             #   Intel Celeron N5100/N5095 (Jasper Lake, sin AVX2)
@@ -3344,14 +3172,35 @@ WantedBy=multi-user.target
             _nombre_cpu_nivel = "v3/v4 (AVX2+)" if _es_v3_o_superior else "baseline (sin AVX2)"
             self._log(f"  CPU detectada: {cpu_arch} → nivel {_nombre_cpu_nivel}", "info")
 
+            # ── BORE scheduler (opt-in, checkbox "Extras") ─────────────────────
+            # No existe variante "linux-avalos-compat-bore": BORE solo se ofrece
+            # en CPU v3+ (ver discusión de diseño — mantener 3 variantes de
+            # kernel, no 4). Si el usuario marcó BORE en una CPU sin AVX2,
+            # se ignora con un aviso y se procede con linux-avalos-compat normal.
+            _quiere_bore = bool(getattr(self, "_install_bore", False))
+            if _quiere_bore and not _es_v3_o_superior:
+                self._log(
+                    f"  [WARN] Scheduler BORE solicitado pero la CPU ({cpu_arch}) no soporta "
+                    f"AVX2 — no existe linux-avalos-compat-bore. Usando linux-avalos-compat.",
+                    "warn"
+                )
+                _quiere_bore = False
+
             # Intentar resolver el kernel desde el repo [avalos]
             self._log("  Verificando disponibilidad de kernels en repo [avalos]…", "info")
             _kernel_pkg  = "linux"
             _headers_pkg = "linux-headers"
 
-            # El paquete objetivo según CPU
-            _target_kernel  = "linux-avalos"         if _es_v3_o_superior else "linux-avalos-compat"
-            _target_headers = "linux-avalos-headers" if _es_v3_o_superior else "linux-avalos-compat-headers"
+            # El paquete objetivo según CPU (y BORE si aplica)
+            if _quiere_bore:
+                _target_kernel  = "linux-avalos-bore"
+                _target_headers = "linux-avalos-bore-headers"
+            elif _es_v3_o_superior:
+                _target_kernel  = "linux-avalos"
+                _target_headers = "linux-avalos-headers"
+            else:
+                _target_kernel  = "linux-avalos-compat"
+                _target_headers = "linux-avalos-compat-headers"
 
             try:
                 _rc, _out = self._run_cmd(
@@ -3363,9 +3212,15 @@ WantedBy=multi-user.target
                     _headers_pkg = _target_headers
                     self._log(f"  Kernel: {_kernel_pkg} ✓ (repo [avalos] disponible)", "ok")
                 else:
-                    # Fallback: intentar el otro variant si está disponible
-                    _alt_kernel  = "linux-avalos-compat" if _es_v3_o_superior else "linux-avalos"
-                    _alt_headers = "linux-avalos-compat-headers" if _es_v3_o_superior else "linux-avalos-headers"
+                    # Fallback: intentar el otro variant si está disponible.
+                    # Si se pedía BORE (v3) y no está, caer a linux-avalos (v3 sin BORE)
+                    # — seguimos en CPU v3+, no hace falta bajar a compat.
+                    if _quiere_bore:
+                        _alt_kernel  = "linux-avalos"
+                        _alt_headers = "linux-avalos-headers"
+                    else:
+                        _alt_kernel  = "linux-avalos-compat" if _es_v3_o_superior else "linux-avalos"
+                        _alt_headers = "linux-avalos-compat-headers" if _es_v3_o_superior else "linux-avalos-headers"
                     _rc2, _ = self._run_cmd(
                         ["pacman", "-Syi", "--noconfirm", _alt_kernel],
                         timeout=20, log_cls="info"
@@ -3373,7 +3228,13 @@ WantedBy=multi-user.target
                     if _rc2 == 0:
                         _kernel_pkg  = _alt_kernel
                         _headers_pkg = _alt_headers
-                        if not _es_v3_o_superior:
+                        if _quiere_bore:
+                            self._log(
+                                f"  [WARN] {_target_kernel} no disponible. "
+                                f"Usando {_alt_kernel} (sin BORE) en CPU {cpu_arch}.",
+                                "warn"
+                            )
+                        elif not _es_v3_o_superior:
                             # CPU sin AVX2 pero solo linux-avalos (v3) disponible — puede no arrancar
                             self._log(
                                 f"  [WARN] {_target_kernel} no disponible. "
@@ -3433,7 +3294,7 @@ WantedBy=multi-user.target
                 self._limpiar_montajes(); return
 
             if self._modo_usb:
-                import re as _re
+                # FIX: usar re (ya importado globalmente) en lugar de import re as _re local
                 # Reemplazar relatime por noatime en todas las líneas del fstab
                 fstab_out = fstab_out.replace("relatime", "noatime")
                 # Si una línea ext4 no tiene noatime, añadirlo — excluir líneas FAT/vfat (EFI)
@@ -3442,7 +3303,7 @@ WantedBy=multi-user.target
                     if "noatime" not in opts and "vfat" not in opts.lower():
                         return opts.replace("defaults", "defaults,noatime", 1)
                     return opts
-                fstab_out = _re.sub(r'(defaults[^\s]*)', _add_noatime, fstab_out)
+                fstab_out = re.sub(r'(defaults[^\s]*)', _add_noatime, fstab_out)
 
             try:
                 (MOUNT_ROOT / "etc" / "fstab").write_text(fstab_out + "\n")
@@ -3517,15 +3378,37 @@ WantedBy=multi-user.target
                 _mkinit_path = MOUNT_ROOT / "etc" / "mkinitcpio.conf"
                 if _mkinit_path.exists():
                     _mkinit_txt = _mkinit_path.read_text()
-                    # Insertar "btrfs" después de "filesystems" en los HOOKS si no está
+                    # FIX: usar re.sub en lugar de str.replace para operar solo sobre
+                    # la línea HOOKS=(...) y no sobre comentarios que también contengan
+                    # la palabra "filesystems" — el str.replace anterior los modificaba.
                     if "btrfs" not in _mkinit_txt:
-                        _mkinit_txt = _mkinit_txt.replace(
-                            "filesystems", "btrfs filesystems"
+                        _mkinit_txt = re.sub(
+                            r'^(HOOKS=\([^)]*)\bfilesystems\b',
+                            r'\1btrfs filesystems',
+                            _mkinit_txt,
+                            flags=re.MULTILINE
                         )
                         _mkinit_path.write_text(_mkinit_txt)
                         self._log("  mkinitcpio.conf: hook btrfs añadido", "ok")
                     else:
                         self._log("  mkinitcpio.conf: hook btrfs ya presente", "ok")
+                    # FIX: añadir grub-btrfs-overlayfs para rollback read-write
+                    # desde snapshots en GRUB. Sin este hook, arrancar un snapshot
+                    # desde el menú de GRUB lo monta en modo solo lectura — el
+                    # usuario no puede guardar cambios ni hacer el rollback real.
+                    # Requisito: initramfs Busybox (mkinitcpio estándar → compatible).
+                    # No añadir con sd-boot/rEFInd — no leen grub.cfg.
+                    _mkinit_txt = _mkinit_path.read_text()
+                    if ("grub-btrfs-overlayfs" not in _mkinit_txt
+                            and self._bootloader == "grub"):
+                        _mkinit_txt = re.sub(
+                            r'^(HOOKS=\([^)]*)\bfsck\b',
+                            r'\1fsck grub-btrfs-overlayfs',
+                            _mkinit_txt,
+                            flags=re.MULTILINE
+                        )
+                        _mkinit_path.write_text(_mkinit_txt)
+                        self._log("  mkinitcpio.conf: hook grub-btrfs-overlayfs añadido (rollback RW desde snapshots)", "ok")
 
                 # ── /etc/default/grub: activar soporte btrfs en grub-btrfsd ───
                 # GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=true es necesario
@@ -3702,15 +3585,22 @@ WantedBy=multi-user.target
                     _shutil.copy2(initrd_src, esp_entries_dir / f"initramfs-{kernel_name}.img")
 
                 # Copiar imagen de microcode a la ESP
-                _ucode_name = f"{ucode}.img"   # ucode ya detectado arriba: amd-ucode / intel-ucode
-                _ucode_src  = MOUNT_ROOT / f"boot/{_ucode_name}"
+                # FIX: si ucode es "" (CPU no reconocida), f"{ucode}.img" genera ".img"
+                # como nombre de archivo, produciendo mensajes de log confusos y una
+                # búsqueda de Path incorrecta. Se guarda con condicional explícito.
                 _ucode_copied = False
-                if _ucode_src.exists():
-                    _shutil.copy2(_ucode_src, esp_entries_dir / _ucode_name)
-                    _ucode_copied = True
-                    self._log(f"  microcode: {_ucode_name} copiado a ESP", "ok")
+                _ucode_name   = ""  # se rellena solo si ucode es un string válido
+                if ucode:
+                    _ucode_name = f"{ucode}.img"
+                    _ucode_src  = MOUNT_ROOT / f"boot/{_ucode_name}"
+                    if _ucode_src.exists():
+                        _shutil.copy2(_ucode_src, esp_entries_dir / _ucode_name)
+                        _ucode_copied = True
+                        self._log(f"  microcode: {_ucode_name} copiado a ESP", "ok")
+                    else:
+                        self._log(f"  [WARN] {_ucode_src} no encontrado — microcode omitido", "warn")
                 else:
-                    self._log(f"  [WARN] {_ucode_src} no encontrado — microcode omitido", "warn")
+                    self._log("  microcode: CPU no identificada — omitido de la ESP", "warn")
 
                 # loader.conf
                 loader_dir = MOUNT_ROOT / "boot" / "efi" / "loader"
@@ -3771,10 +3661,12 @@ WantedBy=multi-user.target
             self._status("Habilitando servicios…")
 
             # Crear avalos-gpu-detect.service en el sistema instalado
-            # NOTA: Con la migración a Lua, el sistema instalado ya tiene las vars de GPU
-            # bakeadas en hyprland.lua vía %%GPU_ENV%%. Este servicio escribe gpu-env.conf
-            # (formato hyprlang) que ya no se lee. Se conserva como fallback de detección
-            # dinámica por si el usuario reemplaza la GPU sin reinstalar.
+            # El sistema ya tiene las vars de GPU bakeadas en hyprland.lua vía
+            # %%GPU_ENV%% (entre marcadores AVALOS_GPU_ENV_START/END) al momento
+            # de la instalación. Este servicio (oneshot, antes de SDDM) reejecuta
+            # la detección de GPU en cada boot y actualiza ese bloque en
+            # hyprland.lua si el hardware cambió — fallback real para "usuario
+            # reemplaza la GPU sin reinstalar" (ver avalos-gpu-env).
             _svc_dir = MOUNT_ROOT / "etc/systemd/system"
             _svc_dir.mkdir(parents=True, exist_ok=True)
             (_svc_dir / "avalos-gpu-detect.service").write_text(
@@ -3880,12 +3772,6 @@ WantedBy=multi-user.target
             # ── OPTIMIZACIONES: ZRAM, oomd, BBR, IO scheduler ──────────────
             self._status("Aplicando optimizaciones del sistema…")
             self._log("\n── Optimizaciones del sistema ──\n", "step")
-            gpu_info["_usuario"] = usuario
-            # Pre-crear el directorio home del usuario para que _configurar_optimizaciones
-            # pueda escribir gpu-env.conf aunque useradd aún no haya corrido.
-            # Los permisos se corregirán con _chown_r en _configurar_hyprland.
-            _home_pre = MOUNT_ROOT / f"home/{usuario}"
-            _home_pre.mkdir(parents=True, exist_ok=True)
             self._configurar_optimizaciones(gpu_info, cpu_arch, disco_tipo)
 
             if self._abortado: self._limpiar_montajes(); return
@@ -4091,6 +3977,14 @@ def _build_html() -> str:
     default_loc   = json.dumps(DEFAULT_LOCALE)
     default_km    = json.dumps(DEFAULT_KEYMAP)
 
+    # FIX (unificación i18n): STRINGS del wizard se genera desde
+    # translations.TRANSLATIONS — única fuente de verdad compartida con
+    # las claves ff-*/pm-*/cd-* usadas para fastfetch y el menú de energía.
+    # translations.TRANSLATIONS tiene más claves que las que el wizard
+    # consume (ff-*, pm-*, cd-*); eso es intencional y no afecta a STRINGS
+    # en JS — t(key) simplemente nunca pedirá esas claves.
+    strings_json = json.dumps(translations.TRANSLATIONS, ensure_ascii=False)
+
     inject = (
         f"window._tzList = {tz_json};\n"
         f"window._defaultTZ = {default_tz};\n"
@@ -4102,6 +3996,7 @@ def _build_html() -> str:
     )
     # Insertar justo antes del cierre </script> del bloque READY
     contenido = _HTML.replace("LOGO_PLACEHOLDER", _LOGO_B64)
+    contenido = contenido.replace("STRINGS_PLACEHOLDER", strings_json)
     return contenido.replace(
         "window.addEventListener('pywebviewready'",
         inject + "window.addEventListener('pywebviewready'"
@@ -4123,10 +4018,29 @@ if __name__ == "__main__":
         print("╚═══════════════════════════════════════════════════╝")
         sys.exit(1)
 
+    # FIX-CRÍTICO: webkit2gtk intenta configurar PID namespaces para su sandbox
+    # interno cuando el proceso corre como root. Esto entra en conflicto con las
+    # directivas de seguridad del espacio de usuario de Linux y provoca un crash
+    # inmediato (SIGSEGV / core dump) antes de abrir la ventana gráfica.
+    # En el entorno controlado del live USB de instalación el sandbox no aporta
+    # seguridad adicional, por lo que se deshabilita explícitamente.
+    os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
+
     vent = VentanaInstalador()
     api  = InstaladorAPI(vent)
 
     html = _build_html()
+
+    # BUG-012 FIX: pywebview sin GLib.set_prgname() usa "python3" como app_id
+    # en Wayland. La window rule de Hyprland (class = "avalos-install") nunca
+    # matcheaba, por lo que el instalador no aparecía flotante ni centrado.
+    # GLib.set_prgname() debe llamarse ANTES de create_window() para que GTK
+    # asigne el app_id correcto al crear la ventana Wayland.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-install")
+    except Exception:
+        pass  # Sin GTK (backend Qt u otro) — silencioso
 
     win = webview.create_window(
         title            = "AvalOS — Instalador",

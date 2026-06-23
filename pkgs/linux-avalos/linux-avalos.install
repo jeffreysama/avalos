@@ -22,7 +22,14 @@ post_install() {
     fi
 
     echo ":: AvalOS — linux-avalos instalado correctamente."
-    echo "   Kernel: $(ls /usr/lib/modules/ | grep avalos | tail -1)"
+    # FIX: "grep avalos" sin anclaje coincide con CUALQUIER variante de este
+    # kernel instalada (base / -bore / -compat comparten la subcadena "avalos").
+    # Derivamos el patrón de _pkgbase (que SÍ es transformado por el sed global
+    # de build-kernel.yml entre variantes), y anclamos al sufijo exacto
+    # "-${_pkgbase#linux-}$" (ej. "-avalos$", "-avalos-bore$")
+    # para que esta línea muestre únicamente el _kver de ESTA variante.
+    local _pkgbase="linux-avalos"
+    echo "   Kernel: $(ls /usr/lib/modules/ | grep -- "-${_pkgbase#linux-}\$" | tail -1)"
 }
 
 post_upgrade() {
@@ -30,6 +37,10 @@ post_upgrade() {
 }
 
 post_remove() {
+    # BUG-FIX: _pkgbase es necesario para limpiar SOLO los archivos de esta
+    # variante (ver fix más abajo) y para derivar el nombre de la entrada
+    # de systemd-boot — antes no estaba declarada en esta función.
+    local _pkgbase="linux-avalos"
     echo ":: AvalOS — linux-avalos eliminado."
     echo "   Recuerda actualizar el bootloader si eliminaste el kernel predeterminado."
     echo "   GRUB:         grub-mkconfig -o /boot/grub/grub.cfg"
@@ -51,12 +62,24 @@ post_remove() {
     done
 
     if [[ -n "$_esp" ]]; then
-        # Eliminar archivos del kernel de la ESP
+        # NOTA: "rm -rf $_esp/AvalOS" (versión original) borraba el directorio
+        # COMPLETO. En la práctica las 3 variantes nunca coexisten en el mismo
+        # sistema (conflicts=() entre ellas en el PKGBUILD, y el instalador
+        # solo resuelve/instala una), así que esto no causaba el problema de
+        # "borrar archivos de otra variante instalada" que se sospechó en un
+        # primer momento. Aun así, eliminar solo los archivos de ESTA variante
+        # (en lugar de rm -rf ciego del directorio) es más seguro y se mantiene
+        # como mejora defensiva. El microcode (amd/intel-ucode.img) es
+        # compartido y se deja intacto — no pertenece a ninguna variante.
         if [[ -d "$_esp/AvalOS" ]]; then
-            rm -rf "$_esp/AvalOS"
-            echo "   ✓ Archivos del kernel eliminados de ${_esp}/AvalOS/"
+            rm -f "$_esp/AvalOS/vmlinuz-${_pkgbase}" \
+                  "$_esp/AvalOS/initramfs-${_pkgbase}.img"
+            echo "   ✓ vmlinuz + initramfs de ${_pkgbase} eliminados de ${_esp}/AvalOS/"
         fi
-        # Eliminar la entrada del bootloader (systemd-boot)
+        # NOTA: "avalos.conf" es literal — mismo motivo que en _update_bootloader().
+        # El instalador siempre crea la entrada con ese nombre fijo, sin importar
+        # la variante instalada; no hay "avalos-bore.conf" ni "avalos-compat.conf"
+        # que crear o limpiar por separado.
         local _entry="$_esp/loader/entries/avalos.conf"
         if [[ -f "$_entry" ]]; then
             rm -f "$_entry"
@@ -80,8 +103,17 @@ _update_bootloader() {
     # Copia el kernel e initramfs nuevos a la ESP (instalador los pone en /boot/efi/AvalOS/)
     if command -v bootctl &>/dev/null && bootctl is-installed &>/dev/null; then
         echo ":: AvalOS — Actualizando archivos de kernel en la ESP (systemd-boot)…"
+        # FIX: _pkgbase se declara primero porque _kver se deriva de él (ver abajo).
+        local _pkgbase="linux-avalos"
         local _kver
-        _kver=$(ls /usr/lib/modules/ | grep avalos | grep -v bore | grep -v compat | tail -1)
+        # FIX: "grep avalos | grep -v bore | grep -v compat" rompía tras el sed
+        # global de build-kernel.yml — para la copia -bore, "grep avalos-bore"
+        # seguido de "grep -v bore" se anulan entre sí y _kver queda vacío
+        # siempre, saltando todo el bloque de abajo (incluyendo la copia a la
+        # ESP). En su lugar, anclamos al sufijo exacto de ESTA variante
+        # (ej. "-avalos$", "-avalos-bore$", "-avalos-compat$"), derivado de
+        # _pkgbase — que el sed global SÍ transforma correctamente.
+        _kver=$(ls /usr/lib/modules/ | grep -- "-${_pkgbase#linux-}\$" | tail -1)
         local _esp=""
         # Detectar punto de montaje de la ESP
         for _candidate in /efi /boot/efi /boot; do
@@ -97,7 +129,6 @@ _update_bootloader() {
         done
 
         if [[ -n "$_kver" && -n "$_esp" ]]; then
-            local _pkgbase="linux-avalos"
             local _dest="$_esp/AvalOS"
             mkdir -p "$_dest"
 
@@ -122,6 +153,21 @@ _update_bootloader() {
             # Antes el script copiaba vmlinuz+initramfs pero nunca tocaba la entrada
             # .conf, por lo que si el kernel release string cambió entre versiones,
             # el menú de boot seguía apuntando a la versión anterior.
+            #
+            # NOTA: el nombre de archivo es literal "avalos.conf" para las 3
+            # variantes (avalos/bore/compat) — INTENCIONAL, no un bug. El
+            # instalador (skill_instalar_usb.py) siempre escribe la entrada
+            # inicial como "avalos.conf", sin importar qué variante se instaló,
+            # y solo resuelve/instala UNA variante de kernel por sistema (con
+            # fallback entre ellas, nunca múltiples a la vez). Las 3 variantes
+            # además declaran conflicts=() entre sí en el PKGBUILD, por lo que
+            # pacman nunca permite tenerlas instaladas simultáneamente — no
+            # existe el escenario "avalos + bore coexistiendo". Derivar este
+            # nombre de _pkgbase (intento anterior) rompía precisamente el
+            # caso real de TRANSICIÓN entre variantes (ej. activar BORE más
+            # tarde vía pacman): buscaría "avalos-bore.conf", que el instalador
+            # nunca crea con ese nombre, dejando la entrada real "avalos.conf"
+            # sin actualizar tras el cambio de variante.
             local _entry="$_esp/loader/entries/avalos.conf"
             if [[ -f "$_entry" ]]; then
                 # BUG-01 FIX: actualizar título Y rutas de kernel/initrd en la entrada .conf.
@@ -138,7 +184,7 @@ _update_bootloader() {
                 echo "[INFO] Entrada de systemd-boot no encontrada en ${_entry}"
                 echo "       El instalador de AvalOS la crea durante la instalación inicial."
                 echo "       Si instalaste manualmente, crea la entrada con:"
-                echo "         /boot/efi/loader/entries/avalos.conf"
+                echo "         ${_entry}"
             fi
 
             # Copiar microcode si existe

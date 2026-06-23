@@ -19,13 +19,13 @@ on:
     - cron: "0 3 * * 1"
 
 env:
-  GITHUB_REPO: jeffreysama/avalos
+  AVALOS_REPO: jeffreysama/avalos
   REPO_TAG: repo
   MARCH: x86-64-v3
-  MARCH_COMPAT: x86-64   # Para CPUs sin AVX2: Celeron N-series, Pentium Silver, hardware antiguo
+  MARCH_COMPAT: x86-64-v2   # x86-64-v2: Celeron N-series, Pentium Silver (SSE4.2+AVX, sin AVX2)
   PKGBUILD_DIR: pkgs/linux-avalos
   # Version de fallback — se actualiza manualmente si kernel.org no responde
-  FALLBACK_KERNEL_VER: "7.0.10"
+  FALLBACK_KERNEL_VER: "7.0.11"
 
 jobs:
   check-version:
@@ -83,7 +83,7 @@ jobs:
           fi
 
           EXISTING=$(gh release view "${{ env.REPO_TAG }}" \
-            --repo "${{ env.GITHUB_REPO }}" \
+            --repo "${{ env.AVALOS_REPO }}" \
             --json assets \
             --jq ".assets[].name" 2>/dev/null \
             | grep "linux-avalos-${KERNEL_VER}" || true)
@@ -104,7 +104,11 @@ jobs:
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     container:
-      image: archlinux:latest
+      image: archlinux:base-devel
+      # NOTA: 'archlinux:base-devel' es la imagen oficial con herramientas de compilación.
+      # Si necesitas builds 100% reproducibles, fija una imagen con digest SHA256:
+      # image: archlinux@sha256:<digest>
+      # Puedes obtener el digest con: docker pull archlinux:base-devel && docker inspect archlinux:base-devel
       options: --privileged
     steps:
       - name: Instalar dependencias de build
@@ -121,7 +125,7 @@ jobs:
             github-cli
 
       - name: Checkout del repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Crear usuario builder
         run: |
@@ -186,6 +190,16 @@ jobs:
           sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-bore|' "$BORE_DIR/PKGBUILD"
           sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-bore linux-avalos-bore-headers)|' "$BORE_DIR/PKGBUILD"
 
+          # NOTA: ya NO se necesita un sed para CONFIG_LOCALVERSION aquí.
+          # El PKGBUILD deriva _expected_lv="-${pkgbase#linux-}" automáticamente
+          # dentro de prepare() (ver PKGBUILD), así que basta con que pkgbase
+          # ya esté renombrado (sed de la línea anterior) para que bore obtenga
+          # "-avalos-bore" sin necesidad de tocar CONFIG_LOCALVERSION aquí.
+          # (Antes había un sed 's|CONFIG_LOCALVERSION "-avalos"|...|' en este
+          # punto, pero ese patrón literal ya no existe en el PKGBUILD desde
+          # que el check se volvió dinámico — el sed se había quedado huérfano,
+          # sin ningún efecto real, solo generando confusión.)
+
           # Renombrar las funciones package_() para que coincidan con los nuevos pkgname.
           # makepkg busca package_<pkgname>() — si no existen, falla con exit code 12.
           # Importante: renombrar primero -headers para no hacer match parcial con la siguiente línea.
@@ -197,7 +211,20 @@ jobs:
           # Se reescribe para que bore conflictúe con linux-avalos (no con sí mismo).
           sed -i 's|conflicts=(\"linux-avalos-compat\" \"linux-avalos-compat-headers\" \"linux-avalos-bore\" \"linux-avalos-bore-headers\")|conflicts=(\"linux-avalos\" \"linux-avalos-headers\" \"linux-avalos-compat\" \"linux-avalos-compat-headers\")|' "$BORE_DIR/PKGBUILD"
 
-          BORE_URL="https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/stable/linux-${MAJOR}.${MINOR}-bore.patch"
+          # FIX: generar linux-avalos-bore.install a partir de linux-avalos.install.
+          # Sin esto, install=linux-avalos.install sigue apuntando al .install de la
+          # base, que llama "mkinitcpio -p linux-avalos" (preset inexistente para
+          # esta variante → mkinitcpio falla → _update_bootloader se salta por
+          # completo, incluso para GRUB/rEFInd) y usa _pkgbase="linux-avalos"
+          # (busca /boot/vmlinuz-linux-avalos, que no existe para bore).
+          # Reemplazamos todas las ocurrencias de "linux-avalos" por "linux-avalos-bore"
+          # (orden: primero -headers no aplica aquí, el .install no la menciona).
+          cp "$BORE_DIR/linux-avalos.install" "$BORE_DIR/linux-avalos-bore.install"
+          sed -i 's|linux-avalos|linux-avalos-bore|g' "$BORE_DIR/linux-avalos-bore.install"
+          rm -f "$BORE_DIR/linux-avalos.install"
+          sed -i 's|^install=linux-avalos\.install$|install=linux-avalos-bore.install|' "$BORE_DIR/PKGBUILD"
+
+          BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${MAJOR}.${MINOR}/sched/0001-bore-cachy.patch"
           if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
              && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
             echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
@@ -210,11 +237,16 @@ jobs:
               echo "[WARN] No se encontró \"config\" en source=() — patch no insertado, build sin BORE"
             fi
 
-            # FIX: reemplazar la línea completa de sha256sums en lugar de intentar
-            # insertar dentro del bloque multilinea. El sed anterior con rango
-            # /^sha256sums/,/^)/ fallaba cuando sha256sums estaba en una sola línea,
-            # dejando el conteo de fuentes vs checksums desajustado y rompiendo makepkg.
-            sed -i "s|^sha256sums=(.*)|sha256sums=('SKIP' 'SKIP' 'SKIP')|" "$BORE_DIR/PKGBUILD"
+            # FIX (v2): el sha256sums en el PKGBUILD es multilinea:
+            #   sha256sums=(
+            #       'SKIP'
+            #       'SKIP'
+            #   )
+            # El sed anterior "s|^sha256sums=(.*)|...|" solo reemplazaba la primera línea,
+            # dejando las líneas 'SKIP' y el ) sueltos → syntax error en bash al ejecutar makepkg.
+            # Solución: borrar el bloque completo con un rango sed y luego appendear la línea nueva.
+            sed -i '/^sha256sums=(/,/^)/d' "$BORE_DIR/PKGBUILD"
+            printf "\nsha256sums=('SKIP' 'SKIP' 'SKIP')\n" >> "$BORE_DIR/PKGBUILD"
             echo "sha256sums actualizado con entrada para bore-scheduler.patch"
           else
             echo "Parche BORE no disponible - usara EEVDF con HZ=1000"
@@ -233,11 +265,11 @@ jobs:
               makepkg -s --noconfirm --needed --skippgpcheck
             '
 
-      # ── linux-avalos-compat: x86-64 baseline ──────────────────────────────
-      # Para CPUs sin AVX2: Intel Celeron N-series (Jasper Lake, Gemini Lake),
-      # Pentium Silver, hardware antiguo, VMs sin extensiones modernas.
-      # Mismas configs que linux-avalos pero compilado con -march=x86-64.
-      - name: Compilar linux-avalos-compat (x86-64 baseline)
+      # ── linux-avalos-compat: x86-64-v2 ───────────────────────────────────
+      # Para CPUs con SSE4.2+AVX pero sin AVX2: Intel Celeron N-series (Jasper Lake, Gemini Lake),
+      # Pentium Silver, y hardware similar. x86-64-v2 = SSE4.2, AVX, POPCNT, LAHF/SAHF.
+      # Mismas configs que linux-avalos pero compilado con -march=x86-64-v2.
+      - name: Compilar linux-avalos-compat (x86-64-v2)
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           JOBS=$(nproc)
@@ -250,12 +282,23 @@ jobs:
           sed -i 's|^pkgbase=linux-avalos$|pkgbase=linux-avalos-compat|' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|pkgname=(linux-avalos linux-avalos-headers)|pkgname=(linux-avalos-compat linux-avalos-compat-headers)|' "$COMPAT_DIR/PKGBUILD"
 
+          # NOTA: ya NO se necesita un sed para CONFIG_LOCALVERSION aquí —
+          # mismo motivo que en linux-avalos-bore (ver arriba): el PKGBUILD
+          # deriva _expected_lv de pkgbase automáticamente dentro de prepare().
+
           # Renombrar funciones package_()
           sed -i 's|^package_linux-avalos-headers()|package_linux-avalos-compat-headers()|' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|^package_linux-avalos()|package_linux-avalos-compat()|' "$COMPAT_DIR/PKGBUILD"
 
-          # provides: compat no provee "linux=" para evitar sobreescrituras con DKMS
-          sed -i 's|provides=(\"linux=\${pkgver}\" \"linux-avalos=\${pkgver}\")|provides=(\"linux-avalos-compat=\${pkgver}\")|' "$COMPAT_DIR/PKGBUILD"
+          # BUG-M4 FIX: el sed anterior buscaba dos entries que no existen en el PKGBUILD.
+          # El PKGBUILD solo tiene provides=("linux=${pkgver}") — una sola entry.
+          # El sed con dos entries nunca hacía match → provides= no cambiaba.
+          # Efecto en cadena: el sed de conflicts= (línea siguiente) busca
+          # "linux-avalos-compat" en provides=, que nunca aparecía → conflicts=
+          # tampoco se insertaba, quedando el paquete sin conflicts= tras haberlos
+          # borrado con el sed anterior.
+          # Fix: buscar solo la entry que realmente existe en el PKGBUILD.
+          sed -i 's|provides=(\"linux=\${pkgver}\")|provides=(\"linux-avalos-compat=\${pkgver}\")|' "$COMPAT_DIR/PKGBUILD"
 
           # M-3 FIX: eliminar conflicts=() heredado antes de insertar el correcto.
           # Sin esto, compat queda con dos conflicts=() y el primero conflictúa consigo mismo.
@@ -263,13 +306,24 @@ jobs:
           # conflicts: compat no puede coexistir con linux-avalos (misma ruta de módulos)
           sed -i '/provides=.*linux-avalos-compat/a\    conflicts=("linux-avalos" "linux-avalos-bore" "linux-avalos-headers" "linux-avalos-bore-headers")' "$COMPAT_DIR/PKGBUILD"
 
-          # Actualizar pkgdesc
-          sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64 baseline, AMD+Intel, EEVDF (Celeron N/Pentium Silver/hardware antiguo)|g' "$COMPAT_DIR/PKGBUILD"
+          # FIX: generar linux-avalos-compat.install a partir de linux-avalos.install.
+          # Mismo problema y misma solución que en linux-avalos-bore (ver arriba):
+          # install=linux-avalos.install seguiría apuntando al .install de la base,
+          # cuyo "mkinitcpio -p linux-avalos" y _pkgbase="linux-avalos" no existen
+          # para esta variante, rompiendo _update_bootloader incluso para GRUB/rEFInd.
+          cp "$COMPAT_DIR/linux-avalos.install" "$COMPAT_DIR/linux-avalos-compat.install"
+          sed -i 's|linux-avalos|linux-avalos-compat|g' "$COMPAT_DIR/linux-avalos-compat.install"
+          rm -f "$COMPAT_DIR/linux-avalos.install"
+          sed -i 's|^install=linux-avalos\.install$|install=linux-avalos-compat.install|' "$COMPAT_DIR/PKGBUILD"
 
-          # FIX: desactivar CONFIG_GENERIC_CPU3 en el PKGBUILD copiado.
-          # Sin esto, aunque KCFLAGS use -march=x86-64, el Kconfig interno
-          # añade -march=x86-64-v3 y el kernel compat termina siendo v3 igual.
-          sed -i 's|-e CONFIG_GENERIC_CPU3|-e CONFIG_GENERIC_CPU1|g' "$COMPAT_DIR/PKGBUILD"
+          # Actualizar pkgdesc
+          sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v2, AMD+Intel, EEVDF (Celeron N/Pentium Silver, sin AVX2)|g' "$COMPAT_DIR/PKGBUILD"
+
+          # Cambiar a x86-64-v2: CONFIG_GENERIC_CPU2 activa SSE4.2, AVX, POPCNT, LAHF/SAHF.
+          # El sed reemplaza TODAS las ocurrencias de CONFIG_GENERIC_CPU3 en el PKGBUILD copiado:
+          # el scripts/config de prepare(), el check de verificación al final, y los mensajes de log.
+          # Sin esta sustitución global el check del PKGBUILD fallaría al buscar CPU3 en lugar de CPU2.
+          sed -i 's|CONFIG_GENERIC_CPU3|CONFIG_GENERIC_CPU2|g' "$COMPAT_DIR/PKGBUILD"
 
           echo "PKGBUILD compat generado:"
           grep -E "^pkg(base|name|ver|rel)" "$COMPAT_DIR/PKGBUILD"
@@ -339,12 +393,12 @@ jobs:
 
           gh release upload "${{ env.REPO_TAG }}" \
             "${ALL_FILES[@]}" \
-            --repo "${{ env.GITHUB_REPO }}" \
+            --repo "${{ env.AVALOS_REPO }}" \
             --clobber
 
           echo "upload_ok=true" >> "$GITHUB_ENV"
           echo "Publicado en:"
-          echo "https://github.com/${{ env.GITHUB_REPO }}/releases/tag/${{ env.REPO_TAG }}"
+          echo "https://github.com/${{ env.AVALOS_REPO }}/releases/tag/${{ env.REPO_TAG }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -355,7 +409,7 @@ jobs:
           echo "Limpiando paquetes de versiones anteriores..."
           CURRENT_FILES=$(ls /tmp/avalos-repo/*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || true)
           gh release view "${{ env.REPO_TAG }}" \
-            --repo "${{ env.GITHUB_REPO }}" \
+            --repo "${{ env.AVALOS_REPO }}" \
             --json assets \
             --jq '.assets[].name' 2>/dev/null \
             | grep '\.pkg\.tar\.zst$' \
@@ -364,7 +418,7 @@ jobs:
               if ! echo "$CURRENT_FILES" | grep -qxF "$asset"; then
                 echo "  Eliminando obsoleto: $asset"
                 gh release delete-asset "${{ env.REPO_TAG }}" "$asset" \
-                  --repo "${{ env.GITHUB_REPO }}" -y 2>/dev/null || true
+                  --repo "${{ env.AVALOS_REPO }}" -y 2>/dev/null || true
               fi
             done
         env:
@@ -372,7 +426,7 @@ jobs:
 
       - name: Guardar logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-logs-${{ needs.check-version.outputs.kernel_ver }}
           path: |
@@ -400,5 +454,5 @@ jobs:
           echo "| Arquitectura | x86-64-v3 (AMD+Intel) |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Compilador | Clang/LLVM + ThinLTO |" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$BUILD_RESULT" == "success" ]]; then
-            echo "Publicado en: https://github.com/${{ env.GITHUB_REPO }}/releases/tag/${{ env.REPO_TAG }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Publicado en: https://github.com/${{ env.AVALOS_REPO }}/releases/tag/${{ env.REPO_TAG }}" >> "$GITHUB_STEP_SUMMARY"
           fi

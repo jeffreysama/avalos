@@ -6,9 +6,14 @@
   border: none;
   border-radius: 0;
   min-height: 0;
-  /* BUG-1 FIX: box-sizing ausente globalmente.
-   * Sin border-box, padding y border se suman al tamaño declarado,
-   * causando que módulos con padding se desborden de la barra. */
+  /* NOTA (comentario corregido): box-sizing NO está en la lista oficial de
+   * propiedades CSS soportadas por GTK (docs.gtk.org/gtk3/css-properties.html
+   * — sección "Box properties" solo lista min-width/min-height/margin-*/padding-*).
+   * GTK ignora esta línea silenciosamente (las propiedades desconocidas no
+   * rompen el resto del CSS), así que no causa daño, pero tampoco previene
+   * el desborde de módulos con padding como se afirmaba — eso se controla
+   * con min-height/padding ajustados directamente en cada módulo. Se deja
+   * la línea por si una versión futura de GTK la soporta. */
   box-sizing: border-box;
 }
 
@@ -107,6 +112,13 @@ tooltip label {
   transition: color 0.3s ease;
 }
 
+/* BUG-20 FIX: #memory sin estados warning/critical — inconsistente con
+ * #cpu que sí los tiene. Sin estos, la memoria al límite no da ninguna
+ * señal visual (al contrario que CPU). Los umbrales los define waybar.conf
+ * (states: { warning: 80, critical: 90 } en el módulo memory). */
+#memory.warning  { color: #e0af68; }
+#memory.critical { color: #f7768e; }
+
 #battery             { color: #9ece6a; padding: 0 8px; }  /* verde: batería normal */
 #battery.warning     { color: #e0af68; }                  /* naranja: batería baja  */
 #battery.charging    { color: #9ece6a; }
@@ -139,7 +151,14 @@ tooltip label {
 
 @keyframes blink {
   from { color: #f7768e; }
-  to   { color: #1a1b26; background: #f7768e; }
+  /* BUG-19 FIX: "background" es el shorthand CSS — GTK solo soporta
+   * "background-color" como propiedad individual (confirmado en la doc
+   * oficial de GTK CSS: docs.gtk.org/gtk3/css-overview.html y
+   * docs.gtk.org/gtk3/css-properties.html). Con "background", GTK
+   * ignoraba la declaración silenciosamente y el 'to' del ciclo quedaba
+   * con texto #1a1b26 sobre fondo #1a1b26 — literalmente invisible,
+   * en lugar del flash rojo deseado. */
+  to   { color: #1a1b26; background-color: #f7768e; }
 }
 
 #custom-powermenu {

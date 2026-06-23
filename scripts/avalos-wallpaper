@@ -1,96 +1,502 @@
-#!/usr/bin/env bash
-# ╔═══════════════════════════════════════════════════════════════════════╗
-# ║  avalos-wallpaper — Selector de fondo de pantalla AvalOS            ║
-# ║  Escanea directorios de imágenes y aplica vía hyprpaper.            ║
-# ║  Soporta: English · Español · 中文简体                               ║
-# ╚═══════════════════════════════════════════════════════════════════════╝
+#!/usr/bin/env python3
+# ── AvalOS — avalos-wallpaper ──────────────────────────────────────────────
+# Reescritura completa: antes era un menú de texto en rofi que identificaba
+# wallpapers por NOMBRE DE ARCHIVO. Con 3+ archivos del mismo nombre en
+# carpetas distintas, el reemplazo por substring de bash corrompía el menú
+# (display_list y la tabla de rutas quedaban desincronizados — probado y
+# reproducido en sandbox). Esta versión identifica cada wallpaper por su
+# RUTA COMPLETA (nunca por nombre) y muestra un preview real de cada uno,
+# así que el problema de nombres duplicados queda resuelto de raíz: dos
+# archivos "wallpaper.png" en carpetas distintas simplemente se ven como
+# dos tarjetas distintas con su propia imagen.
+#
+# También agrega selector de fit_mode (cover/contain/fill/tile), posible
+# porque hyprpaper se reescribió sobre hyprtoolkit (dic-2025/ene-2026) y
+# cambió su sintaxis de config — ver hyprpaper.conf para el detalle.
+#
+# Requiere: python-pywebview, webkit2gtk-4.1, python-gobject
+# (agregados a HYPRLAND_PKGS en skill_instalar_usb.py).
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
 
-LANG_CODE="${LANG%%_*}"
+try:
+    import webview
+except ImportError:
+    print("ERROR: pywebview no está instalado.")
+    print("Instala con: pacman -S python-pywebview webkit2gtk-4.1 python-gobject")
+    sys.exit(1)
 
-case "$LANG_CODE" in
-  es) PROMPT="  Elige fondo de pantalla" ; MSG_NONE="No se encontraron imágenes en los directorios de wallpapers." ; MSG_OK="Fondo aplicado:" ;;
-  zh) PROMPT="  选择壁纸"                ; MSG_NONE="未找到壁纸文件。"                                          ; MSG_OK="壁纸已更换："   ;;
-  *)  PROMPT="  Choose wallpaper"        ; MSG_NONE="No wallpaper images found."                                 ; MSG_OK="Wallpaper set:"  ;;
-esac
+HOME = Path.home()
+HYPR_DIR = HOME / ".config" / "hypr"
+HYPR_CONF = HYPR_DIR / "hyprpaper.conf"
 
-# ── Directorios donde buscar wallpapers ───────────────────────────────────
-WALLPAPER_DIRS=(
-    "$HOME/.local/share/wallpapers"
-    "$HOME/Pictures"
-    "$HOME/Imágenes"
-    "$HOME/Images"
-    "/usr/share/backgrounds"
-    "/usr/share/wallpapers"
-)
+WALLPAPER_DIRS = [
+    HOME / "Pictures" / "Wallpapers",
+    HOME / "Pictures" / "wallpapers",
+    HOME / ".local" / "share" / "avalos" / "wallpapers",
+    Path("/usr/share/avalos/wallpapers"),
+    Path("/usr/share/backgrounds"),
+]
+EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_DEPTH = 4
+FIT_MODES = ("cover", "contain", "fill", "tile")
 
-# ── Recolectar archivos de imagen ─────────────────────────────────────────
-mapfile -t WALLPAPERS < <(
-    for dir in "${WALLPAPER_DIRS[@]}"; do
-        [[ -d "$dir" ]] && find "$dir" -maxdepth 4 -type f \
-            \( -iname "*.jpg"  -o -iname "*.jpeg" \
-               -o -iname "*.png" -o -iname "*.webp" \) \
-            2>/dev/null
-    done | sort -u
-)
+# ── i18n — autocontenido, mismo patrón que avalos-about/avalos-settings ────
+_lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+LANG = _lang_raw if _lang_raw in ("es", "zh") else "en"
 
-if [[ ${#WALLPAPERS[@]} -eq 0 ]]; then
-    notify-send "AvalOS Wallpaper" "$MSG_NONE
-Copia imágenes a ~/.local/share/wallpapers/" \
-        -i preferences-desktop-wallpaper -t 6000 2>/dev/null || true
-    exit 0
-fi
+STRINGS = {
+    "en": {
+        "title": "AvalOS — Wallpaper",
+        "found_one": "{n} wallpaper found",
+        "found_many": "{n} wallpapers found",
+        "fit-cover": "Cover", "fit-cover-d": "Fills the screen, crops edges",
+        "fit-contain": "Contain", "fit-contain-d": "Shows it whole, may add bars",
+        "fit-fill": "Stretch", "fit-fill-d": "Stretches to fit, may distort",
+        "fit-tile": "Tile", "fit-tile-d": "Repeats the image",
+        "empty-title": "No wallpapers found",
+        "empty-body": "Add images to ~/Pictures/Wallpapers and reopen this.",
+        "applying": "Applying…",
+        "applied": "Wallpaper applied",
+        "err-notfound": "File no longer exists",
+        "err-write": "Couldn't write hyprpaper.conf",
+        "err-restart": "Couldn't restart hyprpaper",
+        "current-badge": "Current",
+    },
+    "es": {
+        "title": "AvalOS — Fondo de pantalla",
+        "found_one": "{n} fondo encontrado",
+        "found_many": "{n} fondos encontrados",
+        "fit-cover": "Cubrir", "fit-cover-d": "Llena la pantalla, recorta bordes",
+        "fit-contain": "Ajustar", "fit-contain-d": "Se ve completa, puede dejar barras",
+        "fit-fill": "Estirar", "fit-fill-d": "Estira para llenar, puede distorsionar",
+        "fit-tile": "Mosaico", "fit-tile-d": "Repite la imagen",
+        "empty-title": "No se encontraron fondos",
+        "empty-body": "Agrega imágenes a ~/Pictures/Wallpapers y vuelve a abrir esto.",
+        "applying": "Aplicando…",
+        "applied": "Fondo aplicado",
+        "err-notfound": "El archivo ya no existe",
+        "err-write": "No se pudo escribir hyprpaper.conf",
+        "err-restart": "No se pudo reiniciar hyprpaper",
+        "current-badge": "Actual",
+    },
+    "zh": {
+        "title": "AvalOS — 壁纸",
+        "found_one": "找到 {n} 张壁纸",
+        "found_many": "找到 {n} 张壁纸",
+        "fit-cover": "覆盖", "fit-cover-d": "填满屏幕，裁剪边缘",
+        "fit-contain": "适应", "fit-contain-d": "完整显示，可能留边",
+        "fit-fill": "拉伸", "fit-fill-d": "拉伸填充，可能变形",
+        "fit-tile": "平铺", "fit-tile-d": "重复图像",
+        "empty-title": "未找到壁纸",
+        "empty-body": "请将图片添加到 ~/Pictures/Wallpapers 后重新打开此应用。",
+        "applying": "应用中…",
+        "applied": "壁纸已应用",
+        "err-notfound": "文件已不存在",
+        "err-write": "无法写入 hyprpaper.conf",
+        "err-restart": "无法重启 hyprpaper",
+        "current-badge": "当前",
+    },
+}
+T = STRINGS[LANG]
 
-# ── Mostrar menú rofi con nombres de archivo ──────────────────────────────
-# Guardamos la lista original para recuperar la ruta completa después.
-# Usamos solo el nombre de archivo para el menú (más limpio).
-declare -A NAME_TO_PATH
-display_list=()
-for path in "${WALLPAPERS[@]}"; do
-    name=$(basename "$path")
-    NAME_TO_PATH["$name"]="$path"
-    display_list+=("$name")
-done
 
-chosen_name=$(printf '%s\n' "${display_list[@]}" \
-    | rofi -dmenu \
-           -i \
-           -no-custom \
-           -p "$PROMPT" \
-           -theme-str 'window {width: 480px;} listview {lines: 12;}')
+# ── Escaneo de wallpapers ───────────────────────────────────────────────
+def _walk_limited(base: Path, max_depth: int):
+    if not base.is_dir():
+        return
+    base_depth = len(base.resolve().parts)
+    for root, dirs, files in os.walk(base, followlinks=False):
+        depth = len(Path(root).parts) - base_depth
+        if depth >= max_depth:
+            dirs[:] = []
+        for fn in files:
+            p = Path(root) / fn
+            if p.suffix.lower() in EXTS:
+                yield p
 
-[[ -z "$chosen_name" ]] && exit 0
 
-WALLPAPER_PATH="${NAME_TO_PATH[$chosen_name]}"
+def list_wallpapers():
+    """Dedup por RUTA COMPLETA resuelta — nunca por nombre. Esto es lo que
+    elimina de raíz el bug de colisión de nombres del bash original."""
+    seen = set()
+    items = []
+    for d in WALLPAPER_DIRS:
+        try:
+            candidates = sorted(_walk_limited(d, MAX_DEPTH))
+        except Exception:
+            continue
+        for p in candidates:
+            try:
+                rp = str(p.resolve())
+            except Exception:
+                continue
+            if rp in seen:
+                continue
+            seen.add(rp)
+            items.append({"path": rp, "name": p.name, "dir": p.parent.name})
+    items.sort(key=lambda x: (x["dir"].lower(), x["name"].lower()))
+    return items
 
-if [[ -z "$WALLPAPER_PATH" || ! -f "$WALLPAPER_PATH" ]]; then
-    notify-send "AvalOS Wallpaper" "❌ No se encontró: $chosen_name" -i error -t 3000 2>/dev/null || true
-    exit 1
-fi
 
-# ── Actualizar hyprpaper.conf ─────────────────────────────────────────────
-HYPR_CONF="$HOME/.config/hypr/hyprpaper.conf"
-mkdir -p "$(dirname "$HYPR_CONF")"
+# ── Estado actual (leer hyprpaper.conf existente) ───────────────────────
+_BLOCK_RE = re.compile(r"wallpaper\s*\{([^}]*)\}", re.S)
+_PATH_RE = re.compile(r"^\s*path\s*=\s*(.+?)\s*$", re.M)
+_FIT_RE = re.compile(r"^\s*fit_mode\s*=\s*(\w+)\s*$", re.M)
 
-cat > "$HYPR_CONF" << EOF
-# AvalOS hyprpaper.conf — generado por avalos-wallpaper
-# $(date)
-preload   = $WALLPAPER_PATH
-wallpaper = ,$WALLPAPER_PATH
-splash    = false
-EOF
 
-# ── Aplicar sin reiniciar si hyprpaper ya corre (Hyprland IPC) ───────────
-# Intentar primero via IPC (hyprctl); si falla, restart completo.
-if hyprctl hyprpaper preload "$WALLPAPER_PATH" &>/dev/null && \
-   hyprctl hyprpaper wallpaper ",$WALLPAPER_PATH" &>/dev/null; then
-    : # IPC funcionó — wallpaper aplicado en vivo
-else
-    # Fallback: reiniciar hyprpaper
-    pkill hyprpaper 2>/dev/null || true
-    sleep 0.3
-    hyprpaper &
-    disown
-fi
+def _current_state():
+    if not HYPR_CONF.is_file():
+        return None, "cover"
+    try:
+        text = HYPR_CONF.read_text(encoding="utf-8")
+    except Exception:
+        return None, "cover"
+    m = _BLOCK_RE.search(text)
+    if not m:
+        return None, "cover"
+    block = m.group(1)
+    path, fit = None, "cover"
+    pm = _PATH_RE.search(block)
+    if pm:
+        try:
+            path = str(Path(os.path.expanduser(pm.group(1))).resolve())
+        except Exception:
+            path = None
+    fm = _FIT_RE.search(block)
+    if fm and fm.group(1) in FIT_MODES:
+        fit = fm.group(1)
+    return path, fit
 
-notify-send "AvalOS Wallpaper" "$MSG_OK $chosen_name" \
-    -i preferences-desktop-wallpaper -t 2000 2>/dev/null || true
+
+# ── API expuesta a JS vía pywebview ─────────────────────────────────────
+class WallpaperAPI:
+    def list(self):
+        cur_path, cur_fit = _current_state()
+        return json.dumps({
+            "items": list_wallpapers(),
+            "current": cur_path,
+            "fit_mode": cur_fit,
+            "strings": T,
+        })
+
+    def apply(self, path, fit_mode):
+        if fit_mode not in FIT_MODES:
+            fit_mode = "cover"
+        p = Path(path)
+        if not p.is_file():
+            return json.dumps({"ok": False, "message": T["err-notfound"]})
+
+        try:
+            HYPR_DIR.mkdir(parents=True, exist_ok=True)
+            content = (
+                "# Generado por avalos-wallpaper — no editar a mano,\n"
+                "# se sobreescribe cada vez que cambiás de fondo.\n"
+                "wallpaper {\n"
+                "    monitor =\n"
+                f"    path = {p}\n"
+                f"    fit_mode = {fit_mode}\n"
+                "}\n\nsplash = false\nipc = on\n"
+            )
+            HYPR_CONF.write_text(content, encoding="utf-8")
+        except Exception as e:
+            return json.dumps({"ok": False, "message": f"{T['err-write']}: {e}"})
+
+        # Intento 1: aplicar en caliente vía IPC (sin matar el proceso)
+        live_ok = False
+        try:
+            r = subprocess.run(
+                ["hyprctl", "hyprpaper", "wallpaper", f",{p},{fit_mode}"],
+                capture_output=True, timeout=5, text=True,
+            )
+            live_ok = (r.returncode == 0)
+        except Exception:
+            live_ok = False
+
+        # Fallback: reiniciar hyprpaper si el IPC no respondió (daemon caído,
+        # socket no disponible, etc.) — relee hyprpaper.conf ya actualizado.
+        if not live_ok:
+            subprocess.run(["pkill", "-x", "hyprpaper"], capture_output=True)
+            try:
+                subprocess.Popen(
+                    ["hyprpaper"], start_new_session=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception as e:
+                return json.dumps({"ok": False, "message": f"{T['err-restart']}: {e}"})
+
+        subprocess.run(
+            ["notify-send", "AvalOS", f"{T['applied']}: {p.name}",
+             "-i", "preferences-desktop-wallpaper", "-t", "2500"],
+            capture_output=True,
+        )
+        return json.dumps({"ok": True, "message": T["applied"], "live": live_ok})
+
+
+# ── HTML/CSS/JS embebido (mismo patrón que skill_instalar_usb.py) ──────────
+def _build_html():
+    return r"""<!DOCTYPE html>
+<html lang="LANG_PLACEHOLDER">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
+    --border: #414868; --text: #c0caf5; --text-dim: #565f89;
+    --blue: #7aa2f7; --purple: #bb9af7; --green: #9ece6a; --red: #f7768e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
+    overflow: hidden; height: 100%; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  header { padding: 16px 22px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; justify-content: space-between; flex-shrink: 0; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header .count { font-size: 11.5px; color: var(--text-dim); }
+
+  .fitbar { display: flex; gap: 8px; padding: 12px 22px; border-bottom: 1px solid var(--border);
+    flex-shrink: 0; }
+  .fit-btn { display: flex; align-items: center; gap: 8px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 9px; color: var(--text-dim);
+    padding: 7px 12px 7px 9px; cursor: pointer; font-family: inherit; font-size: 12px;
+    transition: border-color .15s, color .15s, background .15s; }
+  .fit-btn:hover { color: var(--text); border-color: #565f89; }
+  .fit-btn.active { color: var(--bg); background: linear-gradient(135deg, var(--blue), var(--purple));
+    border-color: transparent; font-weight: 600; }
+  .fit-btn svg { width: 18px; height: 13px; flex-shrink: 0; }
+  .fit-btn .lbl { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.25; }
+  .fit-btn .lbl .d { font-size: 9.5px; opacity: .75; font-weight: 400; }
+
+  .grid-wrap { flex: 1; overflow-y: auto; padding: 18px 22px 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+
+  .card { cursor: pointer; border-radius: 10px; overflow: hidden; background: var(--surface);
+    border: 2px solid transparent; transition: transform .12s, border-color .12s; }
+  .card:hover { transform: translateY(-2px); }
+  .card.selected { border-color: var(--blue); box-shadow: 0 0 0 1px var(--purple); }
+  .thumb-wrap { position: relative; aspect-ratio: 16/10; background: var(--bg-alt); }
+  .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .check { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue), var(--purple)); color: var(--bg);
+    display: none; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .card.selected .check { display: flex; }
+  .meta { padding: 7px 9px 8px; display: flex; flex-direction: column; gap: 1px; }
+  .fname { font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fdir { font-size: 9.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .empty { text-align: center; margin-top: 14vh; color: var(--text-dim); }
+  .empty .big { font-size: 30px; margin-bottom: 10px; }
+  .empty .t { font-size: 14px; color: var(--text); margin-bottom: 6px; font-weight: 600; }
+  .empty .b { font-size: 12px; max-width: 360px; margin: 0 auto; line-height: 1.5; }
+  .empty code { background: var(--surface); padding: 2px 6px; border-radius: 5px; color: var(--blue); }
+
+  footer { padding: 10px 22px; border-top: 1px solid var(--border); flex-shrink: 0;
+    font-size: 11.5px; color: var(--text-dim); min-height: 17px; }
+  footer.ok { color: var(--green); }
+  footer.err { color: var(--red); }
+  footer.pending { color: var(--blue); }
+
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-hi); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>AvalOS — <span class="accent">TITLE_PLACEHOLDER</span></h1>
+    <span class="count" id="count"></span>
+  </header>
+  <div class="fitbar" id="fitbar"></div>
+  <div class="grid-wrap"><div class="grid" id="grid"></div></div>
+  <footer id="status"></footer>
+</div>
+
+<script>
+let T = {};
+let STATE = { items: [], current: null, fit_mode: 'cover' };
+
+const FIT_ICONS = {
+  cover:   '<svg viewBox="0 0 18 13"><rect x="0.5" y="0.5" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1"/><rect x="-2" y="1.5" width="22" height="10" fill="currentColor" opacity="0.85"/></svg>',
+  contain: '<svg viewBox="0 0 18 13"><rect x="0.5" y="0.5" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1"/><rect x="3" y="3" width="12" height="7" fill="currentColor" opacity="0.85"/></svg>',
+  fill:    '<svg viewBox="0 0 18 13"><rect x="0.5" y="0.5" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1"/><rect x="1.5" y="1.5" width="15" height="10" fill="currentColor" opacity="0.85"/></svg>',
+  tile:    '<svg viewBox="0 0 18 13"><rect x="0.5" y="0.5" width="17" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1"/>' +
+           '<rect x="1.5" y="1.5" width="7" height="5" fill="currentColor" opacity="0.85"/><rect x="9.5" y="1.5" width="7" height="5" fill="currentColor" opacity="0.55"/>' +
+           '<rect x="1.5" y="6.5" width="7" height="5" fill="currentColor" opacity="0.55"/><rect x="9.5" y="6.5" width="7" height="5" fill="currentColor" opacity="0.85"/></svg>',
+};
+
+function encodePath(p) {
+  return p.split('/').map(encodeURIComponent).join('/');
+}
+
+function setStatus(msg, kind) {
+  const el = document.getElementById('status');
+  el.textContent = msg || '';
+  el.className = kind || '';
+}
+
+function renderFitBar() {
+  const bar = document.getElementById('fitbar');
+  bar.innerHTML = '';
+  for (const mode of ['cover', 'contain', 'fill', 'tile']) {
+    const btn = document.createElement('button');
+    btn.className = 'fit-btn' + (STATE.fit_mode === mode ? ' active' : '');
+    btn.innerHTML = FIT_ICONS[mode];
+    const lbl = document.createElement('span');
+    lbl.className = 'lbl';
+    const main = document.createElement('span');
+    main.textContent = T['fit-' + mode];
+    const d = document.createElement('span');
+    d.className = 'd';
+    d.textContent = T['fit-' + mode + '-d'];
+    lbl.appendChild(main);
+    lbl.appendChild(d);
+    btn.appendChild(lbl);
+    btn.addEventListener('click', () => setFitMode(mode));
+    bar.appendChild(btn);
+  }
+}
+
+function renderGrid() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  const count = document.getElementById('count');
+
+  if (STATE.items.length === 0) {
+    count.textContent = '';
+    grid.style.display = 'block';
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.innerHTML = '<div class="big">🖼</div>' +
+      '<div class="t">' + T['empty-title'] + '</div>' +
+      '<div class="b">' + T['empty-body'].replace('~/Pictures/Wallpapers', '<code>~/Pictures/Wallpapers</code>') + '</div>';
+    grid.appendChild(empty);
+    return;
+  }
+
+  grid.style.display = 'grid';
+  count.textContent = (STATE.items.length === 1 ? T['found_one'] : T['found_many']).replace('{n}', STATE.items.length);
+
+  for (const it of STATE.items) {
+    const card = document.createElement('div');
+    card.className = 'card' + (it.path === STATE.current ? ' selected' : '');
+
+    const thumbWrap = document.createElement('div');
+    thumbWrap.className = 'thumb-wrap';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = it.name;
+    img.src = 'file://' + encodePath(it.path);
+    thumbWrap.appendChild(img);
+    const check = document.createElement('div');
+    check.className = 'check';
+    check.textContent = '✓';
+    thumbWrap.appendChild(check);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const fname = document.createElement('span');
+    fname.className = 'fname';
+    fname.textContent = it.name;
+    fname.title = it.name;
+    const fdir = document.createElement('span');
+    fdir.className = 'fdir';
+    fdir.textContent = it.dir;
+    meta.appendChild(fname);
+    meta.appendChild(fdir);
+
+    card.appendChild(thumbWrap);
+    card.appendChild(meta);
+    card.addEventListener('click', () => selectWallpaper(it.path));
+    grid.appendChild(card);
+  }
+}
+
+async function selectWallpaper(path) {
+  setStatus(T['applying'], 'pending');
+  try {
+    const raw = await window.pywebview.api.apply(path, STATE.fit_mode);
+    const res = JSON.parse(raw);
+    if (res.ok) {
+      STATE.current = path;
+      renderGrid();
+      setStatus(res.message, 'ok');
+    } else {
+      setStatus(res.message, 'err');
+    }
+  } catch (e) {
+    setStatus(String(e), 'err');
+  }
+}
+
+async function setFitMode(mode) {
+  STATE.fit_mode = mode;
+  renderFitBar();
+  if (STATE.current) {
+    await selectWallpaper(STATE.current);
+  }
+}
+
+async function init() {
+  const raw = await window.pywebview.api.list();
+  const data = JSON.parse(raw);
+  T = data.strings;
+  STATE.items = data.items;
+  STATE.current = data.current;
+  STATE.fit_mode = data.fit_mode || 'cover';
+  document.title = T['title'];
+  renderFitBar();
+  renderGrid();
+}
+
+window.addEventListener('pywebviewready', init);
+</script>
+</body>
+</html>"""
+
+
+def main():
+    html = (_build_html()
+            .replace("LANG_PLACEHOLDER", LANG)
+            .replace("TITLE_PLACEHOLDER", T["title"].split("— ", 1)[-1]))
+
+    # Mismo fix que el instalador (BUG-012): sin esto, GTK usa "python3"
+    # como app_id en Wayland y la window rule (class = "avalos-wallpaper")
+    # nunca matchea, así que la ventana no abre flotante/centrada.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-wallpaper")
+    except Exception:
+        pass
+
+    api = WallpaperAPI()
+    win = webview.create_window(
+        title            = T["title"],
+        html             = html,
+        js_api           = api,
+        width            = 1000,
+        height           = 700,
+        min_size         = (700, 500),
+        resizable        = True,
+        background_color = "#1a1b26",
+    )
+
+    try:
+        webview.start(debug=False)
+    except Exception as e:
+        print(f"ERROR al iniciar pywebview: {e}")
+        print("Asegúrate de que webkit2gtk-4.1 esté instalado:")
+        print("  pacman -S webkit2gtk-4.1 python-gobject")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

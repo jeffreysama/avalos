@@ -1,0 +1,17 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Name=AvalOS Settings
+Name[es]=Configuración de AvalOS
+Name[zh]=AvalOS 设置
+Comment=Configure your AvalOS system
+Comment[es]=Configura tu sistema AvalOS
+Comment[zh]=配置您的 AvalOS 系统
+Exec=avalos-settings
+Icon=preferences-system
+Terminal=false
+Type=Application
+Categories=Settings;System;
+Keywords=settings;config;system;appearance;network;
+Keywords[es]=configuración;ajustes;apariencia;red;sistema;
+Keywords[zh]=设置;配置;系统;外观;网络;
+StartupNotify=false

@@ -83,18 +83,28 @@
     "format": " {usage}%",
     "interval": 2,
     "tooltip": false,
+    // BUG-21 FIX: "states" ausente en cpu — style.css define #cpu.warning y
+    // #cpu.critical, pero sin states waybar nunca agrega esas clases al módulo
+    // y los colores de alerta no se aplican jamás. Mismo problema para memory
+    // (ver abajo). Los umbrales los define el módulo en waybar.conf, no style.css.
+    "states": { "warning": 70, "critical": 90 },
     // BUG-7 FIX: on-click ausente en cpu.
     // Clic en el módulo de CPU no hacía nada — útil para abrir htop.
-    "on-click": "kitty --title 'htop' htop"
+    // Agregado '--' para consistencia con el resto del proyecto (avalos-about,
+    // avalos-settings): kitty --title "..." -- <cmd>.
+    "on-click": "kitty --title 'htop' -- htop"
   },
 
   "memory": {
     "format": "󰍛 {used:.1f}G",
     "interval": 5,
+    // BUG-22 FIX: "states" ausente en memory — misma causa que cpu (BUG-21).
+    // style.css ya tiene #memory.warning y #memory.critical (agregados en BUG-20)
+    // pero sin states aquí no se activan nunca.
+    "states": { "warning": 80, "critical": 90 },
     // BUG-8 FIX: tooltip-format ausente en memory.
-    // Sin esto el tooltip de memoria no muestra info útil (% de swap, etc.)
     "tooltip-format": "RAM: {used:.1f}G / {total:.1f}G\nSwap: {swapUsed:.1f}G / {swapTotal:.1f}G",
-    "on-click": "kitty --title 'htop' htop"
+    "on-click": "kitty --title 'htop' -- htop"
   },
 
   "battery": {
@@ -107,8 +117,10 @@
     "format-full": "󰁹 Full",
     "states": { "warning": 30, "critical": 15 },
     // BUG-10 FIX: tooltip-format en battery.
-    // {cycles} y {health} NO son tokens válidos de waybar — siempre quedan vacíos.
-    // Tokens reales: {timeTo}, {power}, {capacity}, {status}, {icon}.
+    // {cycles} y {health} SÍ son tokens documentados de waybar, pero dependen
+    // de que el driver ACPI/sysfs de la batería los exponga — muchas laptops
+    // no lo hacen, y en ese hardware quedan vacíos. {timeTo}/{power}/{capacity}
+    // son universalmente soportados (siempre disponibles vía /sys/class/power_supply).
     "tooltip-format": "{timeTo}\n{power:.1f}W  ·  {capacity}%"
   },
 

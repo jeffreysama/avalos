@@ -51,10 +51,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "opt-pc":            "💾 PC / HDD / SSD",
         "opt-usb":           "🔌 Persistent USB",
         "opt-pc-desc":       "Btrfs with subvolumes — automatic snapshots, rollback from GRUB.",
-        "opt-usb-desc":      "ext4 on USB — persists across reboots.",
+        "opt-usb-desc":      "ext4 without journal + noatime — minimizes writes on the USB drive.",
         "opt-grub-desc":     "Universal. BIOS + UEFI, dual-boot. Btrfs snapshot menu at boot.",
         "chk-gaming-title":  "🎮 Gaming",
         "chk-gaming-desc":   "Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)",
+        "chk-bore-title":    "⚡ BORE Scheduler",
+        "chk-bore-desc":     "linux-avalos-bore kernel — better responsiveness in games. Requires a CPU with AVX2 (x86-64-v3+); if unsupported, it's ignored and the standard kernel is used.",
         "opt-sdboot-desc":   "UEFI only, fast. Snapshots via terminal — no visual boot menu.",
         "opt-refind-desc":   "UEFI only. Auto-detects kernels. Snapshots require manual config.",
         # Progress overlay
@@ -115,7 +117,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "step-aur":          "Installing AUR packages (yay)",
         "step-aur-d":        "microsoft-edge-stable-bin",
         "step-hypr":         "Configuring Hyprland + Wayland",
-        "step-hypr-d":       "SDDM · Waybar · hyprland.conf",
+        "step-hypr-d":       "SDDM · Waybar · hyprland.lua",
         "step-umount":       "Unmounting and finalizing",
         "step-umount-d":     "",
 
@@ -141,6 +143,24 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pm-logout":         "󰍃  Log Out",
         "pm-lock":           "  Lock",
         "pm-title":          "  Power Menu",
+        # SDDM login screen (Main.qml) — usa lbl-user/lbl-pass para los placeholders
+        "sddm-signin":       "Sign In",
+        "sddm-fail":         "Authentication failed. Try again.",
+        "sddm-session":      "Session",
+        "sddm-suspend":      "Suspend",
+        "sddm-restart":      "Restart",
+        "sddm-shutdown":     "Shutdown",
+        # Password requirement checklist (pg-config, real-time validation)
+        "req-len-ok":        "✓ 8+ characters",
+        "req-len-x":         "✗ 8+ characters",
+        "req-upper-ok":      "✓ Uppercase",
+        "req-upper-x":       "✗ Uppercase",
+        "req-lower-ok":      "✓ Lowercase",
+        "req-lower-x":       "✗ Lowercase",
+        "req-num-ok":        "✓ Number",
+        "req-num-x":         "✗ Number",
+        "req-sym-ok":        "✓ Symbol",
+        "req-sym-x":         "✗ Symbol",
         # Language selection page warning
         "lang-warning":      "⚠  UI language pack only · Mirrors are optimized for SV, US, MX & GT "
                              "— downloads may be slow for mainland China or regions far from these countries.",
@@ -185,10 +205,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "opt-pc":            "💾 PC / HDD / SSD",
         "opt-usb":           "🔌 USB Persistente",
         "opt-pc-desc":       "Btrfs con subvolúmenes — snapshots automáticos, rollback desde GRUB.",
-        "opt-usb-desc":      "ext4 en USB — persiste entre reinicios.",
+        "opt-usb-desc":      "ext4 sin journal + noatime — minimiza escrituras en el pendrive.",
         "opt-grub-desc":     "Universal. BIOS + UEFI, dual-boot. Menú de snapshots Btrfs en el arranque.",
         "chk-gaming-title":  "🎮 Gaming",
         "chk-gaming-desc":   "Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE (~2.5 GB extra)",
+        "chk-bore-title":    "⚡ Scheduler BORE",
+        "chk-bore-desc":     "Kernel linux-avalos-bore — mejor respuesta en juegos. Requiere CPU con AVX2 (x86-64-v3+); si no es compatible, se ignora y se usa el kernel estándar.",
         "opt-sdboot-desc":   "Solo UEFI, rápido. Snapshots vía terminal, sin menú visual en el arranque.",
         "opt-refind-desc":   "Solo UEFI. Detecta kernels automáticamente. Snapshots requieren config manual.",
 
@@ -247,7 +269,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "step-aur":          "Instalando paquetes AUR (yay)",
         "step-aur-d":        "microsoft-edge-stable-bin",
         "step-hypr":         "Configurando Hyprland + Wayland",
-        "step-hypr-d":       "SDDM · Waybar · hyprland.conf",
+        "step-hypr-d":       "SDDM · Waybar · hyprland.lua",
         "step-umount":       "Desmontando y finalizando",
         "step-umount-d":     "",
 
@@ -271,6 +293,24 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pm-logout":         "󰍃  Cerrar Sesión",
         "pm-lock":           "  Bloquear",
         "pm-title":          "  Menú de Energía",
+        # Pantalla de login SDDM (Main.qml) — usa lbl-user/lbl-pass para los placeholders
+        "sddm-signin":       "Iniciar Sesión",
+        "sddm-fail":         "Autenticación fallida. Intenta de nuevo.",
+        "sddm-session":      "Sesión",
+        "sddm-suspend":      "Suspender",
+        "sddm-restart":      "Reiniciar",
+        "sddm-shutdown":     "Apagar",
+        # Checklist de requisitos de contraseña (pg-config, validación en tiempo real)
+        "req-len-ok":        "✓ 8+ caracteres",
+        "req-len-x":         "✗ 8+ caracteres",
+        "req-upper-ok":      "✓ Mayúscula",
+        "req-upper-x":       "✗ Mayúscula",
+        "req-lower-ok":      "✓ Minúscula",
+        "req-lower-x":       "✗ Minúscula",
+        "req-num-ok":        "✓ Número",
+        "req-num-x":         "✗ Número",
+        "req-sym-ok":        "✓ Símbolo",
+        "req-sym-x":         "✗ Símbolo",
         # Advertencia en la pantalla de selección de idioma
         "lang-warning":      "⚠  Solo paquete de idioma · Los mirrors están optimizados para SV, US, MX y GT "
                              "— las descargas pueden ser lentas para China continental o regiones "
@@ -316,10 +356,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "opt-pc":            "💾 PC / HDD / SSD",
         "opt-usb":           "🔌 持久化 USB",
         "opt-pc-desc":       "Btrfs 子卷 — 自动快照，可从 GRUB 回滚。",
-        "opt-usb-desc":      "ext4 在 USB 上 — 重启后保留数据。",
+        "opt-usb-desc":      "ext4 无日志 + noatime — 最大限度减少对 U 盘的写入。",
         "opt-grub-desc":     "通用。BIOS + UEFI，双系统。启动时显示 Btrfs 快照菜单。",
         "chk-gaming-title":  "🎮 游戏",
         "chk-gaming-desc":   "Steam · Wine · DXVK · VKD3D · GameMode · MangoHUD · Lutris · Proton-GE（约 2.5 GB 额外空间）",
+        "chk-bore-title":    "⚡ BORE 调度器",
+        "chk-bore-desc":     "linux-avalos-bore 内核 — 游戏中响应更灵敏。需要支持 AVX2 的 CPU（x86-64-v3 及以上）；不支持时将被忽略，使用标准内核。",
         "opt-sdboot-desc":   "仅 UEFI，启动快。快照可通过终端使用，启动菜单无可视列表。",
         "opt-refind-desc":   "仅 UEFI。自动检测内核。快照需手动配置。",
 
@@ -378,7 +420,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "step-aur":          "安装 AUR 包 (yay)",
         "step-aur-d":        "microsoft-edge-stable-bin",
         "step-hypr":         "配置 Hyprland + Wayland",
-        "step-hypr-d":       "SDDM · Waybar · hyprland.conf",
+        "step-hypr-d":       "SDDM · Waybar · hyprland.lua",
         "step-umount":       "卸载并完成",
         "step-umount-d":     "",
 
@@ -402,6 +444,24 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pm-logout":         "󰍃  注销",
         "pm-lock":           "  锁屏",
         "pm-title":          "  电源",
+        # SDDM 登录界面 (Main.qml) — 占位符复用 lbl-user/lbl-pass
+        "sddm-signin":       "登录",
+        "sddm-fail":         "认证失败，请重试。",
+        "sddm-session":      "会话",
+        "sddm-suspend":      "睡眠",
+        "sddm-restart":      "重启",
+        "sddm-shutdown":     "关机",
+        # 密码要求清单（pg-config，实时验证）
+        "req-len-ok":        "✓ 8+ 字符",
+        "req-len-x":         "✗ 8+ 字符",
+        "req-upper-ok":      "✓ 大写字母",
+        "req-upper-x":       "✗ 大写字母",
+        "req-lower-ok":      "✓ 小写字母",
+        "req-lower-x":       "✗ 小写字母",
+        "req-num-ok":        "✓ 数字",
+        "req-num-x":         "✗ 数字",
+        "req-sym-ok":        "✓ 符号",
+        "req-sym-x":         "✗ 符号",
         # 语言选择页面警告
         "lang-warning":      "⚠  仅界面语言包 · 镜像源已针对萨尔瓦多、美国、墨西哥及危地马拉优化"
                              "——中国大陆及其他较远地区的下载速度可能较慢。",
@@ -412,12 +472,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 def t(key, lang="en"):
     # type: (str, str) -> str
     """Devuelve el string traducido para key en el idioma lang.
-    Fallback: inglés → el propio key si no existe en ningún idioma."""
-    return (
-        TRANSLATIONS.get(lang, {}).get(key)
-        or TRANSLATIONS["en"].get(key)
-        or key
-    )
+    Fallback: inglés → el propio key si no existe en ningún idioma.
+
+    NOTA: usa comprobación explícita de None (no 'or') para distinguir
+    string vacío '' (valor intencional — p.ej. claves step-*-d sin detail)
+    de clave ausente (None). Con 'or', '' sería falsy y caería al fallback,
+    devolviendo la clave cruda en lugar del string vacío esperado.
+    """
+    val = TRANSLATIONS.get(lang, {}).get(key)
+    if val is not None:
+        return val
+    val = TRANSLATIONS["en"].get(key)
+    if val is not None:
+        return val
+    return key
 
 
 SUPPORTED_LANGS = [

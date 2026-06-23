@@ -8,11 +8,17 @@ border-color=#7aa2f7ff
 border-size=1
 border-radius=8
 width=340
-# BUG-1 FIX: height=0 es inválido en versiones recientes de mako.
-# height=0 era el valor legacy para "altura automática según contenido",
-# pero desde mako 1.7 el valor correcto es max-height para limitar la
-# altura máxima. Sin max-height, notificaciones largas desbordan la pantalla.
-max-height=200
+# BUG-1 FIX (corregido): la opción real de mako se llama "height", no
+# "max-height" — confirmado en el código fuente de mako (config.c,
+# struct mako_style->height) y en el manpage oficial (doc/mako.5.scd):
+# "height=px  Set maximum height of notification popups. Notifications
+# whose text takes up less space are shrunk to fit." — es decir, "height"
+# YA es una altura MÁXIMA con auto-shrink; nunca existió un renombre a
+# "max-height" en ninguna versión. Una opción desconocida en mako no se
+# ignora — el parser hace fprintf a stderr y aborta el parseo completo
+# (ret=-1), por lo que "max-height=200" rompía el arranque de mako entero,
+# no solo esta línea.
+height=200
 margin=10
 padding=10,12
 icons=1
@@ -65,8 +71,7 @@ text-color=#f7768eff
 border-color=#f7768eff
 # timeout=0 = persistente hasta que el usuario la descarte manualmente
 default-timeout=0
-# BUG-7 FIX: on-notify ausente en urgency=high.
-# Las notificaciones críticas deberían producir alguna señal sonora
-# o visual extra. Un beep del sistema es lo más compatible sin depender
-# de PipeWire/PulseAudio que puede no estar activo en todos los momentos.
-on-notify=exec notify-send-beep 2>/dev/null || true
+# BUG-7 FIX: on-notify para urgency=high con sonido real del sistema.
+# notify-send-beep NO existe en Arch Linux — falla silenciosamente.
+# paplay con el sonido freedesktop funciona en cualquier setup con PipeWire.
+on-notify=exec paplay /usr/share/sounds/freedesktop/stereo/bell.oga 2>/dev/null || true

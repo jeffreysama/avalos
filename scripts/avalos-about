@@ -27,8 +27,17 @@ kitty --title "AvalOS — About / Acerca de" -- bash -c '
         echo "  Kernel         : $_kver"
     fi
 
-    echo "  Hyprland       : $(hyprctl version 2>/dev/null | grep -o "v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -1 || echo N/A)"
-    echo "  Waybar         : $(waybar --version 2>&1 | head -1 || echo "N/A")"
+    # BUG-15 FIX: "| head -1 || echo N/A" nunca disparaba el fallback —
+    # el exit code del pipe es el de head, que sale 0 aunque no reciba
+    # nada. Resultado real: con hyprctl ausente o sin match, quedaba
+    # vacío en vez de "N/A"; con waybar ausente (2>&1 + head -1), se
+    # mostraba el error crudo del shell ("bash: waybar: command not
+    # found") en vez de "N/A". Mismo patrón que LC_TIME en hyprlock.conf:
+    # capturar primero, decidir el fallback después con ${var:-...}.
+    _hver=$(hyprctl version 2>/dev/null | grep -o "v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -1)
+    echo "  Hyprland       : ${_hver:-N/A}"
+    _wver=$(waybar --version 2>/dev/null | head -1)
+    echo "  Waybar         : ${_wver:-N/A}"
     _mfree=$(free -h | awk /^Mem:/{print\$7})
     _mtotal=$(free -h | awk /^Mem:/{print\$2})
     echo "  Memoria libre  : $_mfree libre de $_mtotal"

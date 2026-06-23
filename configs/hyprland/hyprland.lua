@@ -116,8 +116,21 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("nm-applet --indicator")
     hl.exec_cmd("hyprpolkitagent")   -- necesario en live para diálogos de privilegios
 
+    -- Cliphist: faltaba en el live por accidente (sí está en el template
+    -- instalado). Sin esto, mod+V (agregado abajo) no tiene nada que listar.
+    hl.exec_cmd("wl-paste --type text  --watch cliphist store")
+    hl.exec_cmd("wl-paste --type image --watch cliphist store")
+
     -- Instalador gráfico de AvalOS
-    hl.exec_cmd("python3 /usr/local/bin/avalos-install")
+    -- FIX: /usr/local/bin/avalos-install es un wrapper bash
+    -- (#!/bin/bash; export PYTHONPATH=...; exec python3 .../skill_instalar_usb.py),
+    -- no un script Python. "python3 /usr/local/bin/avalos-install" hacía que
+    -- Python intentara parsear "export PYTHONPATH=..." → SyntaxError inmediato.
+    -- Como hl.exec_cmd() es async, el resto del autostart seguía normal y el
+    -- usuario llegaba a un escritorio funcional SIN ninguna ventana de
+    -- instalador y sin keybind para lanzarlo manualmente. El wrapper ya es
+    -- ejecutable (chmod 755, shebang #!/bin/bash) y está en PATH.
+    hl.exec_cmd("avalos-install")
 end)
 
 -- ── Keybinds ──────────────────────────────────────────────────────
@@ -126,11 +139,20 @@ local mod = "SUPER"
 -- Apps básicas
 hl.bind(mod .. " + Return", hl.dsp.exec_cmd("kitty"))
 hl.bind(mod .. " + Space",  hl.dsp.exec_cmd("rofi -show drun"))
+hl.bind(mod .. " + E",        hl.dsp.exec_cmd("thunar"))
+hl.bind(mod .. " + B",        hl.dsp.exec_cmd("firefox"))
+hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("chromium"))
+hl.bind(mod .. " + V",
+    hl.dsp.exec_cmd("cliphist list | rofi -dmenu | cliphist decode | wl-copy"))
 
 -- Ventanas
 hl.bind(mod .. " + Q", hl.dsp.window.close())
-hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }))
+hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
 hl.bind(mod .. " + T", hl.dsp.window.float({ action = "toggle" }))
+hl.bind(mod .. " + SHIFT + L",
+    -- Sin guard, dos pulsaciones rápidas lanzarían 2 instancias de hyprlock
+    -- superpuestas. Mismo patrón que hypridle.conf (lock_cmd / listener 600s).
+    hl.dsp.exec_cmd("pidof hyprlock || hyprlock"))
 
 -- Powermenu (con fallback a poweroff si el script no existe)
 hl.bind(mod .. " + SHIFT + E",
@@ -151,6 +173,12 @@ hl.bind(mod .. " + SHIFT + left",  hl.dsp.window.move("l"))
 hl.bind(mod .. " + SHIFT + right", hl.dsp.window.move("r"))
 hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move("u"))
 hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move("d"))
+
+-- Redimensionar con teclado
+hl.bind(mod .. " + CTRL + right", hl.dsp.resize({ dx =  30, dy =   0 }), { repeating = true })
+hl.bind(mod .. " + CTRL + left",  hl.dsp.resize({ dx = -30, dy =   0 }), { repeating = true })
+hl.bind(mod .. " + CTRL + up",    hl.dsp.resize({ dx =   0, dy = -30 }), { repeating = true })
+hl.bind(mod .. " + CTRL + down",  hl.dsp.resize({ dx =   0, dy =  30 }), { repeating = true })
 
 -- Workspaces — scroll con ratón y Tab
 hl.bind(mod .. " + mouse_down", hl.dsp.workspace.relative(1))
@@ -182,6 +210,12 @@ hl.bind("XF86AudioLowerVolume",
 hl.bind("XF86AudioMute",
     hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
     { locked = true })
+hl.bind("XF86AudioPlay",
+    hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
+hl.bind("XF86AudioNext",
+    hl.dsp.exec_cmd("playerctl next"),       { locked = true })
+hl.bind("XF86AudioPrev",
+    hl.dsp.exec_cmd("playerctl previous"),   { locked = true })
 
 -- Brillo (repeating = true para mantener pulsado)
 hl.bind("XF86MonBrightnessUp",
@@ -202,3 +236,9 @@ hl.window_rule({
 
 hl.window_rule({ match = { class = "pavucontrol" },         float = true })
 hl.window_rule({ match = { class = "nm-connection-editor" }, float = true })
+hl.window_rule({
+    match  = { class = "avalos-wallpaper" },
+    float  = true,
+    center = true,
+    size   = { 1000, 700 },
+})

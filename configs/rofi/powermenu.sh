@@ -85,7 +85,17 @@ elif [[ "$chosen" == "$T_LOGOUT" ]]; then
   # Con Hyprland 0.55 se recomienda uwsm como session manager.
   # "hyprctl dispatch exit" directo interfiere con el shutdown de uwsm/systemd.
   # Si uwsm está activo, usar "uwsm stop"; si no, hyprctl dispatch exit como fallback.
-  if systemctl --user is-active --quiet uwsm-env-hyprland.service 2>/dev/null; then
+  #
+  # BUG FIX: el nombre de servicio "uwsm-env-hyprland.service" no existe —
+  # uwsm genera units con el patrón "wayland-wm@<desktop-entry-id>.service"
+  # (escapado, ej. "wayland-wm@hyprland\x2duwsm.desktop.service"), que
+  # depende de qué .desktop entry se usó para lanzar la sesión y por lo
+  # tanto no tiene un nombre fijo verificable de antemano. Con el nombre
+  # incorrecto, is-active SIEMPRE devolvía "inactive", así que el script
+  # caía SIEMPRE al fallback hyprctl — exactamente lo que se quería evitar,
+  # incluso corriendo bajo uwsm. uwsm expone su propio comando diseñado
+  # para esto: "uwsm check is-active", que no depende de adivinar nombres.
+  if command -v uwsm &>/dev/null && uwsm check is-active &>/dev/null; then
     uwsm stop
   else
     hyprctl dispatch exit

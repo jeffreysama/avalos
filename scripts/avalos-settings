@@ -104,11 +104,11 @@ elif [[ "$chosen" == "$T_BLUETOOTH" ]]; then
     _run blueman-manager
 
 elif [[ "$chosen" == "$T_WALLPAPER" ]]; then
-    if command -v avalos-wallpaper &>/dev/null; then
-        avalos-wallpaper
-    else
-        notify-send "AvalOS" "$T_NO_APP: avalos-wallpaper" -i error -t 3000 2>/dev/null || true
-    fi
+    # BUG-16 FIX: reimplementaba a mano el check de _run() pero sin "&
+    # disown" — avalos-settings quedaba colgado hasta que el usuario
+    # terminara TODO el flujo de avalos-wallpaper (ahora una app gráfica
+    # propia, ver avalos-wallpaper). _run ya hace exactamente esto.
+    _run avalos-wallpaper
 
 elif [[ "$chosen" == "$T_FILES" ]]; then
     _run thunar
@@ -178,7 +178,8 @@ elif [[ "$chosen" == "$T_USERS" ]]; then
         echo ""
         echo "  Press Enter to close."
         read -r
-    '
+    ' &
+    disown
 
 elif [[ "$chosen" == "$T_SNAPSHOTS" ]]; then
     if command -v snapper-gui &>/dev/null; then
@@ -198,14 +199,21 @@ elif [[ "$chosen" == "$T_SNAPSHOTS" ]]; then
             echo ""
             echo "  Press Enter to close."
             read -r
-        '
+        ' &
+        disown
     fi
 
 elif [[ "$chosen" == "$T_ABOUT" ]]; then
+    # BUG-16 FIX (continuación): esta rama tiene 2 niveles de fallback
+    # (avalos-about → fastfetch directo → notify-send), así que no encaja
+    # en _run() de una sola línea — se le agrega "& disown" a cada rama
+    # ejecutable en vez de reescribir la cadena de fallbacks.
     if command -v avalos-about &>/dev/null; then
-        avalos-about
+        avalos-about &
+        disown
     elif command -v fastfetch &>/dev/null; then
-        kitty --title "AvalOS — About" -- bash -c 'fastfetch; echo ""; echo "  Press Enter to close."; read -r'
+        kitty --title "AvalOS — About" -- bash -c 'fastfetch; echo ""; echo "  Press Enter to close."; read -r' &
+        disown
     else
         notify-send "AvalOS Settings" "$T_NO_APP: avalos-about / fastfetch" \
             -i dialog-information -t 4000 2>/dev/null || true
