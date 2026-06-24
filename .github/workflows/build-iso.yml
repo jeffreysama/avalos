@@ -56,9 +56,23 @@ jobs:
           fetch-depth: 0   # historial completo necesario para git describe --tags
 
       - name: Configurar repo [avalos] en pacman
+        env:
+          GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
         run: |
+          # BUG-26 FIX: "Optional TrustAll" deshabilitaba completamente la
+          # verificación GPG — cualquier paquete sin firma o con firma inválida
+          # se instalaba igual. Con "Required DatabaseOptional" pacman exige
+          # .sig junto a cada .pkg.tar.zst. La key pública debe estar en el
+          # keyring de pacman ANTES de hacer pacman -Sy (ver importación abajo).
+          #
+          # NOTA: se agrega la clave pública AvalOS al keyring de pacman
+          # (GPG_PUBLIC_KEY viene de GitHub Secrets — el contenido de
+          # avalos-signing-key.pub.asc que exportaste al crear la key).
+          echo "$GPG_PUBLIC_KEY" | pacman-key --add -
+          pacman-key --lsign-key 310A08970CFBDC61
+
           # Inyectar el repo avalos para que mkarchiso pueda descargar linux-avalos
-          printf '\n[avalos]\nSigLevel = Optional TrustAll\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' \
+          printf '\n[avalos]\nSigLevel = Required DatabaseOptional\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' \
             >> /etc/pacman.conf
           pacman -Sy --noconfirm
           echo "Repo avalos configurado:"
@@ -109,7 +123,7 @@ jobs:
           sed -i 's/^#ParallelDownloads/ParallelDownloads/' "$BUILD_DIR/pacman.conf"
           # Asegurar que el repo avalos esté en el pacman.conf del ISO
           if ! grep -q '\[avalos\]' "$BUILD_DIR/pacman.conf"; then
-            printf '\n[avalos]\nSigLevel = Optional TrustAll\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' \
+            printf '\n[avalos]\nSigLevel = Required DatabaseOptional\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' \
               >> "$BUILD_DIR/pacman.conf"
           fi
           # Habilitar multilib para paquetes lib32
@@ -424,6 +438,15 @@ jobs:
 
       - name: Publicar en GitHub Releases
         if: github.event.inputs.upload == 'true'
+        env:
+          # BUG-27 FIX: iso_file y sha_file se setean con >> "$GITHUB_ENV"
+          # en el step anterior — son variables de entorno del runner, no
+          # variables bash del step actual. Dentro del heredoc de NOTES,
+          # $(cat "$sha_file") se evalúa en este step donde $sha_file podría
+          # no estar definida como variable bash, dejando el checksum vacío.
+          # Pasarlas explícitamente via env: garantiza que existen aquí.
+          ISO_FILE: ${{ env.iso_file }}
+          SHA_FILE: ${{ env.sha_file }}
         run: |
           set -u
           VERSION="${{ steps.vars.outputs.version }}"
@@ -445,16 +468,16 @@ jobs:
 
           ### Checksums
           \`\`\`
-          $(cat "$sha_file")
+          $(cat "$SHA_FILE")
           \`\`\`"
 
           if gh release view "$TAG" --repo "${{ env.AVALOS_REPO }}" &>/dev/null; then
             echo "Actualizando release $TAG..."
-            gh release upload "$TAG" "$iso_file" "$sha_file" \
+            gh release upload "$TAG" "$ISO_FILE" "$SHA_FILE" \
               --repo "${{ env.AVALOS_REPO }}" --clobber
           else
             echo "Creando release $TAG..."
-            gh release create "$TAG" "$iso_file" "$sha_file" \
+            gh release create "$TAG" "$ISO_FILE" "$SHA_FILE" \
               --repo "${{ env.AVALOS_REPO }}" \
               --title "AvalOS ${VERSION}" \
               --notes "$NOTES"

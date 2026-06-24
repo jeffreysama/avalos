@@ -176,7 +176,14 @@ jobs:
             '
 
       - name: Compilar linux-avalos-bore
-        if: github.event.inputs.build_bore == 'true' || github.event_name == 'schedule'
+        # BUG-23 FIX: "== 'true'" falla cuando el input queda en su default.
+        # En workflow_dispatch, si el usuario no toca el input, GitHub lo pasa
+        # como '' (string vacío), no como 'true' — así que la condición nunca
+        # se cumplía aunque el default fuera true. Con != 'false' se compila
+        # BORE en todos los casos EXCEPTO cuando el usuario explícitamente
+        # escribe 'false'. En schedule, event.inputs no existe → '' != 'false'
+        # → se compila igual. Comportamiento correcto en los 3 escenarios.
+        if: github.event.inputs.build_bore != 'false' || github.event_name == 'schedule'
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           MAJOR="${KERNEL_VER%%.*}"
@@ -376,6 +383,39 @@ jobs:
           echo "Contenido del repo:"
           ls -lh
 
+      - name: Firmar paquetes y base de datos con GPG
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          cd /tmp/avalos-repo
+
+          # Importar la clave privada (sin passphrase — ver comentario en el
+          # paso de generación de key: passphrase vacía es intencional en CI)
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          # Marcar como ultimate trust para que gpg no pida confirmación
+          echo "310A08970CFBDC61:6:" | gpg --import-ownertrust
+
+          # Firmar cada paquete individualmente — pacman necesita el .sig
+          # junto al .pkg.tar.zst para verificar antes de instalar
+          for pkg in *.pkg.tar.zst; do
+            gpg --batch --yes --detach-sign --no-armor "$pkg"
+            echo "  ✓ Firmado: $pkg"
+          done
+
+          # Regenerar la base de datos firmada (eliminar la sin firma primero)
+          rm -f avalos.db.tar.zst avalos.db avalos.files.tar.zst avalos.files
+          repo-add --sign --new avalos.db.tar.zst *.pkg.tar.zst
+
+          # repo-add genera symlinks — convertirlos a archivos reales para upload
+          [[ -L avalos.db ]]    && cp --remove-destination avalos.db.tar.zst    avalos.db
+          [[ -L avalos.files ]] && cp --remove-destination avalos.files.tar.zst avalos.files
+          # Copiar también las firmas de la base de datos
+          [[ -f avalos.db.tar.zst.sig ]]    && cp --remove-destination avalos.db.tar.zst.sig    avalos.db.sig
+          [[ -f avalos.files.tar.zst.sig ]] && cp --remove-destination avalos.files.tar.zst.sig avalos.files.sig
+
+          echo "Repo firmado y listo:"
+          ls -lh
+
       # BUG-016 FIX: separar subida y limpieza en dos pasos.
       # Si se limpia antes de subir y algo falla a mitad, el release queda vacío/inconsistente.
       # La limpieza ahora ocurre SOLO si la subida fue exitosa (condición upload_ok).
@@ -383,7 +423,10 @@ jobs:
         run: |
           cd /tmp/avalos-repo
           shopt -s nullglob
-          ALL_FILES=(*.pkg.tar.zst *.db.tar.zst *.db *.files.tar.zst *.files)
+          # BUG-24 incluido: subir también los .sig de cada paquete y de la
+          # base de datos — sin ellos pacman no puede verificar las firmas
+          # aunque SigLevel = Required esté configurado.
+          ALL_FILES=(*.pkg.tar.zst *.pkg.tar.zst.sig *.db.tar.zst *.db.tar.zst.sig *.db *.db.sig *.files.tar.zst *.files.tar.zst.sig *.files *.files.sig)
           shopt -u nullglob
 
           if [[ ${#ALL_FILES[@]} -eq 0 ]]; then
