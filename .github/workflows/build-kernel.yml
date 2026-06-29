@@ -22,7 +22,10 @@ env:
   AVALOS_REPO: jeffreysama/avalos
   REPO_TAG: repo
   MARCH: x86-64-v3
-  MARCH_COMPAT: x86-64-v2   # x86-64-v2: Celeron N-series, Pentium Silver (SSE4.2+AVX, sin AVX2)
+  MARCH_COMPAT: x86-64-v2   # x86-64-v2: Celeron N-series, Pentium Silver (SSE4.2, sin AVX ni AVX2)
+  # NOTA: AVX NO forma parte de x86-64-v2 — sus requisitos son SSE4.2, POPCNT, CMPXCHG16B.
+  # AVX empieza en x86-64-v3. Celeron N/Pentium Silver tienen SSE4.2 SIN AVX,
+  # lo que los hace x86-64-v2 pero excluye la flag -march=x86-64-v3 del kernel principal.
   PKGBUILD_DIR: pkgs/linux-avalos
   # Version de fallback — se actualiza manualmente si kernel.org no responde
   FALLBACK_KERNEL_VER: "7.0.11"
@@ -273,8 +276,9 @@ jobs:
             '
 
       # ── linux-avalos-compat: x86-64-v2 ───────────────────────────────────
-      # Para CPUs con SSE4.2+AVX pero sin AVX2: Intel Celeron N-series (Jasper Lake, Gemini Lake),
-      # Pentium Silver, y hardware similar. x86-64-v2 = SSE4.2, AVX, POPCNT, LAHF/SAHF.
+      # Para CPUs con SSE4.2 pero sin AVX ni AVX2: Intel Celeron N-series (Jasper Lake, Gemini Lake),
+      # Pentium Silver, y hardware similar. x86-64-v2 = SSE4.2, POPCNT, CMPXCHG16B (sin AVX).
+      # AVX es requisito de x86-64-v3, NO de v2 — Celeron N/Pentium Silver no tienen AVX.
       # Mismas configs que linux-avalos pero compilado con -march=x86-64-v2.
       - name: Compilar linux-avalos-compat (x86-64-v2)
         run: |
@@ -305,7 +309,16 @@ jobs:
           # tampoco se insertaba, quedando el paquete sin conflicts= tras haberlos
           # borrado con el sed anterior.
           # Fix: buscar solo la entry que realmente existe en el PKGBUILD.
-          sed -i 's|provides=(\"linux=\${pkgver}\")|provides=(\"linux-avalos-compat=\${pkgver}\")|' "$COMPAT_DIR/PKGBUILD"
+          #
+          # BUG-M5 FIX: el reemplazo original quitaba "linux=${pkgver}" por
+          # completo y lo sustituía solo por "linux-avalos-compat=${pkgver}".
+          # Eso contradice el propio comentario del PKGBUILD base ("provides=()
+          # debe exponer linux=${pkgver} para que paquetes que dependen del
+          # kernel genérico —virtualbox-host-modules-arch, etc.— lo encuentren").
+          # En hardware x86-64-v2 (Celeron N/Pentium Silver) ese tipo de paquete
+          # dejaría de resolver dependencias con linux-avalos-compat instalado.
+          # Fix: conservar AMBAS entries — la genérica y la específica de compat.
+          sed -i 's|provides=(\"linux=\${pkgver}\")|provides=(\"linux=\${pkgver}\" \"linux-avalos-compat=\${pkgver}\")|' "$COMPAT_DIR/PKGBUILD"
 
           # M-3 FIX: eliminar conflicts=() heredado antes de insertar el correcto.
           # Sin esto, compat queda con dos conflicts=() y el primero conflictúa consigo mismo.
@@ -326,7 +339,7 @@ jobs:
           # Actualizar pkgdesc
           sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v2, AMD+Intel, EEVDF (Celeron N/Pentium Silver, sin AVX2)|g' "$COMPAT_DIR/PKGBUILD"
 
-          # Cambiar a x86-64-v2: CONFIG_GENERIC_CPU2 activa SSE4.2, AVX, POPCNT, LAHF/SAHF.
+          # Cambiar a x86-64-v2: CONFIG_GENERIC_CPU2 activa SSE4.2, POPCNT, CMPXCHG16B (sin AVX).
           # El sed reemplaza TODAS las ocurrencias de CONFIG_GENERIC_CPU3 en el PKGBUILD copiado:
           # el scripts/config de prepare(), el check de verificación al final, y los mensajes de log.
           # Sin esta sustitución global el check del PKGBUILD fallaría al buscar CPU3 en lugar de CPU2.
