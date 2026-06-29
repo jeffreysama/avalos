@@ -1,0 +1,156 @@
+# ── AvalOS hyprland.conf ─────────────────────────────────────────
+# Este archivo es un template — el instalador reemplaza %%GPU_ENV%%
+# con las variables correctas según la GPU detectada (AMD o Intel).
+monitor = ,preferred,auto,1
+
+env = XCURSOR_SIZE,24
+env = XCURSOR_THEME,capitaine-cursors-dark
+env = QT_QPA_PLATFORM,wayland;xcb
+env = QT_WAYLAND_DISABLE_WINDOWDECORATION,1
+env = GDK_BACKEND,wayland,x11
+env = MOZ_ENABLE_WAYLAND,1
+env = ELECTRON_OZONE_PLATFORM_HINT,auto
+%%GPU_ENV%%
+env = __GLX_VENDOR_LIBRARY_NAME,mesa
+
+exec-once = hyprpaper
+exec-once = waybar
+exec-once = mako
+exec-once = hypridle
+exec-once = nm-applet --indicator
+exec-once = blueman-applet
+exec-once = hyprpolkitagent
+exec-once = wl-paste --type text --watch cliphist store
+exec-once = wl-paste --type image --watch cliphist store
+exec-once = xdg-user-dirs-update
+exec-once = udiskie -t
+
+general {
+    gaps_in = 5
+    gaps_out = 10
+    border_size = 2
+    col.active_border = rgba(7aa2f7ee) rgba(bb9af7ee) 45deg
+    col.inactive_border = rgba(414868aa)
+    layout = dwindle
+    resize_on_border = true
+    allow_tearing = false
+}
+
+decoration {
+    rounding = 12
+    active_opacity = 1.0
+    inactive_opacity = 0.92
+    blur {
+        enabled = true
+        size = 4
+        passes = 1
+        new_optimizations = true
+    }
+    shadow {
+        enabled = true
+        range = 12
+        render_power = 2
+        color = rgba(1a1b2660)
+    }
+}
+
+animations {
+    enabled = true
+    bezier = myBezier, 0.08, 0.9, 0.1, 1.05
+    animation = windows, 1, 6, myBezier
+    animation = windowsOut, 1, 5, default, popin 75%
+    animation = border, 1, 8, default
+    animation = fade, 1, 6, default
+    animation = workspaces, 1, 5, default, slide
+}
+
+dwindle {
+    # pseudotile eliminado en Hyprland 0.55 (no hacía nada — ver release notes v0.55.0)
+    preserve_split = true
+}
+
+input {
+    kb_layout = latam
+    kb_options = grp:alt_shift_toggle
+    follow_mouse = 1
+    sensitivity = 0
+    touchpad {
+        natural_scroll = false
+        tap-to-click = true
+    }
+}
+
+misc {
+    force_default_wallpaper = 0
+    disable_hyprland_logo = true
+    disable_splash_rendering = true
+}
+
+debug {
+    # vfr movido de misc: a debug: en Hyprland 0.55
+    # (Variable Frame Rate — reduce uso de GPU en reposo)
+    vfr = true
+}
+
+$mod = SUPER
+bind = $mod, Return, exec, kitty
+bind = $mod, Space, exec, rofi -show drun
+bind = $mod, E, exec, thunar
+bind = $mod, B, exec, firefox
+bind = $mod SHIFT, S, exec, grim -g "$(slurp)" - | wl-copy
+bind = $mod, V, exec, cliphist list | rofi -dmenu | cliphist decode | wl-copy
+# Powermenu — mismo bind que en hyprland_conf_lua.template (con fallback a poweroff)
+bind = $mod SHIFT, E, exec, ~/.config/rofi/scripts/powermenu.sh || systemctl poweroff
+bind = $mod, Q, killactive
+bind = $mod, F, fullscreen
+bind = $mod, T, togglefloating
+# FIX: guard pidof para no lanzar dos instancias de hyprlock superpuestas
+bind = $mod SHIFT, L, exec, pidof hyprlock || hyprlock
+bind = , Print, exec, grim ~/Pictures/screenshot_$(date +%Y%m%d_%H%M%S).png
+bind = $mod, left,  movefocus, l
+bind = $mod, right, movefocus, r
+bind = $mod, up,    movefocus, u
+bind = $mod, down,  movefocus, d
+bind = $mod, H, movefocus, l
+bind = $mod, L, movefocus, r
+bind = $mod, K, movefocus, u
+bind = $mod, J, movefocus, d
+bind = $mod SHIFT, left,  movewindow, l
+bind = $mod SHIFT, right, movewindow, r
+bind = $mod SHIFT, up,    movewindow, u
+bind = $mod SHIFT, down,  movewindow, d
+bind = $mod, 1, workspace, 1
+bind = $mod, 2, workspace, 2
+bind = $mod, 3, workspace, 3
+bind = $mod, 4, workspace, 4
+bind = $mod, 5, workspace, 5
+bind = $mod, 6, workspace, 6
+bind = $mod, 7, workspace, 7
+bind = $mod, 8, workspace, 8
+bind = $mod, 9, workspace, 9
+bind = $mod SHIFT, 1, movetoworkspace, 1
+bind = $mod SHIFT, 2, movetoworkspace, 2
+bind = $mod SHIFT, 3, movetoworkspace, 3
+bind = $mod SHIFT, 4, movetoworkspace, 4
+bind = $mod SHIFT, 5, movetoworkspace, 5
+bind = $mod SHIFT, 6, movetoworkspace, 6
+bind = $mod SHIFT, 7, movetoworkspace, 7
+bind = $mod SHIFT, 8, movetoworkspace, 8
+bind = $mod SHIFT, 9, movetoworkspace, 9
+bind = $mod, mouse_down, workspace, e+1
+bind = $mod, mouse_up, workspace, e-1
+bind = $mod, Tab, workspace, e+1
+bind = $mod SHIFT, Tab, workspace, e-1
+bindel = , XF86AudioRaiseVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+bindel = , XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bindl  = , XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bindl  = , XF86AudioPlay, exec, playerctl play-pause
+bindl  = , XF86AudioNext, exec, playerctl next
+bindl  = , XF86AudioPrev, exec, playerctl previous
+bindel = , XF86MonBrightnessUp, exec, brightnessctl set +5%
+bindel = , XF86MonBrightnessDown, exec, brightnessctl set 5%-
+
+windowrulev2 = float, class:(pavucontrol)
+windowrulev2 = float, class:(nm-connection-editor)
+windowrulev2 = float, class:(blueman-manager)
+windowrulev2 = size 800 600, class:(pavucontrol)

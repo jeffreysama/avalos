@@ -111,10 +111,13 @@
     "format": "{icon} {capacity}%",
     "format-icons": ["󰁺","󰁻","󰁼","󰁽","󰁾","󰁿","󰂀","󰂁","󰂂","󰁹"],
     "format-charging": "󰂄 {capacity}%",
-    // BUG-9 FIX: format-full ausente.
-    // Sin format-full, batería al 100% mostraba "󰁹 100%" en lugar de
-    // un indicador visual claro de que está completamente cargada.
-    "format-full": "󰁹 Full",
+    // format-full: ícono de batería llena + número ({capacity}%) en lugar
+    // de texto "Full" — el usuario ve siempre el porcentaje numérico.
+    "format-full": "󰁹 {capacity}%",
+    // format-unknown: en PC de escritorio sin /sys/class/power_supply/BAT*
+    // el módulo entra en estado Unknown. Sin esta línea Waybar renderiza el
+    // formato normal con valores vacíos. String vacío = módulo invisible.
+    "format-unknown": "",
     "states": { "warning": 30, "critical": 15 },
     // BUG-10 FIX: tooltip-format en battery.
     // {cycles} y {health} SÍ son tokens documentados de waybar, pero dependen

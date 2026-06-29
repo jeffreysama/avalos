@@ -155,12 +155,24 @@ BASE_PKGS = [
     "zip", "unzip", "p7zip", "zram-generator",
     "reflector", "pacman-contrib", "xdg-utils", "udiskie",
     "fastfetch", "bat", "github-cli",
-    # ── Btrfs + Snapshots (Opción C) ─────────────────────────────────────────
-    # snapper: gestión de snapshots (pre/post pacman + manuales)
-    # snap-pac: hooks que crean snapshot automático antes/después de cada pacman
-    # grub-btrfs: regenera grub.cfg con entradas de cada snapshot (solo GRUB)
-    # inotify-tools: requerido por grub-btrfsd para detectar nuevos snapshots
-    "btrfs-progs", "snapper", "snap-pac", "grub-btrfs", "inotify-tools",
+    # btrfs-progs se incluye aquí porque el particionado Btrfs puede ocurrir
+    # incluso en modo USB si el usuario selecciona Btrfs manualmente; sin él,
+    # mkfs.btrfs y btrfs subvolume fallan. Los demás paquetes Btrfs-only
+    # (snapper, snap-pac, grub-btrfs, inotify-tools) se añaden condicionalmente
+    # en _run_instalacion solo cuando el modo NO es USB. Ver BTRFS_PKGS abajo.
+    "btrfs-progs",
+]
+
+# Paquetes exclusivos de instalación en PC (Btrfs + snapper).
+# En modo USB (ext4, sin snapper configurado) NO se instalan porque:
+#   • snap-pac dispara hooks en cada transacción pacman y llama a snapper
+#     aunque no haya ninguna config → errores visibles en cada pacman -Syu
+#   • grub-btrfs + inotify-tools son innecesarios sin sistema de archivos Btrfs
+BTRFS_PKGS = [
+    "snapper",       # gestión de snapshots (pre/post pacman + manuales)
+    "snap-pac",      # hooks automáticos antes/después de cada transacción pacman
+    "grub-btrfs",    # regenera grub.cfg con entradas de cada snapshot (solo GRUB)
+    "inotify-tools", # requerido por grub-btrfsd para detectar nuevos snapshots
 ]
 
 DRIVER_PKGS_AMD = [
@@ -184,6 +196,12 @@ HYPRLAND_PKGS = [
     "grim", "slurp", "wl-clipboard", "cliphist",
     "pipewire", "pipewire-alsa", "pipewire-pulse", "pipewire-jack",
     "wireplumber", "pavucontrol",
+    # FIX: qt5-quickcontrols2 es REQUERIDO por _SDDM_MAIN_QML (usa
+    # "import QtQuick.Controls 2.15" — TextField, Button, ComboBox). Mismo
+    # bug que en build-iso.yml pero para el sistema YA INSTALADO: sin este
+    # paquete, SDDM falla con "module QtQuick.Controls 2 was not registered"
+    # y cae al tema por defecto en cada arranque del sistema final.
+    "qt5-quickcontrols2",
     "qt5-wayland", "qt6-wayland", "gtk3", "gtk4", "hyprpolkitagent",
     "thunar", "gvfs", "brightnessctl",
     "ttf-font-awesome", "ttf-jetbrains-mono-nerd", "ttf-nerd-fonts-symbols",
@@ -403,6 +421,27 @@ def verificar_herramientas():
     tools = ["parted", "mkfs.fat", "mkfs.ext4", "mkfs.btrfs", "btrfs", "arch-chroot",
              "pacstrap", "genfstab", "mount", "umount"]
     return {h: shutil.which(h) is not None for h in tools}
+
+
+# FIX: verificar_herramientas() devuelve nombres de BINARIO (los que se buscan
+# con shutil.which), pero pacman instala PAQUETES — son cosas distintas para
+# varias de estas herramientas. El fallback anterior hacía
+# "pacman -S mkfs.fat mkfs.ext4 mkfs.btrfs btrfs ..." con los nombres de
+# binario tal cual, y esos paquetes no existen con esos nombres → el intento
+# de auto-reparación fallaba siempre. Este mapeo traduce cada binario al
+# paquete real de Arch que lo provee.
+_HERRAMIENTA_A_PAQUETE = {
+    "parted":      "parted",
+    "mkfs.fat":    "dosfstools",
+    "mkfs.ext4":   "e2fsprogs",
+    "mkfs.btrfs":  "btrfs-progs",
+    "btrfs":       "btrfs-progs",
+    "arch-chroot": "arch-install-scripts",
+    "pacstrap":    "arch-install-scripts",
+    "genfstab":    "arch-install-scripts",
+    "mount":       "util-linux",
+    "umount":      "util-linux",
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1006,7 +1045,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     <!-- LEFT: discos -->
     <div class="cfg-left">
       <div class="cfg-section-title" data-i18n="sec-disk">▸ Disco de destino</div>
-      <div id="live-disk-banner" style="
+      <div id="live-disk-banner" data-i18n="disk-current-unavailable" style="
         font-family:var(--font-mono); font-size:10px; padding:8px 12px;
         background:rgba(224,175,104,.07); border-bottom:1px solid rgba(224,175,104,.2);
         color:var(--tn-yellow); display:none; line-height:1.5; flex-shrink:0;">
@@ -1015,7 +1054,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
       </div>
       <div id="disk-list">
         <div style="padding:14px;color:var(--tn-dim);font-family:var(--font-mono);font-size:11px;">
-          Detectando discos…
+          <span data-i18n="disk-detecting-placeholder">Detectando discos…</span>
         </div>
       </div>
     </div>
@@ -1028,19 +1067,19 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 
         <div class="form-row">
           <div class="form-group">
-            <label>Nombre de usuario</label>
+            <label data-i18n="lbl-user">Nombre de usuario</label>
             <input id="f-user" type="text" placeholder="johndoe"
                    oninput="sanitizeUser(this)" autocomplete="off" spellcheck="false">
-            <span class="field-hint" id="hint-user">Solo letras minúsculas, números y guiones</span>
+            <span class="field-hint" id="hint-user" data-i18n="hint-username">Solo letras minúsculas, números y guiones</span>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-group">
-            <label>Contraseña</label>
+            <label data-i18n="lbl-pass">Contraseña</label>
             <div class="pass-wrap">
               <input id="f-pass" type="password" placeholder="••••••••" oninput="checkPass()">
-              <button class="pass-toggle" type="button" onclick="togglePass('f-pass','pt-1')" id="pt-1" title="Mostrar/ocultar">👁</button>
+              <button class="pass-toggle" type="button" onclick="togglePass('f-pass','pt-1')" id="pt-1" data-i18n-title="lbl-show-hide" title="Mostrar/ocultar">👁</button>
             </div>
             <div class="strength-bar-wrap"><div class="strength-bar s0" id="strength-bar"></div></div>
             <div class="strength-reqs" id="strength-reqs">
@@ -1055,7 +1094,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
             <label data-i18n="lbl-confirm-pass">Confirmar contraseña</label>
             <div class="pass-wrap">
               <input id="f-pass2" type="password" placeholder="••••••••" oninput="checkPass()">
-              <button class="pass-toggle" type="button" onclick="togglePass('f-pass2','pt-2')" id="pt-2" title="Mostrar/ocultar">👁</button>
+              <button class="pass-toggle" type="button" onclick="togglePass('f-pass2','pt-2')" id="pt-2" data-i18n-title="lbl-show-hide" title="Mostrar/ocultar">👁</button>
             </div>
             <span class="field-hint" id="hint-pass"></span>
           </div>
@@ -1066,13 +1105,13 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 
         <div class="form-row">
           <div class="form-group">
-            <label>Hostname</label>
+            <label data-i18n="lbl-hostname">Hostname</label>
             <input id="f-host" type="text" placeholder="mi-pc"
                    oninput="sanitizeHost(this)" autocomplete="off" spellcheck="false">
             <span class="field-hint">Identificador en la red. Ej: avalos-pc</span>
           </div>
           <div class="form-group">
-            <label>Zona horaria</label>
+            <label data-i18n="lbl-timezone">Zona horaria</label>
             <select id="f-tz"></select>
           </div>
         </div>
@@ -1082,14 +1121,14 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 
         <div class="form-row">
           <div class="form-group">
-            <label>Locale del sistema</label>
+            <label data-i18n="lbl-locale">Locale del sistema</label>
             <select id="f-locale"></select>
             <span class="field-hint">Idioma de mensajes, fechas y formatos del sistema</span>
           </div>
           <div class="form-group">
-            <label>Distribución de teclado</label>
+            <label data-i18n="lbl-keymap">Distribución de teclado</label>
             <select id="f-keymap"></select>
-            <span class="field-hint">Mapa de teclas para la consola y sesión</span>
+            <span class="field-hint" data-i18n="hint-keymap">Mapa de teclas para la consola y sesión</span>
           </div>
         </div>
 
@@ -1097,7 +1136,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         <div class="form-section-title" data-i18n="sec-advanced">▸ Opciones avanzadas</div>
 
         <div class="form-group">
-          <label>Bootloader</label>
+          <label data-i18n="lbl-bootloader">Bootloader</label>
           <div class="opts-row">
             <button class="opt-btn sel" id="opt-bl-grub" onclick="selBootloader('grub')">
               <span class="opt-title">GRUB <span class="badge-snap">✦ Snapshots</span></span>
@@ -1129,11 +1168,11 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
           <label data-i18n="lbl-install-type">Tipo de instalación</label>
           <div class="opts-row">
             <button class="opt-btn sel" id="opt-modo-disco" onclick="selModo('disco', true)">
-              <span class="opt-title">💾 PC / HDD / SSD</span>
+              <span class="opt-title" data-i18n="opt-pc">💾 PC / HDD / SSD</span>
               <span class="opt-desc" data-i18n="opt-pc-desc">Btrfs con subvolúmenes — snapshots automáticos, rollback desde GRUB.</span>
             </button>
             <button class="opt-btn" id="opt-modo-usb" onclick="selModo('usb', true)">
-              <span class="opt-title">🔌 USB Persistente</span>
+              <span class="opt-title" data-i18n="opt-usb">🔌 USB Persistente</span>
               <span class="opt-desc" data-i18n="opt-usb-desc">ext4 sin journal + noatime — minimiza escrituras en pendrive.</span>
             </button>
           </div>
@@ -1235,11 +1274,11 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 <div id="ov-countdown" class="overlay">
   <div class="box">
     <div id="cd-title" data-i18n="cd-title">⚠ ZONA DE NO RETORNO</div>
-    <div id="cd-body">A punto de borrar <span id="cd-dev" style="color:var(--ph-red);font-weight:700;"></span><br>
+    <div id="cd-body"><span data-i18n="cd-about-to-erase">A punto de borrar</span> <span id="cd-dev" style="color:var(--ph-red);font-weight:700;"></span><br>
     <span id="cd-info" style="color:var(--ph-yellow);"></span><br>
-    Todos los datos serán eliminados permanentemente.</div>
+    <span data-i18n="cd-data-permanent">Todos los datos serán eliminados permanentemente.</span></div>
     <div id="cd-num">10</div>
-    <div id="cd-hint">Pulsa <kbd style="color:var(--ph-cyan);">⛔ Abortar</kbd> para cancelar</div>
+    <div id="cd-hint"><span data-i18n="cd-press">Pulsa</span> <kbd data-i18n="btn-abort" style="color:var(--ph-cyan);">⛔ Abortar</kbd> <span data-i18n="cd-to-cancel">para cancelar</span></div>
   </div>
 </div>
 
@@ -1286,16 +1325,21 @@ const STRINGS = STRINGS_PLACEHOLDER;
 
 let _lang = 'en';
 
-function t(key) {
+function t(key, params) {
   // BUG-FIX: no usar || para encadenar fallbacks — en JS, "" es falsy, así que
   // (dict[key] || fallback) devolvería 'key' en lugar de "" para las claves
   // step-*-d con detail vacío intencional. Esto corrompía PASOS en applyLang()
   // (s.detail = "step-part-d") y al hacer Retry se renderizaba la clave cruda en la UI.
   // Fix: comprobar explícitamente si la clave existe en el dict antes de recurrir al fallback.
   const dict = STRINGS[_lang] || STRINGS.en;
-  if (key in dict) return dict[key];
-  if (key in STRINGS.en) return STRINGS.en[key];
-  return key;
+  let val = (key in dict) ? dict[key] : ((key in STRINGS.en) ? STRINGS.en[key] : key);
+  // Sustitución simple de {nombre} -> valor, espejo de self._t(**kwargs) en Python,
+  // para los pocos casos donde el texto traducido necesita un valor dinámico
+  // (ej. el contador de líneas del log).
+  if (params) {
+    for (const k in params) val = val.split('{' + k + '}').join(params[k]);
+  }
+  return val;
 }
 
 function applyLang(code) {
@@ -1304,6 +1348,14 @@ function applyLang(code) {
     const key = el.dataset.i18n;
     const val = t(key);
     if (val) el.innerHTML = val;
+  });
+  // FIX: algunos elementos no traducen su contenido sino el atributo title
+  // (ej. el botón 👁 mostrar/ocultar contraseña) — data-i18n ya cubre
+  // innerHTML, pero title necesita su propio paso porque no es contenido visible.
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.dataset.i18nTitle;
+    const val = t(key);
+    if (val) el.title = val;
   });
   // BUG-i18n FIX: actualizar PASOS array Y nodos del DOM ya renderizados.
   // initSteps() se ejecuta en pywebviewready (antes de seleccionar idioma),
@@ -1334,6 +1386,8 @@ function applyLang(code) {
     });
   }
   document.title = t('title');
+  const llc = document.getElementById('log-lines-count');
+  if (llc) llc.textContent = t('log-lines-count', { n: logLines });
 }
 
 function chooseLang(code) {
@@ -1405,7 +1459,14 @@ function pyRenderDiscos(discosJson) {
     const esBoot = d.es_arranque;
     const sizeGb = (d.size_b / 1e9).toFixed(1);
     const bajo   = parseFloat(sizeGb) < 30;
-    const tipo   = d.tran === 'NVME' || (!d.tran.includes('SATA') && d.tipo === 'SSD/NVMe') ? 'nvme' :
+    // FIX: la condición anterior "!d.tran.includes('SATA') && d.tipo === 'SSD/NVMe'"
+    // marcaba como 'nvme' a CUALQUIER disco no-rotacional cuyo transporte no fuera
+    // SATA (ej. un SSD externo por USB, o un disco virtio en una VM), aunque no
+    // fuera NVMe real. Ahora 'nvme' solo se asigna si el transporte es NVMe o el
+    // nombre del dispositivo lo indica (ej. "nvme0n1") — igual que detectar_tipo_disco_destino()
+    // en el lado Python. Cualquier otro disco no-rotacional cae en 'ssd'.
+    const esNvme = d.tran === 'NVME' || d.name.includes('nvme');
+    const tipo   = esNvme ? 'nvme' :
                    d.tipo === 'SSD/NVMe' ? 'ssd' : 'hdd';
 
     if (!esBoot && !autoSel) autoSel = d.name;
@@ -1711,7 +1772,7 @@ function appendLog(texto, clase) {
   span.textContent = texto + '\n';
   pre.appendChild(span);
   logLines++;
-  document.getElementById('log-lines-count').textContent = logLines + ' líneas';
+  document.getElementById('log-lines-count').textContent = t('log-lines-count', { n: logLines });
   const wrap = document.getElementById('log-wrap');
   wrap.scrollTop = wrap.scrollHeight;
 }
@@ -1770,11 +1831,11 @@ function pyBadges(internet, uefi) {
   if (internet === null || internet === undefined) {
     nb.textContent = 'NET ···';
     nb.className   = 'badge-warn';
-    setInfo('net', 'verificando…', 'warn');
+    setInfo('net', t('badge-checking'), 'warn');
   } else {
-    nb.textContent = internet ? 'NET ✓' : 'SIN RED';
+    nb.textContent = internet ? 'NET ✓' : t('badge-no-network');
     nb.className   = 'badge-' + (internet ? 'ok' : 'err');
-    setInfo('net', internet ? 'Conectado' : 'Sin conexión', internet ? 'ok' : 'err');
+    setInfo('net', internet ? t('step-net-up') : t('step-net-down'), internet ? 'ok' : 'err');
   }
   const ub = document.getElementById('uefi-badge');
   ub.textContent = uefi ? 'UEFI' : 'BIOS';
@@ -1917,7 +1978,7 @@ class InstaladorAPI:
         try:
             subprocess.Popen(["systemctl", "reboot"])
         except Exception as e:
-            self._v._log(f"[WARN] reboot: {e}", "warn")
+            self._v._log(self._t("log-reboot-warn", e=e), "warn")
         return True
 
     def cerrar(self):
@@ -1977,6 +2038,22 @@ class VentanaInstalador:
     def _status(self, msg: str):                    self._jsc("pyStatus", msg)
     def _label(self, txt: str):                     self._jsc("pyStatusLabel", txt)
 
+    def _t(self, key: str, **kwargs) -> str:
+        """Traduce 'key' al idioma elegido por el usuario (self._lang) y
+        aplica .format(**kwargs) para los textos con partes dinámicas
+        (rutas, nombres de disco, mensajes de excepción, etc. — esas partes
+        NUNCA se traducen, solo el texto que las rodea).
+        Fallback en cadena: idioma actual → inglés → la propia key (nunca
+        debe explotar el log de instalación por una clave faltante)."""
+        _tr = translations.TRANSLATIONS.get(self._lang, translations.TRANSLATIONS["en"])
+        plantilla = _tr.get(key) or translations.TRANSLATIONS["en"].get(key) or key
+        try:
+            return plantilla.format(**kwargs)
+        except Exception:
+            # Si falta un placeholder o el .format() falla por lo que sea,
+            # mejor mostrar la plantilla cruda que tronar el hilo de instalación.
+            return plantilla
+
     def _on_close(self):
         self._cerrado  = True
         self._abortado = True
@@ -2026,12 +2103,12 @@ class VentanaInstalador:
                 timer.cancel()
 
             if _timed_out:
-                self._log(f"[TIMEOUT] {timeout}s — proceso terminado", "err")
+                self._log(self._t("log-timeout-proc", timeout=timeout), "err")
                 return -2, "\n".join(salida)
 
             return proc.returncode, "\n".join(salida)
         except Exception as e:
-            self._log(f"[EXCEPCIÓN] {e}", "err")
+            self._log(self._t("log-exception", e=e), "err")
             if proc is not None:
                 try:
                     proc.kill(); proc.wait()
@@ -2056,14 +2133,14 @@ class VentanaInstalador:
             out = (proc.stdout or "") + (proc.stderr or "")
             return proc.returncode, out.strip()
         except subprocess.TimeoutExpired:
-            self._log(f"[TIMEOUT] {timeout}s en {cmd[0]}", "err")
+            self._log(self._t("log-timeout-cmd", timeout=timeout, cmd0=cmd[0]), "err")
             return -2, ""
         except Exception as e:
-            self._log(f"[EXCEPCIÓN] {e}", "err")
+            self._log(self._t("log-exception", e=e), "err")
             return -3, ""
 
     def _limpiar_montajes(self):
-        self._log("\n── Limpiando montajes ──", "warn")
+        self._log(self._t("log-cleaning-mounts"), "warn")
         puntos = [
             # EFI primero
             str(MOUNT_EFI),
@@ -2091,7 +2168,7 @@ class VentanaInstalador:
             if Path(p).is_mount():
                 rc, _ = self._run_cmd(["umount", "-l", p])
                 if rc == 0:
-                    self._log(f"  desmontado: {p}", "ok")
+                    self._log(self._t("log-unmounted", p=p), "ok")
 
     # ── Utilidades de escritura de archivos ───────────────────────────────────
 
@@ -2099,7 +2176,7 @@ class VentanaInstalador:
         dest = MOUNT_ROOT / ruta_relativa.lstrip("/")
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(contenido, encoding="utf-8")
-        self._log(f"  [escrito] /{ruta_relativa}", "ok")
+        self._log(self._t("log-written", ruta=ruta_relativa), "ok")
 
     def _chown_r(self, ruta: str, usuario: str):
         self._run_chroot(["chown", "-R", f"{usuario}:{usuario}", ruta])
@@ -2111,7 +2188,7 @@ class VentanaInstalador:
     def _configurar_optimizaciones(self, gpu_info: dict, cpu_arch: str, disco_tipo: str):
         """Configura ZRAM+zstd, systemd-oomd, BBR, IO scheduler, sysctl y binarios de sistema."""
 
-        self._log("\n── Optimizaciones del sistema ──\n", "step")
+        self._log(self._t("log-section-optimizations"), "step")
 
         # ── avalos-gpu-env: detecta GPU y actualiza hyprland.lua de cada usuario ──
         # El servicio avalos-gpu-detect.service (creado en _run_instalacion) llama
@@ -2164,7 +2241,7 @@ class VentanaInstalador:
             "done\n"
         )
         _gpu_env_bin.chmod(0o755)
-        self._log("  /usr/local/bin/avalos-gpu-env instalado (chmod 755)", "ok")
+        self._log(self._t("log-gpu-env-installed"), "ok")
 
         # ── Centro de Control AvalOS (avalos-settings + avalos-wallpaper + avalos-about) ──
         # FIX (refactor i18n/configs, mismo patrón que mako/rofi/kitty/waybar):
@@ -2176,16 +2253,16 @@ class VentanaInstalador:
         # verdad, sin duplicación) vía _leer_config, igual que el resto de
         # configs. Si falta alguno, se loggea y se omite — no se genera una
         # versión vieja embebida.
-        self._log("  Instalando scripts de configuración AvalOS…", "info")
+        self._log(self._t("log-installing-scripts"), "info")
         for _script_name in ("avalos-settings", "avalos-wallpaper", "avalos-about"):
             _contenido = _leer_config(f"scripts/{_script_name}")
             if _contenido:
                 _script_path = _bin_dir / _script_name
                 _script_path.write_text(_contenido, encoding="utf-8")
                 _script_path.chmod(0o755)
-                self._log(f"  /usr/local/bin/{_script_name} instalado", "ok")
+                self._log(self._t("log-script-installed", script=_script_name), "ok")
             else:
-                self._log(f"[WARN] configs/scripts/{_script_name} no encontrado — {_script_name} no instalado", "warn")
+                self._log(self._t("log-script-missing", script=_script_name), "warn")
 
         # ── Desktop entry para avalos-settings ────────────────────────────
         _apps_dir = MOUNT_ROOT / "usr" / "share" / "applications"
@@ -2193,9 +2270,9 @@ class VentanaInstalador:
         _contenido = _leer_config("scripts/avalos-settings.desktop")
         if _contenido:
             (_apps_dir / "avalos-settings.desktop").write_text(_contenido, encoding="utf-8")
-            self._log("  avalos-settings.desktop instalado", "ok")
+            self._log(self._t("log-settings-desktop-installed"), "ok")
         else:
-            self._log("[WARN] configs/scripts/avalos-settings.desktop no encontrado — entrada de menú no instalada", "warn")
+            self._log(self._t("log-settings-desktop-missing"), "warn")
 
         # ── Marca de fecha de instalación (usada por avalos-about) ───────
         # FIX: usar datetime importado globalmente en lugar de __import__("datetime")
@@ -2215,7 +2292,7 @@ class VentanaInstalador:
             "compression-algorithm = zstd\n"
             "swap-priority = 100\n"
         )
-        self._log("  ZRAM: zstd comprimido, max 8 GB, prioridad 100", "ok")
+        self._log(self._t("log-zram-ok"), "ok")
 
         # ── systemd-oomd ──────────────────────────────────────────────────────
         oomd_conf = MOUNT_ROOT / "etc" / "systemd" / "oomd.conf"
@@ -2228,7 +2305,7 @@ class VentanaInstalador:
             "DefaultMemoryPressureDurationSec=10s\n"
         )
         self._run_chroot(["systemctl", "enable", "systemd-oomd"])
-        self._log("  systemd-oomd: habilitado (swap >85% → kill)", "ok")
+        self._log(self._t("log-oomd-ok"), "ok")
 
         # ── sysctl conservador (sin flags peligrosos) ──────────────────────────
         sysctl_dir = MOUNT_ROOT / "etc" / "sysctl.d"
@@ -2248,7 +2325,7 @@ class VentanaInstalador:
             "vm.dirty_expire_centisecs = 3000\n"
             "vm.dirty_writeback_centisecs = 500\n"
         )
-        self._log("  sysctl memoria: swappiness=10, dirty_ratio=10", "ok")
+        self._log(self._t("log-sysctl-mem-ok"), "ok")
 
         # Red: BBR + FQ
         (sysctl_dir / "81-avalos-bbr.conf").write_text(
@@ -2273,7 +2350,7 @@ class VentanaInstalador:
             "net.ipv4.conf.default.rp_filter = 1\n"
             "net.ipv4.conf.all.rp_filter = 1\n"
         )
-        self._log("  sysctl seguridad: dmesg_restrict=1, kptr_restrict=1", "ok")
+        self._log(self._t("log-sysctl-security-ok"), "ok")
 
         # ── IO scheduler por tipo de disco (udev) ──────────────────────────────
         udev_dir = MOUNT_ROOT / "etc" / "udev" / "rules.d"
@@ -2293,7 +2370,7 @@ class VentanaInstalador:
             'ACTION=="add|change", KERNEL=="mmcblk[0-9]*", '
             'ATTR{queue/scheduler}="mq-deadline"\n'
         )
-        self._log(f"  IO scheduler: bfq(HDD) / mq-deadline(SSD) / kyber(NVMe) — disco: {disco_tipo}", "ok")
+        self._log(self._t("log-io-scheduler", disco_tipo=disco_tipo), "ok")
 
         # ── DNS-over-TLS con systemd-resolved ─────────────────────────────────
         resolved_conf = MOUNT_ROOT / "etc" / "systemd" / "resolved.conf"
@@ -2316,14 +2393,13 @@ class VentanaInstalador:
             )
         except OSError as e:
             # No es fatal, pero sin este symlink el DNS no funcionará post-install
-            self._log(f"[WARN] resolv.conf symlink falló: {e}", "warn")
+            self._log(self._t("log-resolvconf-fail", e=e), "warn")
         self._run_chroot(["systemctl", "enable", "systemd-resolved"])
         self._log("  DNS-over-TLS: systemd-resolved (Cloudflare + Google + Quad9)", "ok")
 
         # ── Info del hardware detectado ────────────────────────────────────────
         self._log(
-            f"  CPU arch: {cpu_arch}  |  GPU: {gpu_info['vendor'].upper()} "
-            f"({gpu_info['model']})  |  Disco: {disco_tipo.upper()}",
+            self._t("log-summary-cpu-gpu-disk", cpu_arch=cpu_arch, gpu_vendor=gpu_info["vendor"].upper(), gpu_model=gpu_info["model"], disco_tipo=disco_tipo.upper()),
             "ok"
         )
 
@@ -2386,7 +2462,10 @@ DISTRIB_DESCRIPTION="AvalOS"
         # Repo AvalOS en pacman.conf
         avalos_repo = (
             "\n[avalos]\n"
-            "SigLevel = Optional TrustAll\n"
+            # Required DatabaseOptional: paquetes deben tener firma válida;
+            # base de datos (.db) no requiere firma (GitHub Releases no la firma).
+            # La clave se importa justo abajo antes de escribir este bloque.
+            "SigLevel = Required DatabaseOptional\n"
             f"Server = {AVALOS_REPO_URL}\n"
         )
         # Multilib (necesario para Steam y libs 32-bit de juegos)
@@ -2397,6 +2476,24 @@ DISTRIB_DESCRIPTION="AvalOS"
             existing = pac_path.read_text(encoding="utf-8") if pac_path.exists() else ""
             to_append = ""
             if "[avalos]" not in existing:
+                # Importar la clave GPG de AvalOS al keyring del sistema instalado.
+                # La clave ya está en el keyring del live ISO (build-iso.yml la importa
+                # durante la build). La exportamos desde /etc/pacman.d/gnupg del live
+                # y la importamos en el chroot — sin depender de internet ni keyservers.
+                _fp   = "310A08970CFBDC61"
+                _tmp  = MOUNT_ROOT / "tmp" / "avalos.gpg"
+                _rc, _ = self._run([
+                    "bash", "-c",
+                    f"gpg --homedir /etc/pacman.d/gnupg --armor --export {_fp} > {_tmp} 2>/dev/null"
+                ])
+                if _rc == 0 and _tmp.stat().st_size > 0:
+                    self._run_chroot(["pacman-key", "--init"])
+                    self._run_chroot(["pacman-key", "--add", f"/tmp/avalos.gpg"])
+                    self._run_chroot(["pacman-key", "--lsign-key", _fp])
+                    self._log(f"  clave GPG AvalOS ({_fp}) importada al keyring", "ok")
+                else:
+                    self._log("  [WARN] no se pudo exportar la clave GPG de AvalOS desde el live ISO", "warn")
+                _tmp.unlink(missing_ok=True)
                 to_append += avalos_repo
             if "[multilib]" not in existing:
                 # Descomentar el bloque multilib con regex (tolerante a variaciones de espacio)
@@ -2443,7 +2540,7 @@ DISTRIB_DESCRIPTION="AvalOS"
             # FIX: sin hyprland.lua el sistema instalado arranca sin configuración
             # de Hyprland (sin keybindings, monitores, ni apps) → pantalla en negro.
             # Esto es un error fatal de la imagen ISO, no un warning recuperable.
-            self._log("[ERROR] hyprland_conf_lua.template no encontrado en configs/hyprland/. ISO incompleta.", "err")
+            self._log(self._t("log-hyprland-template-missing"), "err")
             raise RuntimeError(
                 "hyprland_conf_lua.template no encontrado en /usr/share/avalos/configs/hyprland/.\n"
                 "La imagen ISO está incompleta — reconstruye con build-iso.yml."
@@ -2480,7 +2577,7 @@ DISTRIB_DESCRIPTION="AvalOS"
         try:
             if _default_wp.is_file():
                 wp_path.write_bytes(_default_wp.read_bytes())
-                self._log("  wallpaper.png copiado (branding AvalOS: logo + texto)", "ok")
+                self._log(self._t("log-wallpaper-copied"), "ok")
             else:
                 import struct as _struct, zlib as _zlib
                 def _make_chunk(tag, data):
@@ -2495,7 +2592,7 @@ DISTRIB_DESCRIPTION="AvalOS"
                     + _make_chunk(b'IEND', b'')
                 )
                 wp_path.write_bytes(_png)
-                self._log("  [WARN] wallpaper-default.png no encontrado — wallpaper.png generado (Tokyo Night #1a1b26 sólido)", "warn")
+                self._log(self._t("log-wallpaper-fallback"), "warn")
         except Exception as _e:
             self._log(f"  [WARN] wallpaper: {_e}", "warn")
 
@@ -2510,7 +2607,7 @@ DISTRIB_DESCRIPTION="AvalOS"
         if _contenido:
             self._escribir(f"{home}/.config/hypr/hypridle.conf", _contenido)
         else:
-            self._log("[WARN] configs/hyprland/hypridle.conf no encontrado — hypridle.conf no generado", "warn")
+            self._log(self._t("log-hypridle-missing"), "warn")
 
         # hyprlock.conf
         # FIX: se eliminó el fallback embebido — tenía exactamente los bugs
@@ -2524,7 +2621,7 @@ DISTRIB_DESCRIPTION="AvalOS"
         if _contenido:
             self._escribir(f"{home}/.config/hypr/hyprlock.conf", _contenido)
         else:
-            self._log("[WARN] configs/hyprland/hyprlock.conf no encontrado — hyprlock.conf no generado", "warn")
+            self._log(self._t("log-hyprlock-missing"), "warn")
 
         # Waybar config
         # FIX: se eliminó el fallback embebido (JSON hardcodeado aquí) — estaba
@@ -2538,7 +2635,7 @@ DISTRIB_DESCRIPTION="AvalOS"
         if _contenido:
             self._escribir(f"{home}/.config/waybar/config.jsonc", _contenido)
         else:
-            self._log("[WARN] configs/waybar/config.jsonc no encontrado — waybar/config.jsonc no generado", "warn")
+            self._log(self._t("log-waybar-config-missing"), "warn")
 
         # Waybar style — Tokyo Night
         # FIX: mismo motivo que arriba — fallback embebido eliminado (estaba
@@ -2549,7 +2646,7 @@ DISTRIB_DESCRIPTION="AvalOS"
         if _contenido:
             self._escribir(f"{home}/.config/waybar/style.css", _contenido)
         else:
-            self._log("[WARN] configs/waybar/style.css no encontrado — waybar/style.css no generado", "warn")
+            self._log(self._t("log-waybar-style-missing"), "warn")
 
         # mako (reemplaza dunst — BUG-011: dunst <1.9 no soporta Wayland puro)
         _contenido = _leer_config("mako/config")
@@ -2569,7 +2666,7 @@ DISTRIB_DESCRIPTION="AvalOS"
             (MOUNT_ROOT / f"{home}/.config/rofi/scripts/powermenu.sh").chmod(0o755)
         except OSError as e:
             # Sin permisos de ejecución el powermenu de rofi fallará en el primer uso
-            self._log(f"[WARN] chmod powermenu.sh falló: {e}", "warn")
+            self._log(self._t("log-chmod-powermenu-fail", e=e), "warn")
 
         # kitty
         _contenido = _leer_config("kitty/kitty.conf")
@@ -2604,7 +2701,7 @@ DISTRIB_DESCRIPTION="AvalOS"
         _sddm_dir.mkdir(parents=True, exist_ok=True)
         (_sddm_dir / "metadata.desktop").write_text(_SDDM_META, encoding="utf-8")
         (_sddm_dir / "Main.qml").write_text(_sddm_qml, encoding="utf-8")
-        self._log("  Tema SDDM 'avalos' instalado (metadata + Main.qml, Tokyo Night)", "ok")
+        self._log(self._t("log-sddm-theme-installed"), "ok")
 
         # SDDM config
         self._escribir("etc/sddm.conf.d/hyprland.conf", """\
@@ -2702,9 +2799,9 @@ export XDG_SESSION_TYPE=wayland
         if _src_logo.exists():
             # FIX: usar shutil (ya importado globalmente) en lugar de import shutil as _shutil local
             shutil.copy2(_src_logo, _dst_logo)
-            self._log("  ✓ /etc/fastfetch/avalos.txt copiado al sistema instalado")
+            self._log(self._t("log-fastfetch-logo-copied"))
         else:
-            self._log("  [WARN] avalos.txt no encontrado en el live — fastfetch usará logo genérico", "warn")
+            self._log(self._t("log-fastfetch-logo-missing"), "warn")
 
         # Permisos
         self._chown_r(f"/home/{usuario}", usuario)
@@ -2733,7 +2830,7 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 """)
         self._run_chroot(["systemctl", "enable", "avalos-enable-linger.service"])
-        self._log("  Hyprland configurado correctamente.", "ok")
+        self._log(self._t("log-hyprland-ok"), "ok")
 
     # ═════════════════════════════════════════════════════════════════════════
     #  FLUJO PRINCIPAL DE INSTALACIÓN
@@ -2747,8 +2844,8 @@ WantedBy=multi-user.target
         # Solo esperamos si todavía no se ha recibido la config del wizard.
         if not self._config_lista.is_set():
             if not self._config_lista.wait(timeout=600):
-                self._log("[ERROR] Tiempo de espera agotado (10 min). Reinicia el instalador.", "err")
-                self._jsc("pyErrorPaso", "Tiempo de espera agotado. Cierra y vuelve a abrir el instalador.")
+                self._log(self._t("log-timeout-wizard"), "err")
+                self._jsc("pyErrorPaso", self._t("err-timeout"))
                 self._instalando = False
                 return
         if self._abortado:
@@ -2767,8 +2864,8 @@ WantedBy=multi-user.target
         self._install_bore   = getattr(self, '_install_bore', False)
 
         self._info("user", usuario, "ok")
-        self._info("modo", "USB (ext4 noatime)" if self._modo_usb else "PC (Btrfs + subvolúmenes)", "ok")
-        _bl_labels = {"grub": "GRUB", "sd-boot": "systemd-boot", "refind": "rEFInd", "none": "Omitido"}
+        self._info("modo", "USB (ext4 noatime)" if self._modo_usb else self._t("info-modo-pc"), "ok")
+        _bl_labels = {"grub": "GRUB", "sd-boot": "systemd-boot", "refind": "rEFInd", "none": self._t("info-bootloader-skipped")}
         self._info("grub", _bl_labels.get(self._bootloader, "GRUB"),
                    "ok" if self._bootloader != "none" else "warn")
 
@@ -2785,8 +2882,8 @@ WantedBy=multi-user.target
 
         try:
             # ── PASO 0: Detectar discos + hardware ───────────────────────────
-            self._label("detectando hardware…")
-            self._status("Detectando discos y hardware…")
+            self._label(self._t("label-detecting-hw"))
+            self._status(self._t("status-detecting-hw"))
             discos    = listar_discos()
             disponibles = [d for d in discos if not d["es_arranque"]]
             disco_boot  = next((d for d in discos if d["es_arranque"]), None)
@@ -2802,8 +2899,7 @@ WantedBy=multi-user.target
             else:
                 _kernel_display = "linux-avalos-compat"
             self._log(
-                f"\nCPU arch: {cpu_arch} | GPU: {gpu_info['vendor'].upper()} ({gpu_info['model']})\n"
-                f"Kernel seleccionado: {_kernel_display}",
+                self._t("log-summary-pre-kernel", cpu_arch=cpu_arch, gpu_vendor=gpu_info["vendor"].upper(), gpu_model=gpu_info["model"], kernel_display=_kernel_display),
                 "ok"
             )
 
@@ -2814,9 +2910,7 @@ WantedBy=multi-user.target
 
             if not disponibles:
                 self._jsc("pyErrorFatal",
-                          "No hay ningún disco disponible.\n"
-                          f"El único disco ({disco_boot['name'] if disco_boot else '?'}) "
-                          "es el disco de arranque (el live USB).")
+                          self._t("err-no-disk-available", boot_disk=(disco_boot["name"] if disco_boot else "?")))
                 return
 
             # Usar disco elegido en wizard; si no se pasó, usar el primero disponible
@@ -2826,21 +2920,19 @@ WantedBy=multi-user.target
 
             if disco["es_arranque"]:
                 self._jsc("pyErrorFatal",
-                          f"El disco /dev/{dev_name} es el disco de arranque actual.\n"
-                          "Selecciona un disco diferente.")
+                          self._t("err-disk-is-boot-disk", dev_name=dev_name))
                 return
 
             size_gb = disco["size_b"] / 1e9
             if size_gb < MIN_DISK_GB:
                 self._jsc("pyErrorFatal",
-                          f"El disco /dev/{dev_name} tiene solo {size_gb:.1f} GB.\n"
-                          f"AvalOS necesita al menos {MIN_DISK_GB} GB para instalarse correctamente.")
+                          self._t("err-disk-too-small", dev_name=dev_name, size_gb=size_gb, min_gb=MIN_DISK_GB))
                 return
 
             dev = f"/dev/{dev_name}"
             disco_tipo = detectar_tipo_disco_destino(dev_name)
             self._info("dest", f"{dev} ({disco['size_human']} · {disco_tipo.upper()} · {disco['model']})", "ok")
-            self._log(f"\nDisco destino: {dev} ({disco['size_human']} · {disco_tipo.upper()})", "ok")
+            self._log(self._t("log-target-disk", dev=dev, size_human=disco["size_human"], disco_tipo=disco_tipo.upper()), "ok")
 
             # ── PASO 1: UEFI ─────────────────────────────────────────────────
             self._step("uefi", "active")
@@ -2857,16 +2949,15 @@ WantedBy=multi-user.target
 
             # ── PASO 2: Internet ─────────────────────────────────────────────
             self._step("net", "active")
-            self._status("Verificando internet…")
+            self._status(self._t("status-checking-internet"))
             net_ok = verificar_internet()
             self._jsc("pyBadges", net_ok, uefi)
             if not net_ok:
-                self._step("net", "error", "Sin conexión")
+                self._step("net", "error", self._t("step-net-down"))
                 self._jsc("pyErrorPaso",
-                          "No hay conexión a internet.\n"
-                          "pacstrap necesita descargar paquetes. Verifica tu red.")
+                          self._t("err-no-internet"))
                 return
-            self._step("net", "done", "Conectado")
+            self._step("net", "done", self._t("step-net-up"))
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
@@ -2876,8 +2967,18 @@ WantedBy=multi-user.target
             herramientas = verificar_herramientas()
             faltantes = [h for h, ok in herramientas.items() if not ok]
             if faltantes:
-                self._log(f"[WARN] Faltan: {', '.join(faltantes)} — intentando instalar…", "warn")
-                self._run_cmd(["pacman", "-Sy", "--noconfirm", "--needed"] + faltantes, timeout=120)
+                # FIX: pacman instala PAQUETES, no binarios — traducir cada
+                # binario faltante a su paquete real (ver _HERRAMIENTA_A_PAQUETE).
+                # set() para no repetir paquetes (ej. btrfs y mkfs.btrfs comparten
+                # btrfs-progs; pacstrap/genfstab/arch-chroot comparten arch-install-scripts).
+                _paquetes_faltantes = sorted({
+                    _HERRAMIENTA_A_PAQUETE.get(h, h) for h in faltantes
+                })
+                self._log(
+                    self._t("log-missing-tools", faltantes=", ".join(faltantes), paquetes=", ".join(_paquetes_faltantes)),
+                    "warn"
+                )
+                self._run_cmd(["pacman", "-Sy", "--noconfirm", "--needed"] + _paquetes_faltantes, timeout=120)
             self._step("tools", "done")
             avanzar()
 
@@ -2885,8 +2986,8 @@ WantedBy=multi-user.target
 
             # ── PASO 4: Particionar ──────────────────────────────────────────
             self._step("part", "active")
-            self._status(f"Particionando {dev}…")
-            self._log(f"\n── Particionando {dev} ──\n", "step")
+            self._status(self._t("status-partitioning", dev=dev))
+            self._log(self._t("log-section-partitioning", dev=dev), "step")
 
             # Countdown 10s — BUG-009 FIX: Python controla el tiempo; JS solo muestra la UI.
             # Así la acción destructiva NUNCA ocurre antes de que el contador llegue a 0.
@@ -2903,7 +3004,7 @@ WantedBy=multi-user.target
 
             # Verificar que ninguna partición del disco destino está montada
             # (más allá del check de es_arranque, que solo detecta el boot disk)
-            self._log("  Verificando que el disco destino no tiene particiones montadas…", "info")
+            self._log(self._t("log-checking-mounted-partitions"), "info")
             with open("/proc/mounts") as _mf:
                 _proc_mounts = _mf.read()
             _dev_base = dev_name  # ej. "sdb", "nvme1n1"
@@ -2923,18 +3024,16 @@ WantedBy=multi-user.target
             if _mounted:
                 _puntos = ", ".join(_mounted)
                 self._jsc("pyErrorFatal",
-                          f"El disco {dev} tiene particiones montadas en: {_puntos}.\n"
-                          "Desmóntalas antes de continuar.")
+                          self._t("err-disk-has-mounted-partitions", dev=dev, puntos=_puntos))
                 return
-            self._log(f"  {dev} no tiene particiones montadas ✓", "ok")
+            self._log(self._t("log-disk-not-mounted", dev=dev), "ok")
 
             # Borrar tabla y crear particiones
             rc_wipe, _ = self._run_cmd(["wipefs", "-a", dev])
             if rc_wipe != 0:
                 self._step("part", "error")
                 self._jsc("pyErrorPaso",
-                          f"wipefs falló en {dev}. El disco podría estar en uso.\n"
-                          "Desmonta todas sus particiones y vuelve a intentarlo.")
+                          self._t("err-wipefs-failed", dev=dev))
                 self._limpiar_montajes(); return
 
             if uefi:
@@ -2961,7 +3060,7 @@ WantedBy=multi-user.target
 
             if rc != 0:
                 self._step("part", "error")
-                self._jsc("pyErrorPaso", f"parted falló en {dev}. Revisa el log.")
+                self._jsc("pyErrorPaso", self._t("err-parted-failed", dev=dev))
                 self._limpiar_montajes(); return
 
             # Esperar a que udev registre los nuevos nodos de bloque
@@ -2977,14 +3076,14 @@ WantedBy=multi-user.target
 
             # ── PASO 5: Formatear ────────────────────────────────────────────
             self._step("format", "active")
-            self._status("Formateando particiones…")
-            self._log("\n── Formateando ──\n", "step")
+            self._status(self._t("status-formatting"))
+            self._log(self._t("log-section-formatting"), "step")
 
             if uefi:
                 rc, _ = self._run_cmd(["mkfs.fat", "-F32", dev_efi])
                 if rc != 0:
                     self._step("format", "error")
-                    self._jsc("pyErrorPaso", f"mkfs.fat falló en {dev_efi}")
+                    self._jsc("pyErrorPaso", self._t("err-mkfs-fat-failed", dev_efi=dev_efi))
                     self._limpiar_montajes(); return
 
             # ── Formatear raíz como Btrfs ────────────────────────────────────
@@ -2997,7 +3096,7 @@ WantedBy=multi-user.target
 
             if rc != 0:
                 self._step("format", "error")
-                self._jsc("pyErrorPaso", f"mkfs falló en {dev_root}")
+                self._jsc("pyErrorPaso", self._t("err-mkfs-failed", dev_root=dev_root))
                 self._limpiar_montajes(); return
 
             # ── Crear subvolúmenes Btrfs (solo modo PC) ──────────────────────
@@ -3017,7 +3116,7 @@ WantedBy=multi-user.target
                                           pre_mkdir=_btrfs_tmp)
                 if rc_mnt != 0:
                     self._step("format", "error")
-                    self._jsc("pyErrorPaso", "No se pudo montar Btrfs para crear subvolúmenes.")
+                    self._jsc("pyErrorPaso", self._t("err-btrfs-mount-failed"))
                     self._limpiar_montajes(); return
 
                 _subvols = ["@", "@home", "@snapshots", "@log", "@cache", "@tmp"]
@@ -3025,17 +3124,17 @@ WantedBy=multi-user.target
                     rc_sv, _ = self._run_cmd(["btrfs", "subvolume", "create",
                                               f"{_btrfs_tmp}/{sv}"])
                     if rc_sv != 0:
-                        self._log(f"[WARN] No se pudo crear subvolumen {sv}", "warn")
+                        self._log(self._t("log-subvol-create-fail", sv=sv), "warn")
 
                 self._run_cmd(["umount", _btrfs_tmp])
-                self._log("  Subvolúmenes Btrfs creados: " + ", ".join(_subvols), "ok")
+                self._log(self._t("log-subvols-created", subvols=", ".join(_subvols)), "ok")
 
             if uefi and self._modo_usb:
-                _fmt_label = "FAT32 + ext4 sin journal (USB)"
+                _fmt_label = "FAT32 + " + self._t("step-fmt-ext4-nojournal")
             elif uefi:
                 _fmt_label = "FAT32 + Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
             else:
-                _fmt_label = "ext4 sin journal (USB)" if self._modo_usb else "Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
+                _fmt_label = self._t("step-fmt-ext4-nojournal") if self._modo_usb else "Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
             self._step("format", "done", _fmt_label)
             # Segundo settle: esperar que el kernel actualice los nodos de bloque
             # después del formateo antes de intentar montar
@@ -3056,7 +3155,7 @@ WantedBy=multi-user.target
                 rc, _ = self._run_cmd(["mount", dev_root, str(MOUNT_ROOT)])
                 if rc != 0:
                     self._step("mount", "error")
-                    self._jsc("pyErrorPaso", f"Error montando {dev_root}")
+                    self._jsc("pyErrorPaso", self._t("err-mount-failed", dev_root=dev_root))
                     self._limpiar_montajes(); return
             else:
                 # PC: Btrfs con subvolúmenes y opciones de rendimiento
@@ -3071,7 +3170,7 @@ WantedBy=multi-user.target
                                        dev_root, str(MOUNT_ROOT)])
                 if rc != 0:
                     self._step("mount", "error")
-                    self._jsc("pyErrorPaso", f"Error montando subvolumen @ de {dev_root}")
+                    self._jsc("pyErrorPaso", self._t("err-mount-subvol-failed", dev_root=dev_root))
                     self._limpiar_montajes(); return
 
                 # Crear puntos de montaje y montar subvolúmenes adicionales
@@ -3090,7 +3189,7 @@ WantedBy=multi-user.target
                         _sv_opts += ",nodatacow"
                     rc_sv, _ = self._run_cmd(["mount", "-o", _sv_opts, dev_root, str(sv_path)])
                     if rc_sv != 0:
-                        self._log(f"[WARN] No se pudo montar subvolumen {sv_name} en {sv_path}", "warn")
+                        self._log(self._t("log-subvol-mount-fail", sv_name=sv_name, sv_path=sv_path), "warn")
                     elif sv_name == "@tmp":
                         # FIX: nodatacow como opción de montaje no deshabilita CoW de
                         # forma permanente — solo afecta a archivos creados en ese mount
@@ -3099,16 +3198,16 @@ WantedBy=multi-user.target
                         # "desactivar CoW para todos los archivos creados aquí", y SÍ
                         # persiste entre reinicios como parte del árbol de inodos de Btrfs.
                         self._run_cmd(["chattr", "+C", str(sv_path)])
-                        self._log("  @tmp: CoW deshabilitado con chattr +C (permanente, persiste tras desmontaje)", "ok")
+                        self._log(self._t("log-tmp-cow-disabled"), "ok")
 
-                self._log("  Subvolúmenes Btrfs montados correctamente", "ok")
+                self._log(self._t("log-subvols-mounted-ok"), "ok")
 
             if uefi:
                 MOUNT_EFI.mkdir(parents=True, exist_ok=True)
                 rc, _ = self._run_cmd(["mount", dev_efi, str(MOUNT_EFI)])
                 if rc != 0:
                     self._step("mount", "error")
-                    self._jsc("pyErrorPaso", f"Error montando {dev_efi} en EFI")
+                    self._jsc("pyErrorPaso", self._t("err-mount-efi-failed", dev_efi=dev_efi))
                     self._limpiar_montajes(); return
 
             self._step("mount", "done")
@@ -3118,8 +3217,8 @@ WantedBy=multi-user.target
 
             # ── PASO 7: Mirrors ──────────────────────────────────────────────
             self._step("mirrors", "active")
-            self._status("Optimizando mirrors con reflector…")
-            self._log("\n── Optimizando mirrors ──\n", "step")
+            self._status(self._t("status-optimizing-mirrors"))
+            self._log(self._t("log-section-mirrors"), "step")
             self._run_cmd(["pacman", "-Sy", "--noconfirm", "--needed", "reflector"], timeout=120)
             rc, _ = self._run_cmd([
                 "reflector", "--country", "SV,US,MX,GT",
@@ -3127,21 +3226,26 @@ WantedBy=multi-user.target
                 "--protocol", "https", "--save", "/etc/pacman.d/mirrorlist",
             ], timeout=120)
             if rc == 0:
-                self._step("mirrors", "done", "Mirrors optimizados")
+                self._step("mirrors", "done", self._t("step-mirrors-optimized"))
             else:
-                self._step("mirrors", "skip", "Mirrors por defecto")
-                self._log("[WARN] reflector falló — usando mirrors por defecto.", "warn")
+                self._step("mirrors", "skip", self._t("step-mirrors-default"))
+                self._log(self._t("log-reflector-fail"), "warn")
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
 
             # ── PASO 8: pacstrap ─────────────────────────────────────────────
             self._step("pacstrap", "active")
-            self._status("Instalando sistema base con pacstrap…")
-            self._label("instalando sistema base…")
+            self._status(self._t("status-installing-base"))
+            self._label(self._t("label-installing-base"))
             self._log("\n── pacstrap ──\n", "step")
 
             pkgs = list(BASE_PKGS)
+            # BTRFS_PKGS solo en modo PC (Btrfs + snapper). En USB (ext4) se
+            # omiten: snap-pac dispara hooks de snapper aunque no haya config,
+            # generando errores en cada transacción pacman posterior.
+            if not self._modo_usb:
+                pkgs += BTRFS_PKGS
             if self._bootloader == 'sd-boot':
                 # systemd-boot incluido en systemd; quitar grub y os-prober
                 pkgs = [p for p in pkgs if p not in {"grub", "os-prober"}]
@@ -3170,7 +3274,7 @@ WantedBy=multi-user.target
 
             _es_v3_o_superior = cpu_arch in ("x86-64-v3", "x86-64-v4")
             _nombre_cpu_nivel = "v3/v4 (AVX2+)" if _es_v3_o_superior else "baseline (sin AVX2)"
-            self._log(f"  CPU detectada: {cpu_arch} → nivel {_nombre_cpu_nivel}", "info")
+            self._log(self._t("log-cpu-detected", cpu_arch=cpu_arch, nivel=_nombre_cpu_nivel), "info")
 
             # ── BORE scheduler (opt-in, checkbox "Extras") ─────────────────────
             # No existe variante "linux-avalos-compat-bore": BORE solo se ofrece
@@ -3180,14 +3284,13 @@ WantedBy=multi-user.target
             _quiere_bore = bool(getattr(self, "_install_bore", False))
             if _quiere_bore and not _es_v3_o_superior:
                 self._log(
-                    f"  [WARN] Scheduler BORE solicitado pero la CPU ({cpu_arch}) no soporta "
-                    f"AVX2 — no existe linux-avalos-compat-bore. Usando linux-avalos-compat.",
+                    self._t("log-bore-not-supported", cpu_arch=cpu_arch),
                     "warn"
                 )
                 _quiere_bore = False
 
             # Intentar resolver el kernel desde el repo [avalos]
-            self._log("  Verificando disponibilidad de kernels en repo [avalos]…", "info")
+            self._log(self._t("log-checking-kernel-repo"), "info")
             _kernel_pkg  = "linux"
             _headers_pkg = "linux-headers"
 
@@ -3210,7 +3313,7 @@ WantedBy=multi-user.target
                 if _rc == 0:
                     _kernel_pkg  = _target_kernel
                     _headers_pkg = _target_headers
-                    self._log(f"  Kernel: {_kernel_pkg} ✓ (repo [avalos] disponible)", "ok")
+                    self._log(self._t("log-kernel-available", kernel_pkg=_kernel_pkg), "ok")
                 else:
                     # Fallback: intentar el otro variant si está disponible.
                     # Si se pedía BORE (v3) y no está, caer a linux-avalos (v3 sin BORE)
@@ -3230,31 +3333,28 @@ WantedBy=multi-user.target
                         _headers_pkg = _alt_headers
                         if _quiere_bore:
                             self._log(
-                                f"  [WARN] {_target_kernel} no disponible. "
-                                f"Usando {_alt_kernel} (sin BORE) en CPU {cpu_arch}.",
+                                self._t("log-kernel-fallback-no-bore", target=_target_kernel, alt=_alt_kernel, cpu_arch=cpu_arch),
                                 "warn"
                             )
                         elif not _es_v3_o_superior:
                             # CPU sin AVX2 pero solo linux-avalos (v3) disponible — puede no arrancar
                             self._log(
-                                f"  [WARN] {_target_kernel} no disponible. "
-                                f"linux-avalos (v3) podría no funcionar en esta CPU ({cpu_arch}).",
+                                self._t("log-kernel-fallback-v3-risk", target=_target_kernel, cpu_arch=cpu_arch),
                                 "warn"
                             )
                         else:
                             # CPU v3+ pero solo linux-avalos-compat disponible — subóptimo pero funciona
                             self._log(
-                                f"  [WARN] {_target_kernel} no disponible. "
-                                f"Usando {_alt_kernel} (compat) en CPU {cpu_arch}.",
+                                self._t("log-kernel-fallback-compat", target=_target_kernel, alt=_alt_kernel, cpu_arch=cpu_arch),
                                 "warn"
                             )
                     else:
                         self._log(
-                            f"  Kernel: linux ({_target_kernel} aún no publicado — fallback al kernel estándar)",
+                            self._t("log-kernel-not-published", target=_target_kernel),
                             "warn"
                         )
             except Exception as _e:
-                self._log(f"  Kernel: linux (error al consultar repo [avalos]: {_e})", "warn")
+                self._log(self._t("log-kernel-repo-query-error", e=_e), "warn")
 
             pkgs += [_kernel_pkg, _headers_pkg]
             # ── Drivers GPU + entorno gráfico ─────────────────────────────────
@@ -3264,11 +3364,11 @@ WantedBy=multi-user.target
             # ── Gaming: solo si el usuario marcó el checkbox ───────────────────
             if self._install_gaming:
                 pkgs += GAMING_PKGS
-                self._log("  Gaming activado — añadidos paquetes Steam, Wine, DXVK, MangoHUD…", "ok")
+                self._log(self._t("log-gaming-enabled"), "ok")
             else:
-                self._log("  Gaming omitido — el usuario no lo seleccionó", "info")
-            self._log(f"GPU detectada: {gpu_info['vendor'].upper()} → drivers: {', '.join(gpu_info['pkgs'][:3])}…", "info")
-            self._log(f"Total: {len(pkgs)} paquetes ({', '.join(pkgs[:8])}… +{max(0, len(pkgs)-8)} más)", "info")
+                self._log(self._t("log-gaming-skipped"), "info")
+            self._log(self._t("log-gpu-detected", gpu_vendor=gpu_info["vendor"].upper(), drivers=", ".join(gpu_info["pkgs"][:3])), "info")
+            self._log(self._t("log-total-packages", total=len(pkgs), preview=", ".join(pkgs[:8]), extra=max(0, len(pkgs)-8)), "info")
 
             rc, _ = self._run_cmd(
                 ["pacstrap", "-c", str(MOUNT_ROOT)] + pkgs,
@@ -3276,7 +3376,7 @@ WantedBy=multi-user.target
             )
             if rc != 0:
                 self._step("pacstrap", "error")
-                self._jsc("pyErrorPaso", "pacstrap falló. Verifica internet o el caché local.")
+                self._jsc("pyErrorPaso", self._t("err-pacstrap-failed"))
                 self._limpiar_montajes(); return
 
             self._step("pacstrap", "done")
@@ -3286,11 +3386,11 @@ WantedBy=multi-user.target
 
             # ── PASO 9: fstab ────────────────────────────────────────────────
             self._step("fstab", "active")
-            self._status("Generando fstab…")
+            self._status(self._t("status-generating-fstab"))
             rc, fstab_out = self._run_cmd(["genfstab", "-U", str(MOUNT_ROOT)])
             if rc != 0 or not fstab_out.strip():
                 self._step("fstab", "error")
-                self._jsc("pyErrorPaso", "genfstab falló.")
+                self._jsc("pyErrorPaso", self._t("err-genfstab-failed"))
                 self._limpiar_montajes(); return
 
             if self._modo_usb:
@@ -3309,7 +3409,7 @@ WantedBy=multi-user.target
                 (MOUNT_ROOT / "etc" / "fstab").write_text(fstab_out + "\n")
             except OSError as e:
                 self._step("fstab", "error")
-                self._jsc("pyErrorPaso", f"No se pudo escribir fstab: {e}")
+                self._jsc("pyErrorPaso", self._t("err-fstab-write-failed", e=e))
                 self._limpiar_montajes(); return
 
             self._step("fstab", "done")
@@ -3319,8 +3419,8 @@ WantedBy=multi-user.target
 
             # ── PASO 10: Configurar sistema ───────────────────────────────────
             self._step("config", "active")
-            self._status("Configurando locale, timezone, hostname…")
-            self._log("\n── Configurando sistema ──\n", "step")
+            self._status(self._t("status-configuring-system"))
+            self._log(self._t("log-section-system-config"), "step")
 
             self._run_chroot(["ln", "-sf", f"/usr/share/zoneinfo/{timezone}", "/etc/localtime"])
             self._run_chroot(["hwclock", "--systohc"])
@@ -3351,13 +3451,13 @@ WantedBy=multi-user.target
             else:
                 # locale.gen no existe (no debería ocurrir tras pacstrap con glibc,
                 # pero lo creamos para no dejar al sistema sin locales)
-                self._log("[WARN] /etc/locale.gen no existe — creándolo desde cero", "warn")
+                self._log(self._t("log-localegen-missing"), "warn")
                 locale_gen.parent.mkdir(parents=True, exist_ok=True)
                 locale_gen.write_text("\n".join(_extra_locales) + "\n")
             self._run_chroot(["locale-gen"])
             (MOUNT_ROOT / "etc" / "locale.conf").write_text(f"LANG={_loc}\n")
             (MOUNT_ROOT / "etc" / "vconsole.conf").write_text(f"KEYMAP={_keymap}\n")
-            self._log(f"  Locale: {_loc} | Teclado: {_keymap}", "ok")
+            self._log(self._t("log-locale-keymap", loc=_loc, keymap=_keymap), "ok")
             (MOUNT_ROOT / "etc" / "hostname").write_text(hostname + "\n")
             (MOUNT_ROOT / "etc" / "hosts").write_text(
                 f"127.0.0.1   localhost\n::1         localhost\n127.0.1.1   {hostname}.localdomain {hostname}\n"
@@ -3365,7 +3465,7 @@ WantedBy=multi-user.target
 
             rc_pw, out_pw = self._run_chroot_stdin(f"root:{passw}\n", ["chpasswd"])
             if rc_pw != 0:
-                self._log(f"[ERROR] chpasswd root falló (rc={rc_pw}): {out_pw}", "err")
+                self._log(self._t("log-chpasswd-root-fail", rc=rc_pw, out=out_pw), "err")
                 self._limpiar_montajes()
                 return
 
@@ -3389,9 +3489,9 @@ WantedBy=multi-user.target
                             flags=re.MULTILINE
                         )
                         _mkinit_path.write_text(_mkinit_txt)
-                        self._log("  mkinitcpio.conf: hook btrfs añadido", "ok")
+                        self._log(self._t("log-mkinitcpio-btrfs-added"), "ok")
                     else:
-                        self._log("  mkinitcpio.conf: hook btrfs ya presente", "ok")
+                        self._log(self._t("log-mkinitcpio-btrfs-present"), "ok")
                     # FIX: añadir grub-btrfs-overlayfs para rollback read-write
                     # desde snapshots en GRUB. Sin este hook, arrancar un snapshot
                     # desde el menú de GRUB lo monta en modo solo lectura — el
@@ -3408,7 +3508,7 @@ WantedBy=multi-user.target
                             flags=re.MULTILINE
                         )
                         _mkinit_path.write_text(_mkinit_txt)
-                        self._log("  mkinitcpio.conf: hook grub-btrfs-overlayfs añadido (rollback RW desde snapshots)", "ok")
+                        self._log(self._t("log-mkinitcpio-overlayfs-added"), "ok")
 
                 # ── /etc/default/grub: activar soporte btrfs en grub-btrfsd ───
                 # GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=true es necesario
@@ -3429,7 +3529,7 @@ WantedBy=multi-user.target
                         _grub_txt += "\n# AvalOS Btrfs snapshot support\n"
                         _grub_txt += "\n".join(_grub_btrfs_additions) + "\n"
                         _grub_default.write_text(_grub_txt)
-                        self._log("  /etc/default/grub: GRUB_BTRFS configurado", "ok")
+                        self._log(self._t("log-grub-btrfs-configured"), "ok")
 
             self._run_chroot(["mkinitcpio", "-P"])
             self._step("config", "done", "locale · timezone · hostname · initramfs · btrfs-hook"
@@ -3441,13 +3541,13 @@ WantedBy=multi-user.target
             # ── PASO 11: GRUB ─────────────────────────────────────────────────
             self._step("grub", "active")
             if self._bootloader == 'none':
-                self._step("grub", "skip", "Bootloader omitido por el usuario")
-                self._log("[INFO] Sin bootloader — omitido por elección del usuario.", "warn")
+                self._step("grub", "skip", self._t("step-bootloader-skipped-label"))
+                self._log(self._t("log-bootloader-skipped"), "warn")
                 avanzar()
 
             elif self._bootloader == 'grub':
-                self._status("Instalando GRUB…")
-                self._log("\n── Instalando GRUB ──\n", "step")
+                self._status(self._t("status-installing-grub"))
+                self._log(self._t("log-section-installing-grub"), "step")
                 if uefi:
                     grub_cmd = ["grub-install", "--target=x86_64-efi",
                                 "--efi-directory=/boot/efi", "--bootloader-id=GRUB"]
@@ -3464,7 +3564,7 @@ WantedBy=multi-user.target
 
                 if rc != 0:
                     self._step("grub", "error")
-                    self._jsc("pyErrorPaso", "grub-install falló. Revisa el log.")
+                    self._jsc("pyErrorPaso", self._t("err-grub-install-failed"))
                     self._limpiar_montajes(); return
 
                 # Activar os-prober para detectar otros OS en el menú
@@ -3475,7 +3575,7 @@ WantedBy=multi-user.target
                     lines.append("GRUB_DISABLE_OS_PROBER=false")
                     gd_path.write_text("\n".join(lines) + "\n")
                 self._run_chroot(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
-                self._step("grub", "done", "GRUB instalado · os-prober activo")
+                self._step("grub", "done", self._t("step-grub-installed-label"))
                 avanzar()
 
 
@@ -3484,27 +3584,25 @@ WantedBy=multi-user.target
                 if not uefi:
                     self._step("grub", "error")
                     self._jsc("pyErrorPaso",
-                              "rEFInd requiere UEFI. Esta máquina arranca en BIOS Legacy.\n"
-                              "Elige GRUB en su lugar o reinicia el instalador.")
+                              self._t("err-refind-needs-uefi"))
                     self._limpiar_montajes(); return
 
-                self._status("Instalando rEFInd…")
-                self._log("\n── Instalando rEFInd ──\n", "step")
+                self._status(self._t("status-installing-refind"))
+                self._log(self._t("log-section-installing-refind"), "step")
 
                 # Instalar el paquete refind
                 rc, _ = self._run_chroot(["pacman", "-S", "--noconfirm", "--needed", "refind"])
                 if rc != 0:
                     self._step("grub", "error")
                     self._jsc("pyErrorPaso",
-                              "No se pudo instalar el paquete refind.\n"
-                              "Verifica la conexión o añade un repo con el paquete.")
+                              self._t("err-refind-pkg-failed"))
                     self._limpiar_montajes(); return
 
                 # refind-install copia los archivos a la ESP y crea la entrada NVRAM
                 rc, _ = self._run_chroot(["refind-install"])
                 if rc != 0:
                     self._step("grub", "error")
-                    self._jsc("pyErrorPaso", "refind-install falló. Revisa el log.")
+                    self._jsc("pyErrorPaso", self._t("err-refind-install-failed"))
                     self._limpiar_montajes(); return
 
                 # Obtener UUID de la partición raíz para el refind_linux.conf
@@ -3515,7 +3613,7 @@ WantedBy=multi-user.target
                 # Detectar kernel instalado
                 vmlinuz_files = glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
                 kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
-                self._log(f"  Kernel detectado: {kernel_name}", "info")
+                self._log(self._t("log-kernel-detected", kernel_name=kernel_name), "info")
 
                 # Crear /boot/refind_linux.conf para que rEFInd sepa las opciones del kernel
                 refind_conf = MOUNT_ROOT / "boot" / "refind_linux.conf"
@@ -3524,7 +3622,7 @@ WantedBy=multi-user.target
                     f'"AvalOS (verbose)"  "{root_opts} rw"\n'
                     f'"AvalOS (recovery)" "{root_opts} rw single"\n'
                 )
-                self._log("  /boot/refind_linux.conf creado.", "info")
+                self._log(self._t("log-refind-conf-created"), "info")
 
                 # Hook pacman para que rEFInd se actualice solo al actualizar el paquete
                 hook_dir = MOUNT_ROOT / "etc" / "pacman.d" / "hooks"
@@ -3541,31 +3639,30 @@ WantedBy=multi-user.target
                     "Exec = /usr/bin/refind-install\n"
                 )
 
-                self._step("grub", "done", f"rEFInd instalado · detecta {kernel_name} automáticamente")
+                self._step("grub", "done", self._t("step-refind-installed-label", kernel_name=kernel_name))
                 avanzar()
             elif self._bootloader == 'sd-boot':
                 # systemd-boot: solo funciona en UEFI
                 if not uefi:
                     self._step("grub", "error")
                     self._jsc("pyErrorPaso",
-                              "systemd-boot requiere UEFI. Esta máquina arranca en BIOS Legacy.\n"
-                              "Elige GRUB en su lugar o reinicia el instalador.")
+                              self._t("err-sdboot-needs-uefi"))
                     self._limpiar_montajes(); return
 
-                self._status("Instalando systemd-boot…")
-                self._log("\n── Instalando systemd-boot ──\n", "step")
+                self._status(self._t("status-installing-sdboot"))
+                self._log(self._t("log-section-installing-sdboot"), "step")
 
                 # Instalar bootctl en la ESP montada en /boot/efi
                 rc, _ = self._run_chroot(["bootctl", "install", "--esp-path=/boot/efi"])
                 if rc != 0:
                     self._step("grub", "error")
-                    self._jsc("pyErrorPaso", "bootctl install falló. Revisa el log.")
+                    self._jsc("pyErrorPaso", self._t("err-bootctl-failed"))
                     self._limpiar_montajes(); return
 
                 # Detectar nombre del kernel instalado
                 vmlinuz_files = glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
                 kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
-                self._log(f"  Kernel detectado: {kernel_name}", "info")
+                self._log(self._t("log-kernel-detected", kernel_name=kernel_name), "info")
 
                 # Obtener UUID de la partición raíz
                 rc_uuid, uuid_out, _ = _ejecutar(["blkid", "-s", "UUID", "-o", "value", dev_root])
@@ -3596,11 +3693,11 @@ WantedBy=multi-user.target
                     if _ucode_src.exists():
                         _shutil.copy2(_ucode_src, esp_entries_dir / _ucode_name)
                         _ucode_copied = True
-                        self._log(f"  microcode: {_ucode_name} copiado a ESP", "ok")
+                        self._log(self._t("log-microcode-copied", ucode_name=_ucode_name), "ok")
                     else:
-                        self._log(f"  [WARN] {_ucode_src} no encontrado — microcode omitido", "warn")
+                        self._log(self._t("log-microcode-missing", ucode_src=_ucode_src), "warn")
                 else:
-                    self._log("  microcode: CPU no identificada — omitido de la ESP", "warn")
+                    self._log(self._t("log-microcode-unidentified"), "warn")
 
                 # loader.conf
                 loader_dir = MOUNT_ROOT / "boot" / "efi" / "loader"
@@ -3651,14 +3748,14 @@ WantedBy=multi-user.target
                     "Depends = bash\n"
                 )
 
-                self._step("grub", "done", "systemd-boot instalado · entrada: avalos.conf")
+                self._step("grub", "done", self._t("step-sdboot-installed-label"))
                 avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
 
             # ── PASO 12: Servicios ────────────────────────────────────────────
             self._step("services", "active")
-            self._status("Habilitando servicios…")
+            self._status(self._t("status-enabling-services"))
 
             # Crear avalos-gpu-detect.service en el sistema instalado
             # El sistema ya tiene las vars de GPU bakeadas en hyprland.lua vía
@@ -3687,29 +3784,29 @@ WantedBy=multi-user.target
             _symlink = _wants / "avalos-gpu-detect.service"
             if not _symlink.exists():
                 _symlink.symlink_to("/etc/systemd/system/avalos-gpu-detect.service")
-            self._log("  avalos-gpu-detect.service creado y habilitado", "ok")
+            self._log(self._t("log-gpu-detect-service-ok"), "ok")
 
             for svc in ["NetworkManager", "bluetooth", "sddm", "lm_sensors"]:
                 self._run_chroot(["systemctl", "enable", svc])
             self._run_chroot(["systemctl", "--global", "enable",
                               "pipewire", "pipewire-pulse", "wireplumber"])
-            self._log("  [INFO] sensors-detect omitido — ejecutar manualmente tras el reinicio: sudo sensors-detect --auto", "warn")
+            self._log(self._t("log-sensors-detect-skipped"), "warn")
 
             # ── Snapshots: snapper + grub-btrfs (solo modo PC / Btrfs) ──────
             if not self._modo_usb:
-                self._log("\n── Configurando snapper + grub-btrfs ──\n", "step")
+                self._log(self._t("log-section-snapper"), "step")
 
                 # 1. Crear configuración de snapper para /
                 #    snapper crea automáticamente el subvolumen .snapshots dentro de @snapshots
                 #    -c root: nombre de la configuración
                 rc_snap, out_snap = self._run_chroot(["snapper", "-c", "root", "create-config", "/"])
                 if rc_snap != 0:
-                    self._log(f"  snapper: create-config falló (rc={rc_snap}): {out_snap}", "err")
+                    self._log(self._t("log-snapper-create-config-fail", rc=rc_snap, out=out_snap), "err")
                     self._step("services", "error")
                     self._abortado = True
                     self._limpiar_montajes()
                     return
-                self._log("  snapper: config 'root' creada", "ok")
+                self._log(self._t("log-snapper-config-created"), "ok")
 
                 # 2. Ajustar límites de retención de snapshots en /etc/snapper/configs/root
                 #    Valores conservadores para no llenar el disco:
@@ -3730,14 +3827,14 @@ WantedBy=multi-user.target
                     for old, new in _snapper_replacements.items():
                         _cfg_txt = _cfg_txt.replace(old, new)
                     _snapper_cfg.write_text(_cfg_txt)
-                    self._log("  snapper: límites de retención configurados", "ok")
+                    self._log(self._t("log-snapper-retention-ok"), "ok")
 
                 # 3. Habilitar servicios de snapper
                 #    snapper-timeline.timer: snapshots automáticos cada hora
                 #    snapper-cleanup.timer: limpia snapshots antiguos según límites
                 for svc in ["snapper-timeline.timer", "snapper-cleanup.timer"]:
                     self._run_chroot(["systemctl", "enable", svc])
-                self._log("  snapper: timers habilitados (timeline + cleanup)", "ok")
+                self._log(self._t("log-snapper-timers-ok"), "ok")
 
                 # 4. Configurar grub-btrfs
                 #    grub-btrfsd: daemon que detecta nuevos snapshots y regenera grub.cfg
@@ -3748,20 +3845,20 @@ WantedBy=multi-user.target
                     # Forzar regeneración inicial de grub.cfg con entradas de snapshots
                     # (se volverá a ejecutar automáticamente después de grub-install)
                     self._run_chroot(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
-                    self._log("  grub-btrfs: daemon habilitado · menú de snapshots activo en GRUB", "ok")
+                    self._log(self._t("log-grubbtrfs-ok"), "ok")
                 else:
-                    self._log("  grub-btrfs: omitido (bootloader no es GRUB)", "warn")
-                    self._log("  → Los snapshots siguen funcionando con snapper.", "warn")
-                    self._log("  → Rollback manual desde TTY: snapper rollback <número>", "warn")
+                    self._log(self._t("log-grubbtrfs-skipped"), "warn")
+                    self._log(self._t("log-snapshots-still-work"), "warn")
+                    self._log(self._t("log-manual-rollback-hint"), "warn")
 
                 # 5. Permisos del directorio .snapshots
                 #    Solo root debe poder ver los snapshots (snapper lo requiere)
                 _snap_dir = MOUNT_ROOT / ".snapshots"
                 if _snap_dir.exists():
                     self._run_cmd(["chmod", "750", str(_snap_dir)])
-                    self._log("  .snapshots: permisos 750 aplicados", "ok")
+                    self._log(self._t("log-snapshots-perms-ok"), "ok")
 
-                self._log("  ✓ Snapshots configurados: snapper + snap-pac + grub-btrfs", "ok")
+                self._log(self._t("log-snapshots-configured-ok"), "ok")
 
             self._step("services", "done", "NetworkManager · bluetooth · sddm · pipewire · snapper"
                        if not self._modo_usb else "NetworkManager · bluetooth · sddm · pipewire · avalos-gpu-detect")
@@ -3770,16 +3867,16 @@ WantedBy=multi-user.target
             if self._abortado: self._limpiar_montajes(); return
 
             # ── OPTIMIZACIONES: ZRAM, oomd, BBR, IO scheduler ──────────────
-            self._status("Aplicando optimizaciones del sistema…")
-            self._log("\n── Optimizaciones del sistema ──\n", "step")
+            self._status(self._t("status-applying-optimizations"))
+            self._log(self._t("log-section-optimizations"), "step")
             self._configurar_optimizaciones(gpu_info, cpu_arch, disco_tipo)
 
             if self._abortado: self._limpiar_montajes(); return
 
             # ── PASO 13: Usuario ──────────────────────────────────────────────
             self._step("user", "active")
-            self._status("Creando usuario…")
-            self._log("\n── Creando usuario ──\n", "step")
+            self._status(self._t("status-creating-user"))
+            self._log(self._t("log-section-creating-user"), "step")
 
             rc, _ = self._run_chroot([
                 "useradd", "-m", "-G", "wheel,audio,video,storage,optical",
@@ -3787,12 +3884,12 @@ WantedBy=multi-user.target
             ])
             if rc != 0:
                 self._step("user", "error")
-                self._jsc("pyErrorPaso", f"useradd falló para '{usuario}'. Revisa el log.")
+                self._jsc("pyErrorPaso", self._t("err-useradd-failed", usuario=usuario))
                 self._limpiar_montajes(); return
 
             rc_pw2, out_pw2 = self._run_chroot_stdin(f"{usuario}:{passw}\n", ["chpasswd"])
             if rc_pw2 != 0:
-                self._log(f"[ERROR] chpasswd '{usuario}' falló (rc={rc_pw2}): {out_pw2}", "err")
+                self._log(self._t("log-chpasswd-user-fail", usuario=usuario, rc=rc_pw2, out=out_pw2), "err")
                 self._limpiar_montajes()
                 return
 
@@ -3802,14 +3899,14 @@ WantedBy=multi-user.target
             sudoers.write_text("%wheel ALL=(ALL:ALL) ALL\n")
             sudoers.chmod(0o440)
 
-            self._step("user", "done", f"Usuario '{usuario}' creado")
+            self._step("user", "done", self._t("step-user-created-label", usuario=usuario))
             avanzar()
 
             if self._abortado: self._limpiar_montajes(); return
 
             # ── PASO 14: AUR (yay) ────────────────────────────────────────────
             self._step("aur", "active")
-            self._status("Instalando yay + paquetes AUR…")
+            self._status(self._t("status-installing-aur"))
             self._log("\n── yay + AUR ──\n", "step")
 
             sudoers_tmp = MOUNT_ROOT / "etc" / "sudoers.d" / "99-aur-build"
@@ -3830,8 +3927,8 @@ WantedBy=multi-user.target
                 ["sudo", "-H", "-u", usuario, "bash", "-c", yay_script], timeout=600
             )
             if rc != 0:
-                self._log("[WARN] yay no se instaló — paquetes AUR omitidos.", "warn")
-                self._step("aur", "skip", "yay falló")
+                self._log(self._t("log-yay-not-installed"), "warn")
+                self._step("aur", "skip", self._t("step-yay-failed-label"))
             else:
                 all_aur = HYPRLAND_AUR_PKGS + (GAMING_AUR_PKGS if self._install_gaming else [])
                 if all_aur:
@@ -3841,15 +3938,14 @@ WantedBy=multi-user.target
                     )
                     if rc_aur != 0:
                         self._log(
-                            f"[WARN] Algunos paquetes AUR no se instalaron (rc={rc_aur}). "
-                            "Puedes instalarlos manualmente con yay tras el reinicio.",
+                            self._t("log-aur-partial-fail", rc=rc_aur),
                             "warn"
                         )
-                        self._step("aur", "done", f"{len(all_aur)} paquetes AUR (con advertencias)")
+                        self._step("aur", "done", self._t("step-aur-count-warn", n=len(all_aur)))
                     else:
-                        self._step("aur", "done", f"{len(all_aur)} paquetes AUR")
+                        self._step("aur", "done", self._t("step-aur-count", n=len(all_aur)))
                 else:
-                    self._step("aur", "done", "0 paquetes AUR")
+                    self._step("aur", "done", self._t("step-aur-count-zero"))
 
                 # ── Gaming post-install (solo si gaming fue seleccionado) ──────
                 if self._install_gaming:
@@ -3874,7 +3970,7 @@ WantedBy=multi-user.target
                     try:
                         gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
                         gm_path.write_text(gamemode_conf, encoding="utf-8")
-                        self._log("  gamemode.ini configurado", "ok")
+                        self._log(self._t("log-gamemode-ini-ok"), "ok")
                     except OSError as e:
                         self._log(f"[WARN] gamemode.ini: {e}", "warn")
 
@@ -3884,7 +3980,7 @@ WantedBy=multi-user.target
                         mango_dir = MOUNT_ROOT / "etc" / "MangoHud"
                         mango_dir.mkdir(parents=True, exist_ok=True)
                         (mango_dir / "MangoHud.conf").write_text(_contenido_mango, encoding="utf-8")
-                        self._log("  MangoHud.conf configurado", "ok")
+                        self._log(self._t("log-mangohud-ok"), "ok")
 
                     # Flatpak: añadir Flathub como remote para el usuario (flatpak instalado con gaming)
                     self._run_chroot(
@@ -3893,7 +3989,7 @@ WantedBy=multi-user.target
                          "https://dl.flathub.org/repo/flathub.flatpakrepo"],
                         timeout=120
                     )
-                    self._log("  Flathub configurado", "ok")
+                    self._log(self._t("log-flathub-ok"), "ok")
 
             if sudoers_tmp and sudoers_tmp.exists():
                 try: sudoers_tmp.unlink()
@@ -3903,9 +3999,9 @@ WantedBy=multi-user.target
 
             # ── PASO 15: Hyprland config ──────────────────────────────────────
             self._step("hypr", "active")
-            self._status("Configurando Hyprland + entorno Wayland…")
-            self._label("configurando Hyprland…")
-            self._log("\n── Configurando Hyprland + Wayland ──\n", "step")
+            self._status(self._t("status-configuring-hyprland"))
+            self._label(self._t("label-configuring-hyprland"))
+            self._log(self._t("log-section-hyprland-config"), "step")
             self._configurar_hyprland(usuario, gpu_info)
             self._step("hypr", "done", "SDDM · Waybar · hyprland.lua · rofi · kitty")
             avanzar()
@@ -3914,8 +4010,8 @@ WantedBy=multi-user.target
 
             # ── PASO 16: Desmontar ────────────────────────────────────────────
             self._step("umount", "active")
-            self._status("Desmontando y finalizando…")
-            self._log("\n── Desmontando todo ──\n", "step")
+            self._status(self._t("status-unmounting"))
+            self._log(self._t("log-section-unmounting"), "step")
             self._limpiar_montajes()
             self._step("umount", "done")
             avanzar()
@@ -3932,22 +4028,15 @@ WantedBy=multi-user.target
                 f"<strong>✓ Contraseña:</strong> establecida correctamente"
             )
             self._jsc("pyInstalacionCompleta", done_info)
-            self._label("✓ completado")
+            self._label(self._t("label-done"))
             self._log(
-                f"\n╔══════════════════════════════════════════╗\n"
-                f"║  ✓  AvalOS instalado correctamente       ║\n"
-                f"║  Disco:    {dev} ({disco['size_human']}) ║\n"
-                f"║  Usuario:  {usuario} ║\n"
-                f"║  Hostname: {hostname} ║\n"
-                f"║  Timezone: {timezone} ║\n"
-                f"║  DE/WM:    Hyprland · Wayland · SDDM ║\n"
-                f"╚══════════════════════════════════════════╝", "ok"
+                self._t("log-final-banner", dev=dev, size_human=disco["size_human"], usuario=usuario, hostname=hostname, timezone=timezone), "ok"
             )
 
         except Exception as e:
             import traceback  # noqa: PLC0415 — import lazy intencional en except crítico
-            self._log(f"\n[EXCEPCIÓN] {e}\n{traceback.format_exc()}", "err")
-            self._jsc("pyErrorPaso", f"Error inesperado: {e}")
+            self._log(self._t("log-fatal-exception", e=e, tb=traceback.format_exc()), "err")
+            self._jsc("pyErrorPaso", self._t("err-unexpected", e=e))
             self._limpiar_montajes()
         finally:
             self._instalando = False
@@ -3957,9 +4046,9 @@ WantedBy=multi-user.target
             if _sudoers_guard.exists():
                 try:
                     _sudoers_guard.unlink()
-                    self._log("  [cleanup] sudoers temporal eliminado", "ok")
+                    self._log(self._t("log-cleanup-sudoers-ok"), "ok")
                 except OSError as _e:
-                    self._log(f"  [WARN] No se pudo eliminar sudoers temporal: {_e}", "warn")
+                    self._log(self._t("log-cleanup-sudoers-fail", e=_e), "warn")
             self._jsc("pyStopTimer")
 
 
