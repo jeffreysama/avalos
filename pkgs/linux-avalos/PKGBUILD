@@ -1,29 +1,20 @@
-# Maintainer: AvalOS <https://github.com/jeffreysama/avalos>
-# Basado en linux-cachyos (CachyOS team) — patches moderados
-# Target: x86-64-v3 · Clang/LLVM · ThinLTO · EEVDF
-#
-# Este PKGBUILD vive en pkgs/linux-avalos/ del repo de AvalOS.
-# La versión se actualiza automáticamente por el workflow de GitHub Actions
-# (.github/workflows/build-kernel.yml) cada vez que sale un kernel estable nuevo.
-
 pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
-pkgver=7.0.11         # ← GitHub Actions actualiza esta línea automáticamente
+pkgver=7.0.11
 pkgrel=1
 pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
 url="https://github.com/jeffreysama/avalos"
-license=(GPL-2.0-only)           # Linux kernel es GPL-2.0-only sin excepción
+license=(GPL-2.0-only)
 makedepends=(bc bison flex python clang llvm lld pahole cpio perl tar xz zstd git libelf)
 install=linux-avalos.install
 options=(!strip)
 
-# ── Fuentes ───────────────────────────────────────────────────────────────────
 _majorver=${pkgver%%.*}
 
 source=(
     "https://cdn.kernel.org/pub/linux/kernel/v${_majorver}.x/linux-${pkgver}.tar.xz"
-    "config"              # Generado por gen-config.sh — base estable de Arch Linux
+    "config"
 )
 sha256sums=(
     'SKIP'
@@ -33,15 +24,12 @@ sha256sums=(
 prepare() {
     cd "linux-${pkgver}"
 
-    # ── Aplicar config base ANTES de cualquier scripts/config ─────────────────
-    # Sin este cp, scripts/config opera sobre un .config vacío y el config
-    # base de Arch Linux (generado por gen-config.sh) se ignora por completo.
+    if [[ -f ../bore-scheduler.patch ]]; then
+        echo "  → Aplicando parche BORE scheduler..."
+        patch -Np1 -i ../bore-scheduler.patch
+    fi
+
     echo "  → Aplicando config base..."
-    # FIX: detectar el fallback de gen-config.sh (config vacío con marcador).
-    # Si gen-config.sh no pudo descargar la config de Arch, deja el marcador
-    # AVALOS_FALLBACK_DEFCONFIG. En ese caso se genera una base con defconfig
-    # antes de aplicar las opciones específicas de AvalOS, evitando que
-    # olddefconfig active miles de opciones innecesarias desde cero.
     if grep -q 'AVALOS_FALLBACK_DEFCONFIG' ../config 2>/dev/null; then
         echo "  → Config fallback detectado — generando base con defconfig..."
         make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld defconfig
@@ -49,51 +37,21 @@ prepare() {
         cp ../config .config
     fi
 
-    # ── LOCALVERSION: identifica el kernel en uname/modules ─────────────────
-    # Sin esto, `make kernelrelease` devuelve solo "${pkgver}" (ej. "7.0.11"),
-    # idéntico para linux-avalos, -bore y -compat, y sin el sufijo que
-    # linux-avalos.install busca con `grep -- "-${_pkgbase#linux-}$"`.
-    #
-    # BUG-FIX: derivar _expected_lv de pkgbase en lugar de hardcodear "-avalos".
-    # build-kernel.yml transforma pkgbase (pkgbase=linux-avalos → linux-avalos-bore),
-    # por lo que _expected_lv se calcula correctamente para cada variante
-    # sin necesidad de seds adicionales sobre el check de verificación.
-    #   linux-avalos        → _expected_lv="-avalos"
-    #   linux-avalos-bore   → _expected_lv="-avalos-bore"
-    #   linux-avalos-compat → _expected_lv="-avalos-compat"
     local _expected_lv="-${pkgbase#linux-}"
     scripts/config --set-str CONFIG_LOCALVERSION "${_expected_lv}"
 
-    # ── CPU target: x86-64-v3 genérico (AMD + Intel, AVX2+) ──────────────
-    # CONFIG_GENERIC_CPU3 = x86-64-v3: activa AVX2, BMI2, FMA, MOVBE, XSAVE
-    # para cualquier CPU que soporte estos flags — AMD Ryzen 1xxx+ e Intel
-    # Haswell/Broadwell+ incluidos — sin asumir la CPU del host de compilación.
-    # CONFIG_MNATIVE_AMD y CONFIG_MNATIVE_INTEL están en un bloque choice del
-    # Kconfig y son mutuamente excluyentes. Activar ambos deja a olddefconfig
-    # resolver el conflicto de forma no determinística según el runner de CI.
-    # CONFIG_GENERIC_CPU3 es la opción correcta para un kernel de distro compilado
-    # en CI y distribuido a usuarios con hardware mixto.
-    # KCFLAGS='-march=x86-64-v3' en build-kernel.yml complementan esta config.
-    # Nota: CONFIG_CC_IS_CLANG / CONFIG_LD_IS_LLD son def_bool auto-detectados
-    # con LLVM=1 — no se setean manualmente.
     scripts/config \
         -e CONFIG_GENERIC_CPU3 \
         -e CONFIG_X86_FEATURE_NAMES \
         -e CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE \
         -d CONFIG_CC_OPTIMIZE_FOR_SIZE
 
-    # ── Scheduler: EEVDF tuneado (default Linux 6.6+, estable, sin parches) ──
-    # Por qué EEVDF y no BORE aquí: EEVDF está en el kernel mainline, no necesita
-    # parches externos que pueden romperse con cada versión. Proporciona muy buena
-    # latencia interactiva + fairness sin los riesgos de un parche out-of-tree.
-    # El variant BORE se construye por separado (linux-avalos-bore).
     scripts/config \
         -e CONFIG_HZ_1000 \
         --set-val CONFIG_HZ 1000 \
         -d CONFIG_HZ_250 \
         -e CONFIG_PREEMPT_DYNAMIC
 
-    # ── Compilador: Clang/LLVM + ThinLTO ──────────────────────────────────
     scripts/config \
         -e CONFIG_LTO_CLANG_THIN \
         -d CONFIG_LTO_NONE \
@@ -101,10 +59,6 @@ prepare() {
         -e CONFIG_EFI_STUB \
         -e CONFIG_EFI_MIXED
 
-    # ── AMD GPU — primera clase ────────────────────────────────────────────
-    # Nota: CONFIG_DRM_AMD_DC_HDCP y CONFIG_DRM_AMD_DC_DCN fueron absorbidos
-    # por CONFIG_DRM_AMD_DC en kernels recientes. scripts/config los ignora
-    # con un warning si no existen — no rompe el build.
     scripts/config \
         -e CONFIG_DRM_AMDGPU \
         -e CONFIG_DRM_AMDGPU_SI \
@@ -115,46 +69,31 @@ prepare() {
         -e CONFIG_DRM_AMD_DC_DCN \
         -d CONFIG_DRM_AMDGPU_GART_DEBUGFS
 
-    # ── Intel GPU — soporte completo (i915 clásico + Xe para Arc/Meteor Lake) ─
     scripts/config \
         -e CONFIG_DRM_I915 \
         -e CONFIG_DRM_XE
 
-    # Sin NVIDIA: ni nouveau, ni módulo propietario por defecto
     scripts/config \
         -d CONFIG_DRM_NOUVEAU
 
-    # ── AMD P-State (governor EPP — gestión energía AMD Ryzen/EPYC) ────────
-    # CONFIG_X86_AMD_PSTATE_UT es un módulo de unit testing — se omite en producción.
     scripts/config \
         -e CONFIG_X86_AMD_PSTATE
 
-    # ── Intel HWP (equivalente a P-State en Intel) ─────────────────────────
     scripts/config \
         -e CONFIG_X86_INTEL_PSTATE
 
-    # ── Red: BBR + FQ ──────────────────────────────────────────────────────
-    # BBR = Bottleneck Bandwidth and RTT (Google, mainline desde 4.9)
-    # Mucho mejor que CUBIC en redes con pérdida o alta latencia.
-    # --set-str cambia el algoritmo TCP por defecto a BBR correctamente.
-    # Solo deshabilitar CONFIG_DEFAULT_CUBIC sin hacer set-str deja el
-    # default en un estado indefinido (olddefconfig podría resetear a reno).
     scripts/config \
         -e CONFIG_TCP_CONG_BBR \
         -e CONFIG_NET_SCH_FQ \
         -m CONFIG_TCP_CONG_CUBIC \
         --set-str CONFIG_DEFAULT_TCP_CONG bbr
 
-    # ── IO schedulers ──────────────────────────────────────────────────────
-    # Kyber: NVMe/SSD (baja latencia)
-    # BFQ:   HDD y dispositivos lentos (justicia + latencia interactiva)
     scripts/config \
         -e CONFIG_MQ_IOSCHED_KYBER \
         -e CONFIG_IOSCHED_BFQ \
         -e CONFIG_BLK_CGROUP_IOLATENCY \
         -e CONFIG_BLK_CGROUP_FC_APPID
 
-    # ── Memoria / ZRAM ─────────────────────────────────────────────────────
     scripts/config \
         -m CONFIG_ZRAM \
         -e CONFIG_ZRAM_WRITEBACK \
@@ -162,13 +101,6 @@ prepare() {
         -e CONFIG_ZSWAP \
         -e CONFIG_CRYPTO_ZSTD
 
-    # ── Seguridad razonable sin overhead en desktop ────────────────────────
-    # CONFIG_MODULE_SIG_NONE no existe en kernels 6.x+. La forma correcta de
-    # permitir módulos sin firma es deshabilitar SIG_FORCE (impide carga de
-    # módulos sin firma) y SIG_ALL (no firma módulos durante el build).
-    # DKMS y módulos externos funcionan sin configuración extra.
-    # Si en el futuro se quiere firmar módulos: habilitar SIG + SIG_ALL y
-    # generar claves en /etc/kernel/sign-key.pem.
     scripts/config \
         -d CONFIG_KASAN \
         -d CONFIG_UBSAN \
@@ -179,10 +111,6 @@ prepare() {
 
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld olddefconfig
 
-    # FIX: verificar que CONFIG_GENERIC_CPU3 quedó activo tras olddefconfig.
-    # Si el Kconfig de 7.x renombra esta opción, scripts/config la ignora
-    # silenciosamente y el kernel queda sin optimizaciones v3. Falla inmediato
-    # para que el error sea obvio en el log de CI — el build no continúa.
     if ! grep -q 'CONFIG_GENERIC_CPU3=y' .config; then
         echo "[ERROR] CONFIG_GENERIC_CPU3 no activo en .config — el kernel NO tiene optimizaciones v3"
         echo "        Verificar Kconfig del kernel ${pkgver}. Opciones CPU disponibles:"
@@ -190,9 +118,6 @@ prepare() {
         exit 1
     fi
 
-    # FIX: verificar que CONFIG_LOCALVERSION quedó aplicado tras olddefconfig.
-    # Es necesario para que _kver contenga el sufijo correcto (ver linux-avalos.install).
-    # _expected_lv se deriva de pkgbase → funciona igual para -avalos, -bore y -compat.
     if ! grep -q "^CONFIG_LOCALVERSION=\"${_expected_lv}\"$" .config; then
         echo "[ERROR] CONFIG_LOCALVERSION no es \"${_expected_lv}\" en .config tras olddefconfig"
         echo "        _kver no contendrá el sufijo correcto y linux-avalos.install fallará al detectarlo."
@@ -201,20 +126,16 @@ prepare() {
     fi
 }
 
-# ── Build ──────────────────────────────────────────────────────────────────────
 build() {
     cd "linux-${pkgver}"
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld all
 
-    # ThinLTO puede no generar Module.symvers automáticamente en la raíz.
-    # Si no existe, forzar su generación (necesario para DKMS y el paquete headers).
     if [[ ! -f Module.symvers ]]; then
         echo "  → Module.symvers no encontrado tras make all — forzando generación..."
         make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld modules
     fi
 }
 
-# ── Package: kernel ────────────────────────────────────────────────────────────
 package_linux-avalos() {
     pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
     depends=(coreutils kmod initramfs)
@@ -222,18 +143,11 @@ package_linux-avalos() {
         'wireless-regdb: configuración de canales WiFi por país'
         'linux-firmware: firmware para hardware adicional'
     )
-    # FIX: provides=() debe exponer "linux=${pkgver}" para que paquetes que
-    # dependen del kernel genérico (virtualbox-host-modules, nvidia-dkms, etc.)
-    # encuentren este kernel. Un paquete nunca debe proveerse solo a sí mismo.
     provides=("linux=${pkgver}")
     conflicts=("linux-avalos-compat" "linux-avalos-compat-headers" "linux-avalos-bore" "linux-avalos-bore-headers")
-    # NOTA: backup eliminado del preset de mkinitcpio.
-    # El preset se genera dinámicamente con _kver hardcodeado; si pacman
-    # genera un .pacnew con la versión anterior rompe la regeneración del initramfs.
 
     cd "linux-${pkgver}"
 
-    # FIX: cachear kernelrelease — evita 4 invocaciones separadas de make
     local _kver
     _kver="$(make LLVM=1 -s kernelrelease)"
     local modulesdir="${pkgdir}/usr/lib/modules/${_kver}"
@@ -245,16 +159,12 @@ package_linux-avalos() {
     local image_name
     image_name="$(make LLVM=1 -s image_name)"
 
-    # Kernel en dos ubicaciones:
-    #   /usr/lib/modules/…/vmlinuz  → mkinitcpio lo encuentra aquí
-    #   /boot/vmlinuz-linux-avalos  → GRUB lo encuentra aquí
     install -Dm644 "${image_name}" "${modulesdir}/vmlinuz"
     install -Dm644 "${image_name}" "${pkgdir}/boot/vmlinuz-${pkgbase}"
 
     echo "${pkgbase}" | install -Dm644 /dev/stdin "${modulesdir}/pkgbase"
     install -Dm644 System.map "${modulesdir}/System.map"
 
-    # Preset de mkinitcpio
     mkdir -p "${pkgdir}/etc/mkinitcpio.d"
     cat > "${pkgdir}/etc/mkinitcpio.d/${pkgbase}.preset" << EOF
 ALL_config='/etc/mkinitcpio.conf'
@@ -263,14 +173,9 @@ PRESETS=('default' 'fallback')
 default_image="/boot/initramfs-${pkgbase}.img"
 fallback_image="/boot/initramfs-${pkgbase}-fallback.img"
 fallback_options='-S autodetect'
-# Nota: default_uki eliminado intencionalmente.
-# El instalador de AvalOS monta el ESP en /boot/efi, no en /efi,
-# por lo que intentar generar un UKI en /efi/EFI/Linux/ falla siempre.
-# GRUB, rEFInd y systemd-boot no necesitan UKI — usan vmlinuz + initramfs.
 EOF
 }
 
-# ── Package: headers ───────────────────────────────────────────────────────────
 package_linux-avalos-headers() {
     pkgdesc="Headers del AvalOS Linux Kernel"
     depends=("${pkgbase}")
@@ -278,21 +183,14 @@ package_linux-avalos-headers() {
 
     cd "linux-${pkgver}"
 
-    # FIX: cachear kernelrelease — evita invocaciones redundantes de make
     local _kver
     _kver="$(make LLVM=1 -s kernelrelease)"
     local builddir="${pkgdir}/usr/lib/modules/${_kver}/build"
 
     echo "  → Instalando headers en ${builddir}…"
 
-    # vmlinux se incluye intencionalmente: el live ISO de AvalOS lo necesita
-    # para soporte DKMS durante la sesión live. El instalador reemplaza estos
-    # kernels con linux-avalos una vez instalado en disco.
     install -Dt "${builddir}" -m644 .config Makefile System.map vmlinux
 
-    # Module.symvers: con ThinLTO puede no generarse en raíz; si no existe
-    # el build falló silenciosamente — falla aquí con mensaje claro en lugar
-    # de dejar un archivo vacío que rompe DKMS con errores crípticos.
     if [[ -f Module.symvers ]]; then
         install -Dt "${builddir}" -m644 Module.symvers
     else
@@ -305,27 +203,16 @@ package_linux-avalos-headers() {
     install -Dt "${builddir}/arch/x86" -m644 arch/x86/Makefile
     cp -t "${builddir}" -a scripts
 
-    # objtool (requerido por algunos módulos DKMS)
     if [[ -f tools/objtool/objtool ]]; then
         install -Dt "${builddir}/tools/objtool" -m755 tools/objtool/objtool
     else
         echo "  ⚠ tools/objtool/objtool no encontrado — omitiendo (puede afectar algunos módulos DKMS)"
     fi
 
-    # FIX: reemplazar find+install por cp -a para los headers.
-    # El find original lanzaba una llamada a 'install' por cada uno de los
-    # >20 000 archivos .h del árbol del kernel (decenas de minutos extra)
-    # y generaba paths duplicados bajo builddir/builddir/ en kernels recientes.
-    # cp -a copia los directorios completos de una sola vez, igual que hace
-    # el PKGBUILD oficial de linux en Arch Linux.
     cp -a include "${builddir}/"
     cp -a arch/x86/include "${builddir}/arch/x86/"
 
-    # Kconfig: install por archivo es aceptable aquí — son ~300 archivos,
-    # no >20 000 como los headers. Se mantiene el find para preservar la
-    # estructura de directorios exacta requerida por make menuconfig.
     find . -name 'Kconfig*' -exec install -Dm644 {} "${builddir}/{}" \;
 
-    # Eliminar referencias al directorio de build del host (rutas limpias)
     sed -i "s|${srcdir}|/usr/src|g" "${builddir}/Makefile"
 }

@@ -1,30 +1,36 @@
--- ── AvalOS Live — hyprland.lua ────────────────────────────────────
--- Config para el entorno LIVE del USB.
--- El sistema instalado usa hyprland_conf.lua.template (con GPU vars).
+-- ── AvalOS Instalado — hyprland_conf.lua.template ─────────────────
+-- Config para el sistema YA INSTALADO (no el live).
+-- El instalador reemplaza el marcador de GPU de más abajo con las
+-- variables de la GPU detectada y escribe el resultado como
+-- ~/.config/hypr/hyprland.lua.
 --
--- Requiere Hyprland >= 0.55 (API Lua).
--- El .conf anterior se conserva en hyprland.conf.bak durante la transición.
+-- Requiere Hyprland >= 0.55 (API Lua). Hermano de hyprland.lua (live);
+-- mantener ambos en sync salvo donde el comentario diga lo contrario.
 -- ──────────────────────────────────────────────────────────────────
 
 -- ── Monitor ───────────────────────────────────────────────────────
 hl.monitor({
-    output   = "",          -- "" = cualquier monitor disponible
+    output   = "",
     mode     = "preferred",
     position = "auto",
-    scale    = "auto",
+    scale    = "auto",   -- FIX: el .conf anterior tenía "1" (escala fija,
+                          -- sin detección de HiDPI). "auto" iguala al live.
 })
 
 -- ── Variables de entorno ──────────────────────────────────────────
--- NOTA: Si usas uwsm como lanzador, mueve QT_*, GDK_*, MOZ_* y
--- ELECTRON_* a ~/.config/uwsm/env en lugar de aquí.
--- Solo AQ_* y HYPR* van en ~/.config/uwsm/env-hyprland.
-hl.env("XCURSOR_SIZE",                      "24")
-hl.env("XCURSOR_THEME",                     "capitaine-cursors-dark")
-hl.env("QT_QPA_PLATFORM",                   "wayland;xcb")
+hl.env("XCURSOR_SIZE",                        "24")
+hl.env("XCURSOR_THEME",                       "capitaine-cursors-dark")
+hl.env("QT_QPA_PLATFORM",                     "wayland;xcb")
 hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
-hl.env("GDK_BACKEND",                       "wayland,x11")
-hl.env("MOZ_ENABLE_WAYLAND",                "1")
-hl.env("ELECTRON_OZONE_PLATFORM_HINT",      "auto")
+hl.env("GDK_BACKEND",                         "wayland,x11")
+hl.env("MOZ_ENABLE_WAYLAND",                  "1")
+hl.env("ELECTRON_OZONE_PLATFORM_HINT",        "auto")
+
+-- Variables de GPU — rellenadas por el instalador según el hardware
+-- detectado (AMD/Intel/híbrido). El instalador debe emitir líneas
+-- hl.env("VAR", "valor") aquí, no el formato hyprlang anterior.
+%%GPU_ENV%%
+hl.env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
 
 -- ── Configuración principal ───────────────────────────────────────
 hl.config({
@@ -38,13 +44,13 @@ hl.config({
         },
         layout           = "dwindle",
         resize_on_border = true,
-        allow_tearing    = false,   -- evita tearing en GPUs integradas en el live
+        allow_tearing    = false,
     },
 
     decoration = {
         rounding         = 12,
         active_opacity   = 1.0,
-        inactive_opacity = 0.75,
+        inactive_opacity = 0.92,
         blur = {
             enabled = true,
             size    = 4,
@@ -68,7 +74,7 @@ hl.config({
     },
 
     input = {
-        kb_layout    = "latam",   -- layout Wayland correcto para Latinoamérica
+        kb_layout    = "%%KEYMAP%%",
         follow_mouse = 1,
         sensitivity  = 0,
         touchpad = {
@@ -79,12 +85,12 @@ hl.config({
 
     misc = {
         force_default_wallpaper  = 0,
-        disable_hyprland_logo    = true,   -- sin logo animado en el live
+        disable_hyprland_logo    = true,
         disable_splash_rendering = true,
     },
 
     debug = {
-        vfr = true,   -- Variable Frame Rate: movido de misc: a debug: en 0.55
+        vfr = true,   -- movido de misc: a debug: en 0.55
     },
 })
 
@@ -98,39 +104,23 @@ hl.animation({ leaf = "fade",       enabled = true, speed = 6, bezier = "default
 hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "default",  style = "slide" })
 
 -- ── Autostart ─────────────────────────────────────────────────────
--- hl.exec_cmd() es asíncrono — no hace falta & al final.
--- NOTA: avalos-gpu-env se eliminó del live. Escribía gpu-env.conf en
--- formato hyprlang que este config Lua nunca carga. Mesa auto-detecta
--- la GPU sin vars explícitas; suficiente para el entorno live/instalador.
--- El sistema instalado tiene las vars de GPU bakeadas en hyprland.lua
--- vía %%GPU_ENV%% por el instalador.
--- Orden: hyprpaper ANTES que waybar (evita error de socket de Wayland).
+-- Orden: hyprpaper ANTES que waybar (evita error de socket de Wayland),
+-- igual que en el live.
 hl.on("hyprland.start", function()
-    -- Fondo de pantalla ANTES que waybar (evita error de socket)
     hl.exec_cmd("hyprpaper")
 
-    -- Resto del entorno
     hl.exec_cmd("waybar")
-    hl.exec_cmd("mako")
+    hl.exec_cmd("mako")   -- FIX: el .conf anterior tenía "dunst", que no
+                           -- está en ninguna lista de paquetes de AvalOS;
+                           -- mako es el daemon nativo Wayland que usa el live.
     hl.exec_cmd("hypridle")
     hl.exec_cmd("nm-applet --indicator")
-    hl.exec_cmd("hyprpolkitagent")   -- necesario en live para diálogos de privilegios
-
-    -- Cliphist: faltaba en el live por accidente (sí está en el template
-    -- instalado). Sin esto, mod+V (agregado abajo) no tiene nada que listar.
+    hl.exec_cmd("blueman-applet")
+    hl.exec_cmd("hyprpolkitagent")
     hl.exec_cmd("wl-paste --type text  --watch cliphist store")
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
-
-    -- Instalador gráfico de AvalOS
-    -- FIX: /usr/local/bin/avalos-install es un wrapper bash
-    -- (#!/bin/bash; export PYTHONPATH=...; exec python3 .../skill_instalar_usb.py),
-    -- no un script Python. "python3 /usr/local/bin/avalos-install" hacía que
-    -- Python intentara parsear "export PYTHONPATH=..." → SyntaxError inmediato.
-    -- Como hl.exec_cmd() es async, el resto del autostart seguía normal y el
-    -- usuario llegaba a un escritorio funcional SIN ninguna ventana de
-    -- instalador y sin keybind para lanzarlo manualmente. El wrapper ya es
-    -- ejecutable (chmod 755, shebang #!/bin/bash) y está en PATH.
-    hl.exec_cmd("avalos-install")
+    hl.exec_cmd("xdg-user-dirs-update")
+    hl.exec_cmd("udiskie -t")
 end)
 
 -- ── Keybinds ──────────────────────────────────────────────────────
@@ -142,6 +132,8 @@ hl.bind(mod .. " + Space",  hl.dsp.exec_cmd("rofi -show drun"))
 hl.bind(mod .. " + E",        hl.dsp.exec_cmd("thunar"))
 hl.bind(mod .. " + B",        hl.dsp.exec_cmd("firefox"))
 hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("firefox"))
+hl.bind(mod .. " + SHIFT + S",
+    hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy'))
 hl.bind(mod .. " + V",
     hl.dsp.exec_cmd("cliphist list | rofi -dmenu | cliphist decode | wl-copy"))
 
@@ -150,11 +142,20 @@ hl.bind(mod .. " + Q", hl.dsp.window.close())
 hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
 hl.bind(mod .. " + T", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mod .. " + SHIFT + L",
-    -- Sin guard, dos pulsaciones rápidas lanzarían 2 instancias de hyprlock
-    -- superpuestas. Mismo patrón que hypridle.conf (lock_cmd / listener 600s).
     hl.dsp.exec_cmd("pidof hyprlock || hyprlock"))
 
+-- Redimensionar con teclado (el .conf anterior no lo tenía; el live sí)
+hl.bind(mod .. " + CTRL + right", hl.dsp.resize({ dx =  30, dy =   0 }), { repeating = true })
+hl.bind(mod .. " + CTRL + left",  hl.dsp.resize({ dx = -30, dy =   0 }), { repeating = true })
+hl.bind(mod .. " + CTRL + up",    hl.dsp.resize({ dx =   0, dy = -30 }), { repeating = true })
+hl.bind(mod .. " + CTRL + down",  hl.dsp.resize({ dx =   0, dy =  30 }), { repeating = true })
+
 -- Powermenu (con fallback a poweroff si el script no existe)
+-- FIX: el .conf anterior tenía esto en SUPER+SHIFT+P y usaba SUPER+SHIFT+E
+-- para "exit" (mata Hyprland sin confirmar). El live usa SUPER+SHIFT+E para
+-- powermenu — la misma combinación hacía dos cosas distintas según el
+-- entorno. Se unifica en SUPER+SHIFT+E con el mismo guard que el live;
+-- se quita el bind de "exit" crudo para no salir sin pasar por el menú.
 hl.bind(mod .. " + SHIFT + E",
     hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
 
@@ -174,12 +175,6 @@ hl.bind(mod .. " + SHIFT + right", hl.dsp.window.move("r"))
 hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move("u"))
 hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move("d"))
 
--- Redimensionar con teclado
-hl.bind(mod .. " + CTRL + right", hl.dsp.resize({ dx =  30, dy =   0 }), { repeating = true })
-hl.bind(mod .. " + CTRL + left",  hl.dsp.resize({ dx = -30, dy =   0 }), { repeating = true })
-hl.bind(mod .. " + CTRL + up",    hl.dsp.resize({ dx =   0, dy = -30 }), { repeating = true })
-hl.bind(mod .. " + CTRL + down",  hl.dsp.resize({ dx =   0, dy =  30 }), { repeating = true })
-
 -- Workspaces — scroll con ratón y Tab
 hl.bind(mod .. " + mouse_down", hl.dsp.workspace.relative(1))
 hl.bind(mod .. " + mouse_up",   hl.dsp.workspace.relative(-1))
@@ -194,11 +189,9 @@ for i = 1, 9 do
         hl.dsp.window.move({ workspace = tostring(i) }))
 end
 
--- Captura de pantalla (útil en el live para documentar errores)
+-- Captura de pantalla
 hl.bind("Print",
     hl.dsp.exec_cmd("grim ~/screenshot_$(date +%Y%m%d_%H%M%S).png"))
-hl.bind(mod .. " + SHIFT + S",
-    hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy'))
 
 -- Audio (repeating = true para mantener pulsado)
 hl.bind("XF86AudioRaiseVolume",
@@ -226,19 +219,8 @@ hl.bind("XF86MonBrightnessDown",
     { repeating = true })
 
 -- ── Window rules ──────────────────────────────────────────────────
--- El instalador (pywebview) debe aparecer flotante y centrado
-hl.window_rule({
-    match  = { class = "avalos-install" },
-    float  = true,
-    center = true,
-    size   = { 1000, 700 },
-})
-
-hl.window_rule({ match = { class = "pavucontrol" },         float = true })
+-- FIX: windowrulev2 (hyprlang) está deprecado y ahora genera error;
+-- en la API Lua el equivalente es hl.window_rule().
+hl.window_rule({ match = { class = "pavucontrol" },         float = true, size = { 800, 600 } })
 hl.window_rule({ match = { class = "nm-connection-editor" }, float = true })
-hl.window_rule({
-    match  = { class = "avalos-wallpaper" },
-    float  = true,
-    center = true,
-    size   = { 1000, 700 },
-})
+hl.window_rule({ match = { class = "blueman-manager" },      float = true })

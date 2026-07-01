@@ -1,6 +1,3 @@
-# ── AvalOS — Mako notification daemon ────────────────────────────
-# Tema: Tokyo Night
-
 font=JetBrainsMono Nerd Font 11
 background-color=#24283bff
 text-color=#c0caf5ff
@@ -8,16 +5,6 @@ border-color=#7aa2f7ff
 border-size=1
 border-radius=8
 width=340
-# BUG-1 FIX (corregido): la opción real de mako se llama "height", no
-# "max-height" — confirmado en el código fuente de mako (config.c,
-# struct mako_style->height) y en el manpage oficial (doc/mako.5.scd):
-# "height=px  Set maximum height of notification popups. Notifications
-# whose text takes up less space are shrunk to fit." — es decir, "height"
-# YA es una altura MÁXIMA con auto-shrink; nunca existió un renombre a
-# "max-height" en ninguna versión. Una opción desconocida en mako no se
-# ignora — el parser hace fprintf a stderr y aborta el parseo completo
-# (ret=-1), por lo que "max-height=200" rompía el arranque de mako entero,
-# no solo esta línea.
 height=200
 margin=10
 padding=10,12
@@ -26,26 +13,9 @@ max-icon-size=48
 markup=1
 actions=1
 default-timeout=8000
-# BUG-2 FIX: ignore-timeout=0 combinado con urgency=high timeout=0 es
-# redundante y puede causar que notificaciones urgentes de otras apps
-# (como una actualización de seguridad del sistema) también se ignoren.
-# Se elimina ignore-timeout global y se deja solo en urgency=high donde
-# el timeout=0 (persistente) ya cumple la función.
 sort=-time
-# BUG-3 FIX: max-visible ausente.
-# Sin max-visible, si llegan muchas notificaciones rápidamente (ej. un
-# build con muchos warnings) llenan toda la pantalla. 5 es un límite
-# cómodo que deja espacio para el trabajo.
 max-visible=5
-# BUG-4 FIX: layer ausente.
-# Sin layer=overlay, las notificaciones aparecen detrás de ventanas
-# maximizadas o en fullscreen y no son visibles. overlay las pone
-# siempre encima de todo el contenido.
 layer=overlay
-# BUG-5 FIX: anchor ausente.
-# Sin anchor, mako usa la posición por defecto (esquina superior derecha)
-# en la mayoría de setups Wayland, pero el valor explícito garantiza
-# el comportamiento correcto en Hyprland independientemente del monitor.
 anchor=top-right
 
 [urgency=low]
@@ -54,11 +24,6 @@ text-color=#565f89ff
 border-color=#414868ff
 default-timeout=5000
 
-# BUG-6 FIX: urgency=normal ausente.
-# Sin este bloque, las notificaciones normales heredan los colores del
-# bloque global pero no tienen un estilo diferenciado de las urgentes.
-# Añadir urgency=normal con un color de borde distinto hace la distinción
-# visual más clara sin ser intrusiva.
 [urgency=normal]
 background-color=#24283bff
 text-color=#c0caf5ff
@@ -69,9 +34,5 @@ default-timeout=8000
 background-color=#1a1b26ff
 text-color=#f7768eff
 border-color=#f7768eff
-# timeout=0 = persistente hasta que el usuario la descarte manualmente
 default-timeout=0
-# BUG-7 FIX: on-notify para urgency=high con sonido real del sistema.
-# notify-send-beep NO existe en Arch Linux — falla silenciosamente.
-# paplay con el sonido freedesktop funciona en cualquier setup con PipeWire.
 on-notify=exec paplay /usr/share/sounds/freedesktop/stereo/bell.oga 2>/dev/null || true

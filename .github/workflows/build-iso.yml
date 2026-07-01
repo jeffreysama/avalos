@@ -22,12 +22,9 @@ jobs:
     name: Construir AvalOS ISO
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # necesario para gh release create/upload
+      contents: write
     container:
       image: archlinux:base-devel
-      # Usar base-devel en lugar de latest para mayor reproducibilidad.
-      # Si necesitas builds 100% deterministas, fija el digest:
-      # image: archlinux@sha256:<digest>
       options: --privileged
 
     steps:
@@ -51,27 +48,17 @@ jobs:
             ttf-dejavu
 
       - name: Checkout del repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # historial completo necesario para git describe --tags
+          fetch-depth: 0
 
       - name: Configurar repo [avalos] en pacman
         env:
           GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
         run: |
-          # BUG-26 FIX: "Optional TrustAll" deshabilitaba completamente la
-          # verificación GPG — cualquier paquete sin firma o con firma inválida
-          # se instalaba igual. Con "Required DatabaseOptional" pacman exige
-          # .sig junto a cada .pkg.tar.zst. La key pública debe estar en el
-          # keyring de pacman ANTES de hacer pacman -Sy (ver importación abajo).
-          #
-          # NOTA: se agrega la clave pública AvalOS al keyring de pacman
-          # (GPG_PUBLIC_KEY viene de GitHub Secrets — el contenido de
-          # avalos-signing-key.pub.asc que exportaste al crear la key).
           echo "$GPG_PUBLIC_KEY" | pacman-key --add -
           pacman-key --lsign-key 310A08970CFBDC61
 
-          # Inyectar el repo avalos para que mkarchiso pueda descargar linux-avalos
           printf '\n[avalos]\nSigLevel = Required DatabaseOptional\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' \
             >> /etc/pacman.conf
           pacman -Sy --noconfirm
@@ -81,20 +68,15 @@ jobs:
       - name: Determinar version
         id: vars
         run: |
-          # Version
           if [[ -n "${{ github.event.inputs.version }}" ]]; then
             VERSION="${{ github.event.inputs.version }}"
           else
-            # Intentar desde git tag
             VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
             [[ -z "$VERSION" ]] && VERSION=$(date +%Y.%m.%d)
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
-          # El live ISO arranca con el kernel estándar de Arch (linux) para máxima
-          # compatibilidad. El instalador detecta la CPU en runtime y descarga
-          # linux-avalos (v3/v4) o linux-avalos-compat (baseline) según corresponda.
           echo "kernel=linux (live) → linux-avalos o compat según CPU detectada" >> "$GITHUB_OUTPUT"
           echo "Kernel live: linux estándar | Post-instalación: linux-avalos/compat según CPU"
 
@@ -107,26 +89,15 @@ jobs:
           mkdir -p "$BUILD_DIR"
           cp -r /usr/share/archiso/configs/releng/. "$BUILD_DIR/"
 
-          # FIX: todos los archivos de configuración se generan via python3 para
-          # evitar el problema de indentación del YAML. Los heredocs dentro de un
-          # step de GitHub Actions incluyen los espacios de indentación del YAML
-          # en el contenido del archivo, lo que rompe archivos de config de formato
-          # rígido (presets de mkinitcpio, archivos .conf de systemd, etc.).
-          # python3 textwrap.dedent() elimina la indentación común y escribe
-          # el archivo sin espacios iniciales — igual que lo haría un editor.
-
           printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkJVSUxEX0RJUiwgVkVSU0lPTiA9IHN5cy5hcmd2WzFdLCBzeXMuYXJndlsyXQoKZGVmIHcocGF0aCwgY29udGVudCwgZXhlY3V0YWJsZT1GYWxzZSk6CiAgICBvcy5tYWtlZGlycyhvcy5wYXRoLmRpcm5hbWUocGF0aCksIGV4aXN0X29rPVRydWUpCiAgICB3aXRoIG9wZW4ocGF0aCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodGV4dHdyYXAuZGVkZW50KGNvbnRlbnQpLmxzdHJpcCgnXG4nKSkKICAgIGlmIGV4ZWN1dGFibGU6CiAgICAgICAgb3MuY2htb2QocGF0aCwgMG83NTUpCgojIHByb2ZpbGVkZWYuc2gKaW1wb3J0IHRpbWUKbGFiZWxfZGF0ZSA9IHRpbWUuc3RyZnRpbWUoJyV5JW0lZCcpCncoZiJ7QlVJTERfRElSfS9wcm9maWxlZGVmLnNoIiwgZiIiIgogICAgIyEvdXNyL2Jpbi9lbnYgYmFzaAogICAgaXNvX25hbWU9ImF2YWxvcy17VkVSU0lPTn0iCiAgICBpc29fbGFiZWw9IkFWTFN7bGFiZWxfZGF0ZX0iCiAgICBpc29fcHVibGlzaGVyPSJBdmFsT1MgPGh0dHBzOi8vZ2l0aHViLmNvbS9qZWZmcmV5c2FtYS9hdmFsb3M+IgogICAgaXNvX2FwcGxpY2F0aW9uPSJBdmFsT1Mg4oCUIEFyY2gtYmFzZWQgwrcgSHlwcmxhbmQgwrcgVG9reW8gTmlnaHQiCiAgICBpc29fdmVyc2lvbj0ie1ZFUlNJT059IgogICAgaW5zdGFsbF9kaXI9ImFyY2giCiAgICBidWlsZG1vZGVzPSgnaXNvJykKICAgIGJvb3Rtb2Rlcz0oJ2Jpb3Muc3lzbGludXgubWJyJyAnYmlvcy5zeXNsaW51eC5lbHRvcml0bycgJ3VlZmkteDY0LnN5c3RlbWQtYm9vdC5lc3AnICd1ZWZpLXg2NC5zeXN0ZW1kLWJvb3QuZWx0b3JpdG8nKQogICAgYXJjaD0ieDg2XzY0IgogICAgcGFjbWFuX2NvbmY9InBhY21hbi5jb25mIgogICAgYWlyb290ZnNfaW1hZ2VfdHlwZT0ic3F1YXNoZnMiCiAgICBhaXJvb3Rmc19pbWFnZV90b29sX29wdGlvbnM9KCctY29tcCcgJ3pzdGQnICctWGNvbXByZXNzaW9uLWxldmVsJyAnMTknICctYicgJzFNJykKICAgIGJvb3RzdHJhcF90YXJiYWxsX2NvbXByZXNzaW9uPSgnenN0ZCcgJy1jJyAnLVQwJyAnLS1hdXRvLXRocmVhZHM9bG9naWNhbCcgJy0tbG9uZycgJy0xOScpCiAgICBmaWxlX3Blcm1pc3Npb25zPSgKICAgICAgICBbIi9ldGMvc2hhZG93Il09IjA6MDo0MDAiCiAgICAgICAgWyIvZXRjL2dzaGFkb3ciXT0iMDowOjQwMCIKICAgICAgICBbIi9yb290Il09IjA6MDo3NTAiCiAgICAgICAgWyIvdXNyL2xvY2FsL2Jpbi9hdmFsb3MtaW5zdGFsbCJdPSIwOjA6NzU1IgogICAgKQogICAgIyBOT1RBOiBlbnRyYWRhIGRlICIvdXNyL2xvY2FsL2Jpbi9hdmFsb3MtZ3B1LWVudiIgZWxpbWluYWRhIOKAlCBlc2UgYmluYXJpbwogICAgIyB5YSBubyBzZSBnZW5lcmEgKHZlciBzZWNjacOzbiAiYXZhbG9zLWdwdS1lbnYgLyBncHUtZGV0ZWN0IHNlcnZpY2UiIG3DoXMgYXJyaWJhLAogICAgIyBlbGltaW5hZGEgdHJhcyBsYSBtaWdyYWNpw7NuIGEgSHlwcmxhbmQgMC41NSArIEx1YSkuCiAgICAiIiIsIGV4ZWN1dGFibGU9VHJ1ZSkKCnByaW50KCJwcm9maWxlZGVmLnNoIE9LIikK" | base64 -d > /tmp/pyprepyeof.py
           python3 /tmp/pyprepyeof.py "$BUILD_DIR" "$VERSION"
 
-          # pacman.conf del ISO — incluye repo avalos
           cp /etc/pacman.conf "$BUILD_DIR/pacman.conf"
           sed -i 's/^#ParallelDownloads/ParallelDownloads/' "$BUILD_DIR/pacman.conf"
-          # Asegurar que el repo avalos esté en el pacman.conf del ISO
           if ! grep -q '\[avalos\]' "$BUILD_DIR/pacman.conf"; then
             printf '\n[avalos]\nSigLevel = Required DatabaseOptional\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' \
               >> "$BUILD_DIR/pacman.conf"
           fi
-          # Habilitar multilib para paquetes lib32
           if ! grep -q '^\[multilib\]' "$BUILD_DIR/pacman.conf"; then
             printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$BUILD_DIR/pacman.conf"
           fi
@@ -156,69 +127,29 @@ jobs:
           mkdir -p "$AIROOTFS/etc/systemd/system/graphical.target.wants"
           mkdir -p "$AIROOTFS/etc/pacman.d"
 
-          # ── Copiar configs al live Y a /usr/share/avalos/configs (para el instalador) ──
           mkdir -p "$AIROOTFS/usr/share/avalos/configs"
           cp -r configs/. "$AIROOTFS/usr/share/avalos/configs/"
 
-          # NOTA: la copia de configs al live (waybar, mako, kitty, rofi, hyprland.lua,
-          # hyprpaper.conf, powermenu.sh) se hace más abajo, en el bloque
-          # "── Configs desde repo ──" — antes había un bloque duplicado aquí
-          # que copiaba un subconjunto de los mismos archivos sin manejo de
-          # errores (sin `|| true`/fallback). Se eliminó para evitar
-          # desincronización entre ambos bloques.
-
-          # FIX: todos los archivos de configuración escritos via python3 para
-          # evitar indentación YAML en el contenido de los archivos.
-          printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkEgPSBzeXMuYXJndlsxXQoKZGVmIHcocGF0aCwgY29udGVudCwgZXhlY3V0YWJsZT1GYWxzZSk6CiAgICBvcy5tYWtlZGlycyhvcy5wYXRoLmRpcm5hbWUocGF0aCksIGV4aXN0X29rPVRydWUpCiAgICB3aXRoIG9wZW4ocGF0aCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodGV4dHdyYXAuZGVkZW50KGNvbnRlbnQpLmxzdHJpcCgnXG4nKSkKICAgIGlmIGV4ZWN1dGFibGU6CiAgICAgICAgb3MuY2htb2QocGF0aCwgMG83NTUpCgojIOKUgOKUgCBQcmVzZXQgZGUgbWtpbml0Y3BpbyBwYXJhIGxpbnV4IGVzdMOhbmRhciAobGl2ZSkg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACiMgRklYOiBhcmNoaXZvIGVzY3JpdG8gc2luIGluZGVudGFjacOzbiDigJQgZWwgcGFyc2VyIGRlIG1raW5pdGNwaW8gZXMgc2Vuc2libGUKIyBhIGVzcGFjaW9zIGluaWNpYWxlcyBlbiBsYXMgbMOtbmVhcyBkZSBhc2lnbmFjacOzbiBkZSB2YXJpYWJsZXMuCncoZiJ7QX0vZXRjL21raW5pdGNwaW8uZC9saW51eC5wcmVzZXQiLCAiIiIKICAgIEFMTF9jb25maWc9Jy9ldGMvbWtpbml0Y3Bpby5jb25mJwogICAgQUxMX2t2ZXI9Jy9ib290L3ZtbGludXotbGludXgnCiAgICBQUkVTRVRTPSgnZGVmYXVsdCcgJ2ZhbGxiYWNrJyAnYXJjaGlzbycpCgogICAgZGVmYXVsdF9pbWFnZT0nL2Jvb3QvaW5pdHJhbWZzLWxpbnV4LmltZycKICAgIGZhbGxiYWNrX2ltYWdlPScvYm9vdC9pbml0cmFtZnMtbGludXgtZmFsbGJhY2suaW1nJwogICAgZmFsbGJhY2tfb3B0aW9ucz0nLVMgYXV0b2RldGVjdCcKCiAgICBhcmNoaXNvX2NvbmZpZz0nL2V0Yy9ta2luaXRjcGlvLmNvbmYuZC9hcmNoaXNvLmNvbmYnCiAgICBhcmNoaXNvX2ltYWdlPScvYm9vdC9pbml0cmFtZnMtbGludXguaW1nJwogICAgIiIiKQoKIyDilIDilIAgYXJjaGlzby5jb25mOiBob29rcyBtw61uaW1vcyBwYXJhIGVsIGluaXRyYW1mcyBkZWwgbGl2ZSDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIAKIyBGSVg6IGFyY2hpdm8gZXNjcml0byBzaW4gaW5kZW50YWNpw7NuIOKAlCBta2luaXRjcGlvIHBhcnNlYSBIT09LUz0gZW4gY29sLTAuCncoZiJ7QX0vZXRjL21raW5pdGNwaW8uY29uZi5kL2FyY2hpc28uY29uZiIsICIiIgogICAgSE9PS1M9KGJhc2Ugc3lzdGVtZCBrZXlib2FyZCBzZC12Y29uc29sZSBwbHltb3V0aCBhcmNoaXNvIGJsb2NrIGZpbGVzeXN0ZW1zKQogICAgQ09NUFJFU1NJT049InpzdGQiCiAgICAiIiIpCgojIOKUgOKUgCBzeXNjdGwgQkJSIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAp3KGYie0F9L2V0Yy9zeXNjdGwuZC84MC1hdmFsb3MtYmJyLmNvbmYiLCAiIiIKICAgIG5ldC5jb3JlLmRlZmF1bHRfcWRpc2MgPSBmcQogICAgbmV0LmlwdjQudGNwX2Nvbmdlc3Rpb25fY29udHJvbCA9IGJicgogICAgIiIiKQoKIyDilIDilIAgU0RETSBhdXRvbG9naW4gcm9vdCBlbiBsaXZlIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAp3KGYie0F9L2V0Yy9zZGRtLmNvbmYuZC9hdXRvbG9naW4uY29uZiIsICIiIgogICAgW0F1dG9sb2dpbl0KICAgIFVzZXI9cm9vdAogICAgU2Vzc2lvbj1oeXBybGFuZAogICAgIiIiKQoKIyDilIDilIAgSHlwcmxhbmQgLmRlc2t0b3Ag4oCUIGdhcmFudGl6YSBxdWUgU0RETSBlbmN1ZW50cmEgbGEgc2VzacOzbiDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIAKIyBGSVg6IHNpIGVsIHBhcXVldGUgaHlwcmxhbmQgbm8gaW5zdGFsYSBlc3RlIGFyY2hpdm8gKHZhcsOtYSBwb3IgdmVyc2nDs24pLAojIFNERE0gbm8gbG8gbGlzdGEgeSBoYWNlIGZhbGxiYWNrIGEgWDExIG8gbXVlc3RyYSBlcnJvciBkZSBzZXNpw7NuIG5vIGVuY29udHJhZGEuCncoZiJ7QX0vdXNyL3NoYXJlL3dheWxhbmQtc2Vzc2lvbnMvaHlwcmxhbmQuZGVza3RvcCIsICIiIgogICAgW0Rlc2t0b3AgRW50cnldCiAgICBOYW1lPUh5cHJsYW5kCiAgICBDb21tZW50PUFuIGludGVsbGlnZW50IGR5bmFtaWMgdGlsaW5nIFdheWxhbmQgY29tcG9zaXRvcgogICAgRXhlYz1IeXBybGFuZAogICAgVHlwZT1BcHBsaWNhdGlvbgogICAgIiIiKQoKIyDilIDilIAgZ3B1LWVudi5jb25mOiBlbGltaW5hZG8g4oCUIGh5cHJsYW5kLmx1YSBubyBsbyBjYXJnYSAoTHVhIG5vIHVzYSBzb3VyY2UpIOKUgOKUgOKUgOKUgOKUgApvcy5tYWtlZGlycyhmIntBfS9yb290Ly5jb25maWcvaHlwciIsIGV4aXN0X29rPVRydWUpCiMgZ3B1LWVudi5jb25mIGVsaW1pbmFkbyDigJQgeWEgbm8gc2UgbmVjZXNpdGEgKGh5cHJsYW5kLmx1YSBubyBsbyBjYXJnYSkKCnByaW50KCJDb25maWdzIGJhc2UgT0siKQo=" | base64 -d > /tmp/pycfgpyeof.py
+          printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkEgPSBzeXMuYXJndlsxXQoKZGVmIHcocGF0aCwgY29udGVudCwgZXhlY3V0YWJsZT1GYWxzZSk6CiAgICBvcy5tYWtlZGlycyhvcy5wYXRoLmRpcm5hbWUocGF0aCksIGV4aXN0X29rPVRydWUpCiAgICB3aXRoIG9wZW4ocGF0aCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodGV4dHdyYXAuZGVkZW50KGNvbnRlbnQpLmxzdHJpcCgnXG4nKSkKICAgIGlmIGV4ZWN1dGFibGU6CiAgICAgICAgb3MuY2htb2QocGF0aCwgMG83NTUpCgojIOKUgOKUgCBQcmVzZXQgZGUgbWtpbml0Y3BpbyBwYXJhIGxpbnV4IGVzdMOhbmRhciAobGl2ZSkg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACiMgRklYOiBhcmNoaXZvIGVzY3JpdG8gc2luIGluZGVudGFjacOzbiDigJQgZWwgcGFyc2VyIGRlIG1raW5pdGNwaW8gZXMgc2Vuc2libGUKIyBhIGVzcGFjaW9zIGluaWNpYWxlcyBlbiBsYXMgbMOtbmVhcyBkZSBhc2lnbmFjacOzbiBkZSB2YXJpYWJsZXMuCncoZiJ7QX0vZXRjL21raW5pdGNwaW8uZC9saW51eC5wcmVzZXQiLCAiIiIKICAgIEFMTF9jb25maWc9Jy9ldGMvbWtpbml0Y3Bpby5jb25mJwogICAgQUxMX2t2ZXI9Jy9ib290L3ZtbGludXotbGludXgnCiAgICBQUkVTRVRTPSgnZGVmYXVsdCcgJ2ZhbGxiYWNrJyAnYXJjaGlzbycpCgogICAgZGVmYXVsdF9pbWFnZT0nL2Jvb3QvaW5pdHJhbWZzLWxpbnV4LmltZycKICAgIGZhbGxiYWNrX2ltYWdlPScvYm9vdC9pbml0cmFtZnMtbGludXgtZmFsbGJhY2suaW1nJwogICAgZmFsbGJhY2tfb3B0aW9ucz0nLVMgYXV0b2RldGVjdCcKCiAgICBhcmNoaXNvX2NvbmZpZz0nL2V0Yy9ta2luaXRjcGlvLmNvbmYuZC9hcmNoaXNvLmNvbmYnCiAgICBhcmNoaXNvX2ltYWdlPScvYm9vdC9pbml0cmFtZnMtbGludXgtYXJjaGlzby5pbWcnCiAgICAiIiIpCgojIOKUgOKUgCBhcmNoaXNvLmNvbmY6IGhvb2tzIG3DrW5pbW9zIHBhcmEgZWwgaW5pdHJhbWZzIGRlbCBsaXZlIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAojIEZJWDogYXJjaGl2byBlc2NyaXRvIHNpbiBpbmRlbnRhY2nDs24g4oCUIG1raW5pdGNwaW8gcGFyc2VhIEhPT0tTPSBlbiBjb2wtMC4KdyhmIntBfS9ldGMvbWtpbml0Y3Bpby5jb25mLmQvYXJjaGlzby5jb25mIiwgIiIiCiAgICBIT09LUz0oYmFzZSBzeXN0ZW1kIGtleWJvYXJkIHNkLXZjb25zb2xlIHBseW1vdXRoIGFyY2hpc28gYmxvY2sgZmlsZXN5c3RlbXMpCiAgICBDT01QUkVTU0lPTj0ienN0ZCIKICAgICIiIikKCiMg4pSA4pSAIHN5c2N0bCBCQlIg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACncoZiJ7QX0vZXRjL3N5c2N0bC5kLzgwLWF2YWxvcy1iYnIuY29uZiIsICIiIgogICAgbmV0LmNvcmUuZGVmYXVsdF9xZGlzYyA9IGZxCiAgICBuZXQuaXB2NC50Y3BfY29uZ2VzdGlvbl9jb250cm9sID0gYmJyCiAgICAiIiIpCgojIOKUgOKUgCBTRERNIGF1dG9sb2dpbiByb290IGVuIGxpdmUg4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSA4pSACncoZiJ7QX0vZXRjL3NkZG0uY29uZi5kL2F1dG9sb2dpbi5jb25mIiwgIiIiCiAgICBbQXV0b2xvZ2luXQogICAgVXNlcj1yb290CiAgICBTZXNzaW9uPWh5cHJsYW5kCiAgICAiIiIpCgojIOKUgOKUgCBIeXBybGFuZCAuZGVza3RvcCDigJQgZ2FyYW50aXphIHF1ZSBTRERNIGVuY3VlbnRyYSBsYSBzZXNpw7NuIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAojIEZJWDogc2kgZWwgcGFxdWV0ZSBoeXBybGFuZCBubyBpbnN0YWxhIGVzdGUgYXJjaGl2byAodmFyw61hIHBvciB2ZXJzacOzbiksCiMgU0RETSBubyBsbyBsaXN0YSB5IGhhY2UgZmFsbGJhY2sgYSBYMTEgbyBtdWVzdHJhIGVycm9yIGRlIHNlc2nDs24gbm8gZW5jb250cmFkYS4KdyhmIntBfS91c3Ivc2hhcmUvd2F5bGFuZC1zZXNzaW9ucy9oeXBybGFuZC5kZXNrdG9wIiwgIiIiCiAgICBbRGVza3RvcCBFbnRyeV0KICAgIE5hbWU9SHlwcmxhbmQKICAgIENvbW1lbnQ9QW4gaW50ZWxsaWdlbnQgZHluYW1pYyB0aWxpbmcgV2F5bGFuZCBjb21wb3NpdG9yCiAgICBFeGVjPUh5cHJsYW5kCiAgICBUeXBlPUFwcGxpY2F0aW9uCiAgICAiIiIpCgojIOKUgOKUgCBncHUtZW52LmNvbmY6IGVsaW1pbmFkbyDigJQgaHlwcmxhbmQubHVhIG5vIGxvIGNhcmdhIChMdWEgbm8gdXNhIHNvdXJjZSkg4pSA4pSA4pSA4pSA4pSACm9zLm1ha2VkaXJzKGYie0F9L3Jvb3QvLmNvbmZpZy9oeXByIiwgZXhpc3Rfb2s9VHJ1ZSkKIyBncHUtZW52LmNvbmYgZWxpbWluYWRvIOKAlCB5YSBubyBzZSBuZWNlc2l0YSAoaHlwcmxhbmQubHVhIG5vIGxvIGNhcmdhKQoKcHJpbnQoIkNvbmZpZ3MgYmFzZSBPSyIpCg==" | base64 -d > /tmp/pycfgpyeof.py
           python3 /tmp/pycfgpyeof.py "$AIROOTFS"
 
-          # ── Mirrorlist ────────────────────────────────────────────────────────
           cp /etc/pacman.d/mirrorlist "$AIROOTFS/etc/pacman.d/mirrorlist" 2>/dev/null || \
             echo 'Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch' \
               > "$AIROOTFS/etc/pacman.d/mirrorlist"
 
-          # ── Crear /efi y /boot para que mkinitcpio no falle en chroot ─────────
           mkdir -p "$AIROOTFS/efi/EFI/Linux"
           mkdir -p "$AIROOTFS/boot"
 
-          # ── pacman.conf dentro del airootfs ───────────────────────────────────
           cp "$BUILD_DIR/pacman.conf" "$AIROOTFS/etc/pacman.conf"
 
-          # ── customize_airootfs.sh ─────────────────────────────────────────────
-          # FIX: (1) el script se escribe sin la indentación del YAML para que
-          # el shebang quede en col-0 y bash lo reconozca correctamente.
-          # (2) python-pywebview se movió a packages.x86_64 — este script ahora
-          # solo hace tareas que REQUIEREN estar dentro del chroot (locale, etc.)
-          # y no instala paquetes vía pip (sin red en el chroot de mkarchiso).
-          # BUG FIX: mkarchiso busca y ejecuta específicamente
-          # "${pacstrap_dir}/root/customize_airootfs.sh" (vía arch-chroot,
-          # ver código fuente de archiso). Escribirlo en /etc/ hace que
-          # mkarchiso NUNCA lo encuentre ni lo ejecute — los locales es_ES y
-          # zh_CN nunca se generaban (en_US sí, porque releng lo trae por
-          # defecto), aunque el build terminaba sin ningún error visible.
           printf '%s' "IyEvdXNyL2Jpbi9lbnYgYmFzaApzZXQgLWV1byBwaXBlZmFpbAplY2hvICJbQXZhbE9TXSBFamVjdXRhbmRvIGN1c3RvbWl6ZV9haXJvb3Rmcy5zaC4uLiIKCiMgTG9jYWxlIGVuIGVzcGHDsW9sIChwb3IgZGVmZWN0bykgZSBpbmdsw6lzICsgQ2hpbm8gU2ltcGxpZmljYWRvIGhhYmlsaXRhZG9zCnNlZCAtaSAncy9eI1woZXNfRVMuVVRGLThcKS9cMS8nIC9ldGMvbG9jYWxlLmdlbgpzZWQgLWkgJ3MvXiNcKGVuX1VTLlVURi04XCkvXDEvJyAvZXRjL2xvY2FsZS5nZW4Kc2VkIC1pICdzL14jXCh6aF9DTi5VVEYtOFwpL1wxLycgL2V0Yy9sb2NhbGUuZ2VuCmxvY2FsZS1nZW4KCmVjaG8gIltBdmFsT1NdIGN1c3RvbWl6ZV9haXJvb3Rmcy5zaCBjb21wbGV0YWRvIgo=" | base64 -d > "$AIROOTFS/root/customize_airootfs.sh"
           chmod 755 "$AIROOTFS/root/customize_airootfs.sh"
 
-          # ── avalos-gpu-env / gpu-detect service ───────────────────────────────
-          # NOTA: eliminados del live ISO tras la migración a Hyprland 0.55 + Lua.
-          # avalos-gpu-env escribía gpu-env.conf en formato hyprlang (env = K,V)
-          # que hyprland.lua nunca carga. Mesa detecta la GPU automáticamente
-          # sin vars explícitas; suficiente para el entorno live/instalador.
-          # (El sistema instalado bake las vars GPU en hyprland.lua vía %%GPU_ENV%%.)
-
-          # ── Habilitar sddm.service en el live ─────────────────────────────────
           ln -sf /usr/lib/systemd/system/sddm.service \
             "$AIROOTFS/etc/systemd/system/display-manager.service"
           ln -sf /usr/lib/systemd/system/sddm.service \
             "$AIROOTFS/etc/systemd/system/graphical.target.wants/sddm.service"
 
-          # ── Instalador ───────────────────────────────────────────────────────
-          # FIX (unificación i18n): translations.py ya NO es opcional.
-          # skill_instalar_usb.py hace "import translations" a nivel de módulo
-          # (STRINGS del wizard se genera desde translations.TRANSLATIONS) —
-          # sin este archivo, el instalador no arranca. Si falta, todo el
-          # bloque del instalador se omite (igual que si faltara el propio
-          # skill_instalar_usb.py) en lugar de generar un avalos-install roto.
           if [[ -f "scripts/skill_instalar_usb.py" && -f "scripts/translations.py" ]]; then
             mkdir -p "$AIROOTFS/usr/share/avalos/installer"
             cp scripts/skill_instalar_usb.py \
@@ -232,12 +163,6 @@ jobs:
             echo "[WARN] scripts/skill_instalar_usb.py o scripts/translations.py no encontrados — live sin instalador grafico"
           fi
 
-          # ── Configs desde repo ───────────────────────────────────────────────
-          # BUG-14 FIX (fallback): el fallback anterior escribía la sintaxis
-          # vieja eliminada en el rewrite de hyprpaper sobre hyprtoolkit
-          # (preload = / wallpaper = ,path). Si el archivo no existe en el
-          # repo, el live arrancaba sin wallpaper. Ahora el fallback escribe
-          # la sintaxis de bloque wallpaper{} igual que el archivo del repo.
           [[ -f "configs/hyprland/hyprpaper.conf" ]] && \
             cp configs/hyprland/hyprpaper.conf "$AIROOTFS/root/.config/hypr/hyprpaper.conf" || \
             printf 'wallpaper {\n    monitor =\n    path = ~/.config/hypr/wallpaper.png\n    fit_mode = cover\n}\nsplash = false\n' \
@@ -255,11 +180,6 @@ jobs:
           [[ -f "configs/rofi/config.rasi" ]] && \
             cp configs/rofi/config.rasi "$AIROOTFS/root/.config/rofi/config.rasi" || true
 
-          # FIX: rofi/powermenu.sh no se copiaba al live. waybar/config.jsonc
-          # (sí copiado arriba) tiene "custom/powermenu" con
-          # on-click: "~/.config/rofi/scripts/powermenu.sh" — sin este archivo,
-          # el botón de power de waybar en el live (sesión root/autologin)
-          # apunta a una ruta inexistente y no hace nada (sin feedback visual).
           mkdir -p "$AIROOTFS/root/.config/rofi/scripts"
           if [[ -f "configs/rofi/powermenu.sh" ]]; then
             cp configs/rofi/powermenu.sh "$AIROOTFS/root/.config/rofi/scripts/powermenu.sh"
@@ -277,19 +197,11 @@ jobs:
             cp configs/kitty/kitty.conf "$AIROOTFS/root/.config/kitty/kitty.conf" || \
             echo "[WARN] configs/kitty/kitty.conf no encontrado"
 
-          # ── Fastfetch ─────────────────────────────────────────────────────────
-          # FIX: configs desde repo con base64 como fallback.
-          # El logo ASCII (avalos.txt) siempre se genera desde base64 — es arte
-          # complejo que no está como archivo separado en el repo.
-          # Los configs (config.jsonc) se toman del repo si existen; si no,
-          # se usa el contenido base64 embebido como fallback.
           mkdir -p "$AIROOTFS/etc/fastfetch" "$AIROOTFS/root/.config/fastfetch"
 
-          # Paso 1: siempre generar el logo ASCII
           printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkEgPSBzeXMuYXJndlsxXQpkZWYgdyhwLCBjLCByYXc9RmFsc2UpOgogICAgb3MubWFrZWRpcnMob3MucGF0aC5kaXJuYW1lKHApLCBleGlzdF9vaz1UcnVlKQogICAgdHh0ID0gYyBpZiByYXcgZWxzZSB0ZXh0d3JhcC5kZWRlbnQoYykubHN0cmlwKCdcbicpCiAgICB3aXRoIG9wZW4ocCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodHh0KQp3KGYie0F9L2V0Yy9mYXN0ZmV0Y2gvYXZhbG9zLnR4dCIsCiAgIiQxICAgICAgICAgICAgICAgICAgICAgICAgICBcdTAyOGNcbiIKICAiJDEgICAgICAgICAgICAgICAgICAgICAgICAgLyNcXFxuIgogICIkMSAgICAgICAgICAgICAgICAgICAgICAgIC8jJDJAJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgICAgICAgICAgIC8jJDJAJDMkJCQyQCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgIF9fXyAgIC8jJDMkJCQyQCQxXHUwMjhjJDJAJDMkJCQxI1xcICAgIF9fX1xuIgogICIkMSAgICAgICAgICAgICAgICBcXCQ0JiYkMVxcIC8jJDMkJCQyQCQxLyQzJCQkMVxcJDJAJDEjI1xcICAvJDQmJiQxL1xuIgogICIkMSAgICAgICAgICAgICAgICAgXFwkNCYmJDFcXCMkMyQkJDJAJDEvJDMkJCQkJCQkMVxcJDJAJDEjI1xcLyQ0JiYkMS9cbiIKICAiJDEgICAgICAgICAgICAgICAgICBcXCQ0JiYkMVxcJDJAJDEvJDMkJCQkJDFcdTAyOGMkMyQkJCQkMVxcJDJAJDMkJCQxI1xcJDQmJDEvXG4iCiAgIiQxICAgICAgICAgICAgICAgICAgL1xcJDQmJiQxXFwkMyQkJCQkMS8gXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgICAvIyQzJCQkMVxcJDQmJiQxXFwvICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgIC8jJDMkJCQyQCQxL1xcJDQmJiQxXFwgICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgLyMkMyQkJDJAJDEvJDMkJCQkJDFcXCQ0JiYkMVxcICAvJDQmJDFcXCQzJCQkJCQxXFwkMkAkMyQkJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgIC8jJDMkJCQyQCQxLyQzJCQkJCQxLyBcXCQ0JiYkMVxcLyQ0JiYkMS9cXCQzJCQkJCQxXFwkMkAkMyQkJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgLyMkMyQkJDJAJDEvJDMkJCQkJDEvICAgXFwkNCYmJiYkMS8gIFxcJDMkJCQkJDFcXCQyQCQzJCQkMSNcXFxuIgogICIkMSAgICAgICAgICAgICBcXCMkMyQkJDEvJDMkJCQkJDEvICAgICBcXCQ0JiYkMS8gICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxL1xuIgogICIkMSAgICAgICAgICAgICAgXFwvX18vICAgICAgIFxcLyAgICAgIFxcX19cXC9cbiIsCiAgcmF3PVRydWUpCnByaW50KCJGYXN0ZmV0Y2ggbG9nbyBPSyIpCg==" | base64 -d > /tmp/pylogoonly.py
           python3 /tmp/pylogoonly.py "$AIROOTFS"
 
-          # Paso 2: config desde repo o fallback base64
           if [[ -f "configs/fastfetch/config.jsonc" ]]; then
             cp configs/fastfetch/config.jsonc "$AIROOTFS/etc/fastfetch/config.jsonc"
             cp configs/fastfetch/config.jsonc "$AIROOTFS/root/.config/fastfetch/config.jsonc"
@@ -307,7 +219,6 @@ jobs:
           AIROOTFS="$BUILD_DIR/airootfs"
           LOGO_URL="https://raw.githubusercontent.com/${{ env.AVALOS_REPO }}/main/assets/AvalOS-logo.png"
 
-          # ── Logo: descargar al airootfs ───────────────────────────────────────
           mkdir -p "$AIROOTFS/usr/share/pixmaps"
           if curl -fsSL "$LOGO_URL" -o "$AIROOTFS/usr/share/pixmaps/avalos-logo.png"; then
             echo "Logo: $(wc -c < "$AIROOTFS/usr/share/pixmaps/avalos-logo.png") bytes"
@@ -322,7 +233,6 @@ jobs:
             echo "Logo placeholder generado"
           fi
 
-          # ── Wallpaper: 1920x1080 · fondo negro profundo · logo + texto ────────
           convert -size 1920x1080 xc:"#0d0e17" \
             \( "$AIROOTFS/usr/share/pixmaps/avalos-logo.png" \
                -resize 260x260 -background none \) \
@@ -338,44 +248,26 @@ jobs:
                    "$AIROOTFS/root/.config/hypr/wallpaper.png"
                  echo "Fallback: wallpaper solido negro profundo"; }
 
-          # FIX (branding consistente live ISO ↔ sistema instalado): copiar el
-          # wallpaper recién generado (logo+texto, o el fallback sólido) a
-          # /usr/share/avalos/wallpaper-default.png — ubicación legible desde
-          # el live ISO en ejecución. skill_instalar_usb.py (_configurar_hyprland)
-          # copia este archivo como ~/.config/hypr/wallpaper.png del usuario en
-          # el sistema instalado, sin necesitar ImageMagick en runtime (no forma
-          # parte de packages.x86_64). Antes, el sistema instalado recibía solo
-          # un PNG sólido sin logo/texto — branding inconsistente entre el live
-          # ISO y la instalación.
           mkdir -p "$AIROOTFS/usr/share/avalos"
           cp "$AIROOTFS/root/.config/hypr/wallpaper.png" "$AIROOTFS/usr/share/avalos/wallpaper-default.png"
 
-          # ── Archivos de config via Python (evita col-0 en YAML) ───────────────
           printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwLCBzaHV0aWwKQSA9IHN5cy5hcmd2WzFdCgpkZWYgdyhwYXRoLCBjb250ZW50KToKICAgIG9zLm1ha2VkaXJzKG9zLnBhdGguZGlybmFtZShwYXRoKSwgZXhpc3Rfb2s9VHJ1ZSkKICAgIHdpdGggb3BlbihwYXRoLCAndycpIGFzIGY6CiAgICAgICAgZi53cml0ZSh0ZXh0d3JhcC5kZWRlbnQoY29udGVudCkubHN0cmlwKCdcbicpKQoKIyBvcy1yZWxlYXNlCncoZiJ7QX0vZXRjL29zLXJlbGVhc2UiLCAiIiIKICAgIE5BTUU9IkF2YWxPUyIKICAgIFBSRVRUWV9OQU1FPSJBdmFsT1MiCiAgICBJRD1hdmFsb3MKICAgIElEX0xJS0U9YXJjaAogICAgSE9NRV9VUkw9Imh0dHBzOi8vZ2l0aHViLmNvbS9qZWZmcmV5c2FtYS9hdmFsb3MiCiAgICBTVVBQT1JUX1VSTD0iaHR0cHM6Ly9naXRodWIuY29tL2plZmZyZXlzYW1hL2F2YWxvcy9pc3N1ZXMiCiAgICBCVUdfUkVQT1JUX1VSTD0iaHR0cHM6Ly9naXRodWIuY29tL2plZmZyZXlzYW1hL2F2YWxvcy9pc3N1ZXMiCiAgICBMT0dPPWF2YWxvcy1sb2dvCiAgICBCVUlMRF9JRD1yb2xsaW5nCiAgICBBTlNJX0NPTE9SPSIzODsyOzEyMjsxNjI7MjQ3IgogICAgIiIiKQoKIyBTRERNIOKAlCB0ZW1hIFRva3lvIE5pZ2h0ClQgPSBmIntBfS91c3Ivc2hhcmUvc2RkbS90aGVtZXMvYXZhbG9zIgpvcy5tYWtlZGlycyhULCBleGlzdF9vaz1UcnVlKQpzaHV0aWwuY29weShmIntBfS91c3Ivc2hhcmUvcGl4bWFwcy9hdmFsb3MtbG9nby5wbmciLCBmIntUfS9hdmFsb3MtbG9nby5wbmciKQp3KGYie1R9L3RoZW1lLmNvbmYiLCAiIiIKICAgIFtHZW5lcmFsXQogICAgdHlwZT10aGVtZQogICAgbmFtZT1BdmFsT1MKICAgIGRlc2NyaXB0aW9uPUF2YWxPUyAtIFRva3lvIE5pZ2h0CiAgICBhdXRob3I9QXZhbE9TCiAgICBsaWNlbnNlPU1JVAogICAgIiIiKQoKIyBGSVg6IGZhbHRhIG1ldGFkYXRhLmRlc2t0b3Ag4oCUIGVzIGVsIG1hbmlmaWVzdG8gcXVlIFNERE0gbGVlIHBhcmEgREVURUNUQVIKIyBxdWUgZXN0ZSBkaXJlY3RvcmlvIGVzIHVuIHRlbWEgdsOhbGlkbyB5IGN1w6FsIGVzIHN1IGVudHJ5IHBvaW50IChNYWluLnFtbCkuCiMgdGhlbWUuY29uZiBwb3Igc8OtIHNvbG8gTk8gZXMgc3VmaWNpZW50ZTogc2luIG1ldGFkYXRhLmRlc2t0b3AsIFNERE0gbmkKIyBzaXF1aWVyYSByZWNvbm9jZSAiYXZhbG9zIiBjb21vIHRlbWEgaW5zdGFsYWRvIHkgY2FlIHNpbGVuY2lvc2FtZW50ZSBhbAojIHRlbWEgcG9yIGRlZmVjdG8sIGF1bnF1ZSBzZGRtLmNvbmYuZCB0ZW5nYSBDdXJyZW50PWF2YWxvcy4KdyhmIntUfS9tZXRhZGF0YS5kZXNrdG9wIiwgIiIiCiAgICBbU2RkbUdyZWV0ZXJUaGVtZV0KICAgIE5hbWU9QXZhbE9TCiAgICBEZXNjcmlwdGlvbj1BdmFsT1MgLSBUb2t5byBOaWdodAogICAgQXV0aG9yPUF2YWxPUwogICAgQ29weXJpZ2h0PUF2YWxPUwogICAgTGljZW5zZT1NSVQKICAgIFR5cGU9c2RkbS10aGVtZQogICAgVmVyc2lvbj0xLjAKICAgIFdlYnNpdGU9aHR0cHM6Ly9naXRodWIuY29tL2plZmZyZXlzYW1hL2F2YWxvcwogICAgTWFpblNjcmlwdD1NYWluLnFtbAogICAgQ29uZmlnRmlsZT10aGVtZS5jb25mCiAgICAiIiIpCgp3KGYie1R9L01haW4ucW1sIiwgIiIiCiAgICBpbXBvcnQgUXRRdWljayAyLjE1CiAgICBpbXBvcnQgUXRRdWljay5Db250cm9scyAyLjE1CiAgICBpbXBvcnQgUXRRdWljay5MYXlvdXRzIDEuMTUKICAgIEl0ZW0gewogICAgICAgIGlkOiByb290CiAgICAgICAgUmVjdGFuZ2xlIHsgYW5jaG9ycy5maWxsOiBwYXJlbnQ7IGNvbG9yOiAiIzFhMWIyNiIgfQogICAgICAgIENvbHVtbkxheW91dCB7CiAgICAgICAgICAgIGFuY2hvcnMuY2VudGVySW46IHBhcmVudAogICAgICAgICAgICBzcGFjaW5nOiAxOAogICAgICAgICAgICB3aWR0aDogMzAwCiAgICAgICAgICAgIEltYWdlIHsKICAgICAgICAgICAgICAgIExheW91dC5hbGlnbm1lbnQ6IFF0LkFsaWduSENlbnRlcgogICAgICAgICAgICAgICAgc291cmNlOiBRdC5yZXNvbHZlZFVybCgiYXZhbG9zLWxvZ28ucG5nIikKICAgICAgICAgICAgICAgIHdpZHRoOiAxNDA7IGhlaWdodDogMTQwCiAgICAgICAgICAgICAgICBmaWxsTW9kZTogSW1hZ2UuUHJlc2VydmVBc3BlY3RGaXQ7IHNtb290aDogdHJ1ZQogICAgICAgICAgICB9CiAgICAgICAgICAgIFRleHQgewogICAgICAgICAgICAgICAgTGF5b3V0LmFsaWdubWVudDogUXQuQWxpZ25IQ2VudGVyCiAgICAgICAgICAgICAgICB0ZXh0OiAiQXZhbE9TIjsgY29sb3I6ICIjN2FhMmY3IgogICAgICAgICAgICAgICAgZm9udC5waXhlbFNpemU6IDMwOyBmb250LndlaWdodDogRm9udC5MaWdodAogICAgICAgICAgICB9CiAgICAgICAgICAgIEl0ZW0geyBMYXlvdXQucHJlZmVycmVkSGVpZ2h0OiA4IH0KICAgICAgICAgICAgVGV4dEZpZWxkIHsKICAgICAgICAgICAgICAgIGlkOiBuYW1lRmllbGQ7IExheW91dC5maWxsV2lkdGg6IHRydWUKICAgICAgICAgICAgICAgIHRleHQ6IHVzZXJNb2RlbC5sYXN0VXNlcjsgcGxhY2Vob2xkZXJUZXh0OiAiVXNlciIKICAgICAgICAgICAgICAgIGNvbG9yOiAiI2MwY2FmNSI7IHBsYWNlaG9sZGVyVGV4dENvbG9yOiAiIzU2NWY4OSIKICAgICAgICAgICAgICAgIGZvbnQucGl4ZWxTaXplOiAxMwogICAgICAgICAgICAgICAgbGVmdFBhZGRpbmc6IDE0OyByaWdodFBhZGRpbmc6IDE0OyB0b3BQYWRkaW5nOiAxMDsgYm90dG9tUGFkZGluZzogMTAKICAgICAgICAgICAgICAgIGJhY2tncm91bmQ6IFJlY3RhbmdsZSB7CiAgICAgICAgICAgICAgICAgICAgY29sb3I6ICIjMjQyODNiIjsgcmFkaXVzOiA4CiAgICAgICAgICAgICAgICAgICAgYm9yZGVyLmNvbG9yOiBuYW1lRmllbGQuYWN0aXZlRm9jdXMgPyAiIzdhYTJmNyIgOiAiIzQxNDg2OCI7IGJvcmRlci53aWR0aDogMQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgS2V5TmF2aWdhdGlvbi50YWI6IHBhc3NGaWVsZAogICAgICAgICAgICB9CiAgICAgICAgICAgIFRleHRGaWVsZCB7CiAgICAgICAgICAgICAgICBpZDogcGFzc0ZpZWxkOyBMYXlvdXQuZmlsbFdpZHRoOiB0cnVlCiAgICAgICAgICAgICAgICBwbGFjZWhvbGRlclRleHQ6ICJQYXNzd29yZCI7IGVjaG9Nb2RlOiBUZXh0SW5wdXQuUGFzc3dvcmQKICAgICAgICAgICAgICAgIGNvbG9yOiAiI2MwY2FmNSI7IHBsYWNlaG9sZGVyVGV4dENvbG9yOiAiIzU2NWY4OSIKICAgICAgICAgICAgICAgIGZvbnQucGl4ZWxTaXplOiAxMwogICAgICAgICAgICAgICAgbGVmdFBhZGRpbmc6IDE0OyByaWdodFBhZGRpbmc6IDE0OyB0b3BQYWRkaW5nOiAxMDsgYm90dG9tUGFkZGluZzogMTAKICAgICAgICAgICAgICAgIGJhY2tncm91bmQ6IFJlY3RhbmdsZSB7CiAgICAgICAgICAgICAgICAgICAgY29sb3I6ICIjMjQyODNiIjsgcmFkaXVzOiA4CiAgICAgICAgICAgICAgICAgICAgYm9yZGVyLmNvbG9yOiBwYXNzRmllbGQuYWN0aXZlRm9jdXMgPyAiIzdhYTJmNyIgOiAiIzQxNDg2OCI7IGJvcmRlci53aWR0aDogMQogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgS2V5cy5vblJldHVyblByZXNzZWQ6IGRvTG9naW4oKQogICAgICAgICAgICAgICAgS2V5TmF2aWdhdGlvbi50YWI6IGxvZ2luQnRuCiAgICAgICAgICAgIH0KICAgICAgICAgICAgVGV4dCB7CiAgICAgICAgICAgICAgICBMYXlvdXQuZmlsbFdpZHRoOiB0cnVlOyB0ZXh0OiBzZGRtLmxhc3RFcnJvcgogICAgICAgICAgICAgICAgY29sb3I6ICIjZjc3NjhlIjsgZm9udC5waXhlbFNpemU6IDExCiAgICAgICAgICAgICAgICB3cmFwTW9kZTogVGV4dC5Xb3JkV3JhcDsgdmlzaWJsZTogc2RkbS5sYXN0RXJyb3IgIT09ICIiCiAgICAgICAgICAgIH0KICAgICAgICAgICAgQnV0dG9uIHsKICAgICAgICAgICAgICAgIGlkOiBsb2dpbkJ0bjsgTGF5b3V0LmZpbGxXaWR0aDogdHJ1ZQogICAgICAgICAgICAgICAgdGV4dDogIkxvZyBJbiIKICAgICAgICAgICAgICAgIHRvcFBhZGRpbmc6IDEwOyBib3R0b21QYWRkaW5nOiAxMAogICAgICAgICAgICAgICAgb25DbGlja2VkOiBkb0xvZ2luKCkKICAgICAgICAgICAgICAgIEtleXMub25SZXR1cm5QcmVzc2VkOiBkb0xvZ2luKCkKICAgICAgICAgICAgICAgIGJhY2tncm91bmQ6IFJlY3RhbmdsZSB7CiAgICAgICAgICAgICAgICAgICAgY29sb3I6IGxvZ2luQnRuLnByZXNzZWQgPyAiIzVhN2ZkNCIgOiBsb2dpbkJ0bi5ob3ZlcmVkID8gIiM4YWFkZTciIDogIiM3YWEyZjciCiAgICAgICAgICAgICAgICAgICAgcmFkaXVzOiA4CiAgICAgICAgICAgICAgICAgICAgQmVoYXZpb3Igb24gY29sb3IgeyBDb2xvckFuaW1hdGlvbiB7IGR1cmF0aW9uOiAxMDAgfSB9CiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICBjb250ZW50SXRlbTogVGV4dCB7CiAgICAgICAgICAgICAgICAgICAgdGV4dDogbG9naW5CdG4udGV4dDsgY29sb3I6ICIjMWExYjI2IgogICAgICAgICAgICAgICAgICAgIGZvbnQucGl4ZWxTaXplOiAxMzsgZm9udC53ZWlnaHQ6IEZvbnQuTWVkaXVtCiAgICAgICAgICAgICAgICAgICAgaG9yaXpvbnRhbEFsaWdubWVudDogVGV4dC5BbGlnbkhDZW50ZXIKICAgICAgICAgICAgICAgICAgICB2ZXJ0aWNhbEFsaWdubWVudDogVGV4dC5BbGlnblZDZW50ZXIKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQogICAgICAgIH0KICAgICAgICBDb21ib0JveCB7CiAgICAgICAgICAgIGlkOiBzZXNzaW9uU2VsZWN0CiAgICAgICAgICAgIGFuY2hvcnMgeyByaWdodDogcGFyZW50LnJpZ2h0OyBib3R0b206IHBhcmVudC5ib3R0b207IG1hcmdpbnM6IDIwIH0KICAgICAgICAgICAgd2lkdGg6IDE3MDsgbW9kZWw6IHNlc3Npb25Nb2RlbDsgdGV4dFJvbGU6ICJuYW1lIgogICAgICAgICAgICBiYWNrZ3JvdW5kOiBSZWN0YW5nbGUgeyBjb2xvcjogIiMyNDI4M2IiOyByYWRpdXM6IDY7IGJvcmRlci5jb2xvcjogIiM0MTQ4NjgiIH0KICAgICAgICAgICAgY29udGVudEl0ZW06IFRleHQgewogICAgICAgICAgICAgICAgbGVmdFBhZGRpbmc6IDEwOyB0ZXh0OiBzZXNzaW9uU2VsZWN0LmRpc3BsYXlUZXh0CiAgICAgICAgICAgICAgICBjb2xvcjogIiNjMGNhZjUiOyBmb250LnBpeGVsU2l6ZTogMTI7IHZlcnRpY2FsQWxpZ25tZW50OiBUZXh0LkFsaWduVkNlbnRlcgogICAgICAgICAgICB9CiAgICAgICAgICAgIHBvcHVwLmJhY2tncm91bmQ6IFJlY3RhbmdsZSB7IGNvbG9yOiAiIzI0MjgzYiI7IGJvcmRlci5jb2xvcjogIiM0MTQ4NjgiOyByYWRpdXM6IDYgfQogICAgICAgIH0KICAgICAgICBmdW5jdGlvbiBkb0xvZ2luKCkgewogICAgICAgICAgICBzZGRtLmxvZ2luKG5hbWVGaWVsZC50ZXh0LCBwYXNzRmllbGQudGV4dCwgc2Vzc2lvblNlbGVjdC5jdXJyZW50SW5kZXgpCiAgICAgICAgfQogICAgfQogICAgIiIiKQoKIyBTRERNIOKAlCBhY3RpdmFyIHRlbWEKb3MubWFrZWRpcnMoZiJ7QX0vZXRjL3NkZG0uY29uZi5kIiwgZXhpc3Rfb2s9VHJ1ZSkKdyhmIntBfS9ldGMvc2RkbS5jb25mLmQvdGhlbWUuY29uZiIsICIiIgogICAgW1RoZW1lXQogICAgQ3VycmVudD1hdmFsb3MKICAgICIiIikKCiMgUGx5bW91dGgg4oCUIHRlbWEKUCA9IGYie0F9L3Vzci9zaGFyZS9wbHltb3V0aC90aGVtZXMvYXZhbG9zIgpvcy5tYWtlZGlycyhQLCBleGlzdF9vaz1UcnVlKQpvcy5tYWtlZGlycyhmIntBfS9ldGMvcGx5bW91dGgiLCBleGlzdF9vaz1UcnVlKQpzaHV0aWwuY29weShmIntBfS91c3Ivc2hhcmUvcGl4bWFwcy9hdmFsb3MtbG9nby5wbmciLCBmIntQfS9hdmFsb3MtbG9nby5wbmciKQoKdyhmIntQfS9hdmFsb3MucGx5bW91dGgiLCAiIiIKICAgIFtQbHltb3V0aCBUaGVtZV0KICAgIE5hbWU9QXZhbE9TCiAgICBEZXNjcmlwdGlvbj1BdmFsT1MgYm9vdCBzcGxhc2ggLSBUb2t5byBOaWdodAogICAgTW9kdWxlTmFtZT1zY3JpcHQKCiAgICBbc2NyaXB0XQogICAgSW1hZ2VEaXI9L3Vzci9zaGFyZS9wbHltb3V0aC90aGVtZXMvYXZhbG9zCiAgICBTY3JpcHRGaWxlPS91c3Ivc2hhcmUvcGx5bW91dGgvdGhlbWVzL2F2YWxvcy9hdmFsb3Muc2NyaXB0CiAgICAiIiIpCgojIEJVRy1GSVg6IEltYWdlKHdpZHRoLCBoZWlnaHQpIG5vIGVzIHVuYSBsbGFtYWRhIHbDoWxpZGEgZW4gUGx5bW91dGggU2NyaXB0LgojIExhIEFQSSBzb2xvIGFjZXB0YSBJbWFnZSgiZmlsZW5hbWUucG5nIikgbyBJbWFnZS5UZXh0KCJzdHJpbmciKS4KIyBJbWFnZSgzMDAsIDYpIGludGVudGFiYSBjYXJnYXIgdW4gYXJjaGl2byBsbGFtYWRvICIzMDAiIOKGkiBudWxsIOKGkgojIGJhcl9iZ19zcHJpdGUgeSBiYXJfc3ByaXRlIGVyYW4gaW52aXNpYmxlcyBlbiB0b2RhIGxhIHNlY3VlbmNpYSBkZSBib290LgojIEZpeDogZWxpbWluYXIgbGEgbMOzZ2ljYSBkZSBiYXJyYTsgZWwgdGVtYSBtdWVzdHJhIHNvbG8gZWwgbG9nbyBjZW50cmFkby4KIyBTaSBlbiBlbCBmdXR1cm8gc2UgcXVpZXJlIGJhcnJhIGRlIHByb2dyZXNvLCB1c2FyIFBOR3MgcHJlLWhlY2hvcyBjb24KIyBJbWFnZSgiYmFyLWJnLnBuZyIpIC8gSW1hZ2UoImJhci1maWxsLnBuZyIpIGNhcmdhZG9zIGRlc2RlIGVsIHRoZW1lIGRpci4KdyhmIntQfS9hdmFsb3Muc2NyaXB0IiwgIiIiCiAgICBzY3JlZW5fd2lkdGggID0gV2luZG93LkdldFdpZHRoKCk7CiAgICBzY3JlZW5faGVpZ2h0ID0gV2luZG93LkdldEhlaWdodCgpOwogICAgV2luZG93LlNldEJhY2tncm91bmRUb3BDb2xvcigwLjEwMiwgMC4xMDYsIDAuMTQ5KTsKICAgIFdpbmRvdy5TZXRCYWNrZ3JvdW5kQm90dG9tQ29sb3IoMC4xMDIsIDAuMTA2LCAwLjE0OSk7CiAgICBsb2dvX2ltYWdlICA9IEltYWdlKCJhdmFsb3MtbG9nby5wbmciKTsKICAgIGxvZ29faW1hZ2UgID0gbG9nb19pbWFnZS5TY2FsZSgyNjAsIDI2MCk7CiAgICBsb2dvX3Nwcml0ZSA9IFNwcml0ZShsb2dvX2ltYWdlKTsKICAgIGxvZ29fc3ByaXRlLlNldFgoTWF0aC5JbnQoc2NyZWVuX3dpZHRoICAvIDIgLSAxMzApKTsKICAgIGxvZ29fc3ByaXRlLlNldFkoTWF0aC5JbnQoc2NyZWVuX2hlaWdodCAvIDIgLSAxMzApKTsKICAgIGxvZ29fc3ByaXRlLlNldE9wYWNpdHkoMSk7CiAgICAiIiIpCgp3KGYie0F9L2V0Yy9wbHltb3V0aC9wbHltb3V0aGQuY29uZiIsICIiIgogICAgW0RhZW1vbl0KICAgIFRoZW1lPWF2YWxvcwogICAgU2hvd0RlbGF5PTAKICAgICIiIikKCnByaW50KCJCcmFuZGluZyBPSyIpCg==" | base64 -d > /tmp/pybrandpyeof.py
           python3 /tmp/pybrandpyeof.py "$AIROOTFS"
 
       - name: Inyectar entradas de boot
         run: |
           set -u
-          # ── systemd-boot entries (UEFI) ────────────────────────────────────────
           LOADER_DIR="$BUILD_DIR/efiboot/loader/entries"
           mkdir -p "$LOADER_DIR"
 
-          # BUG-FIX: el cp -r de releng copia sus propias entradas al directorio
-          # (ej. 01-archlinux-x86_64.conf, 02-archlinux-x86_64-accessibility.conf).
-          # Si no se limpian, el menú UEFI muestra entradas "Arch Linux" junto a
-          # las de AvalOS; seleccionarlas falla porque buscan una label ARCH_* inexistente.
           rm -f "$LOADER_DIR/"*.conf
 
-          # FIX: archivos escritos sin indentación — systemd-boot parsea
-          # los .conf de entries en formato "key value" sin espacios iniciales.
           printf '%s' "dGl0bGUgICBBdmFsT1MgTGl2ZQpsaW51eCAgIC9hcmNoL2Jvb3QveDg2XzY0L3ZtbGludXotbGludXgKaW5pdHJkICAvYXJjaC9ib290L3g4Nl82NC9pbml0cmFtZnMtbGludXguaW1nCm9wdGlvbnMgYXJjaGlzb2Jhc2VkaXI9YXJjaCBhcmNoaXNvbGFiZWw9JUFSQ0hJU09fTEFCRUwlIHF1aWV0IHNwbGFzaAo=" | base64 -d > "$LOADER_DIR/01-avalos.conf"
 
           printf '%s' "dGl0bGUgICBBdmFsT1MgTGl2ZSAobm9tb2Rlc2V0IOKAlCBHUFUgY29uIHByb2JsZW1hcykKbGludXggICAvYXJjaC9ib290L3g4Nl82NC92bWxpbnV6LWxpbnV4CmluaXRyZCAgL2FyY2gvYm9vdC94ODZfNjQvaW5pdHJhbWZzLWxpbnV4LmltZwpvcHRpb25zIGFyY2hpc29iYXNlZGlyPWFyY2ggYXJjaGlzb2xhYmVsPSVBUkNISVNPX0xBQkVMJSBub21vZGVzZXQgcXVpZXQgc3BsYXNoCg==" | base64 -d > "$LOADER_DIR/02-avalos-nomodeset.conf"
 
           printf '%s' "ZGVmYXVsdCAwMS1hdmFsb3MuY29uZgp0aW1lb3V0IDgKY29uc29sZS1tb2RlIGF1dG8KZWRpdG9yICBubwo=" | base64 -d > "$BUILD_DIR/efiboot/loader/loader.conf"
 
-          # ── syslinux entries (BIOS legacy) ─────────────────────────────────────
           SYSLINUX_DIR="$BUILD_DIR/syslinux"
           mkdir -p "$SYSLINUX_DIR"
 
@@ -394,20 +286,12 @@ jobs:
           OUTPUT_DIR="/tmp/avalos-iso-output"
           mkdir -p "$BUILD_WORK" "$OUTPUT_DIR"
 
-          # ── Limpieza definitiva antes de mkarchiso ─────────────────────────────
-          # Eliminar linux-avalos (sin -compat) de packages.x86_64 por si entró
-          # desde el releng template o como dependencia resuelta
           sed -i '/^linux-avalos/d' "$BUILD_DIR/packages.x86_64"
           sed -i '/^linux-avalos-headers$/d' "$BUILD_DIR/packages.x86_64"
 
           echo "=== Kernels en packages.x86_64 ==="
           grep "linux-avalos" "$BUILD_DIR/packages.x86_64" || echo "(ninguno extra)"
 
-          # Asegurar IgnorePkg en pacman.conf para bloquear linux-avalos como dep.
-          # FIX: IgnorePkg solo cubre linux-avalos y linux-avalos-headers (los que
-          # podrían entrar como dependencia transitiva). linux-avalos-compat y
-          # linux-avalos-compat-headers NO están en packages.x86_64 ni se instalan
-          # en el live, por lo que incluirlos en IgnorePkg era confuso e innecesario.
           if grep -q "^IgnorePkg" "$BUILD_DIR/pacman.conf"; then
             sed -i 's/^IgnorePkg.*/IgnorePkg = linux-avalos linux-avalos-headers/' \
               "$BUILD_DIR/pacman.conf"
@@ -443,23 +327,12 @@ jobs:
             find "$BUILD_WORK" -name "vmlinuz*" 2>/dev/null || echo "  (ninguno)"
           fi
 
-          # SHA256
           sha256sum "$ISO_FILE" > "${ISO_FILE}.sha256"
           echo "sha_file=${ISO_FILE}.sha256" >> "$GITHUB_ENV"
 
       - name: Publicar en GitHub Releases
-        if: github.event.inputs.upload == 'true'
+        if: github.event.inputs.upload != 'false'
         env:
-          # BUG-27 FIX: iso_file y sha_file se setean con >> "$GITHUB_ENV"
-          # en el step anterior — son variables de entorno del runner, no
-          # variables bash del step actual. Dentro del heredoc de NOTES,
-          # $(cat "$sha_file") se evalúa en este step donde $sha_file podría
-          # no estar definida como variable bash, dejando el checksum vacío.
-          # Pasarlas explícitamente via env: garantiza que existen aquí.
-          # BUG-27b FIX: GH_TOKEN fusionado aquí — tener dos bloques env:
-          # al mismo nivel es clave YAML duplicada; go-yaml v3 toma el último,
-          # por lo que el bloque ISO_FILE/SHA_FILE era silenciosamente
-          # descartado y el script fallaba con set -u en $ISO_FILE/$SHA_FILE.
           ISO_FILE: ${{ env.iso_file }}
           SHA_FILE: ${{ env.sha_file }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -474,7 +347,6 @@ jobs:
           **Base:** Arch Linux (rolling)
           **Entorno:** Hyprland · Wayland · Tokyo Night
 
-          ### Instalacion rapida
           1. Descarga la ISO
           2. Grabala en un USB con Ventoy o \`dd\`
           3. Arranca desde el USB
@@ -482,7 +354,6 @@ jobs:
           5. Elige disco, usuario, contrasena, timezone → Instalar
           6. Reinicia sin el USB
 
-          ### Checksums
           \`\`\`
           $(cat "$SHA_FILE")
           \`\`\`"

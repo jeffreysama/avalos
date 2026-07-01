@@ -1,34 +1,24 @@
 post_install() {
-    echo ":: AvalOS — Generando initramfs para linux-avalos…"
-    # mkinitcpio lee el preset que instalamos en /etc/mkinitcpio.d/
+    local _pkgbase="linux-avalos"
+    echo ":: AvalOS — Generando initramfs para ${_pkgbase}…"
     local _mkinitcpio_ok=false
     if command -v mkinitcpio &>/dev/null; then
-        if mkinitcpio -p linux-avalos; then
+        if mkinitcpio -p "${_pkgbase}"; then
             _mkinitcpio_ok=true
         else
-            echo "[WARN] mkinitcpio falló — regenera manualmente con: mkinitcpio -p linux-avalos"
+            echo "[WARN] mkinitcpio falló — regenera manualmente con: mkinitcpio -p ${_pkgbase}"
         fi
     fi
 
-    # FIX: solo actualizar el bootloader si mkinitcpio tuvo éxito.
-    # Antes _update_bootloader se llamaba siempre, lo que podía copiar un
-    # initramfs inexistente o desactualizado a la ESP de forma silenciosa.
     if $_mkinitcpio_ok; then
         _update_bootloader
     else
         echo "[WARN] Saltando actualización del bootloader — initramfs no generado."
         echo "       Una vez resuelto mkinitcpio, ejecuta manualmente:"
-        echo "         mkinitcpio -p linux-avalos && (grub-mkconfig -o /boot/grub/grub.cfg || bootctl update)"
+        echo "         mkinitcpio -p ${_pkgbase} && (grub-mkconfig -o /boot/grub/grub.cfg || bootctl update)"
     fi
 
-    echo ":: AvalOS — linux-avalos instalado correctamente."
-    # FIX: "grep avalos" sin anclaje coincide con CUALQUIER variante de este
-    # kernel instalada (base / -bore / -compat comparten la subcadena "avalos").
-    # Derivamos el patrón de _pkgbase (que SÍ es transformado por el sed global
-    # de build-kernel.yml entre variantes), y anclamos al sufijo exacto
-    # "-${_pkgbase#linux-}$" (ej. "-avalos$", "-avalos-bore$")
-    # para que esta línea muestre únicamente el _kver de ESTA variante.
-    local _pkgbase="linux-avalos"
+    echo ":: AvalOS — ${_pkgbase} instalado correctamente."
     echo "   Kernel: $(ls /usr/lib/modules/ | grep -- "-${_pkgbase#linux-}\$" | tail -1)"
 }
 
@@ -37,20 +27,16 @@ post_upgrade() {
 }
 
 post_remove() {
-    # BUG-FIX: _pkgbase es necesario para limpiar SOLO los archivos de esta
-    # variante (ver fix más abajo) y para derivar el nombre de la entrada
-    # de systemd-boot — antes no estaba declarada en esta función.
     local _pkgbase="linux-avalos"
     echo ":: AvalOS — linux-avalos eliminado."
+
+    rm -f "/boot/initramfs-${_pkgbase}.img" \
+          "/boot/initramfs-${_pkgbase}-fallback.img"
     echo "   Recuerda actualizar el bootloader si eliminaste el kernel predeterminado."
     echo "   GRUB:         grub-mkconfig -o /boot/grub/grub.cfg"
     echo "   systemd-boot: bootctl update"
     echo "   rEFInd:       refind-install"
 
-    # BUG-02 FIX: limpiar archivos de la ESP al desinstalar.
-    # Sin esta limpieza, los archivos vmlinuz+initramfs quedan en la ESP y el menú
-    # de boot sigue mostrando la entrada de AvalOS aunque el kernel ya no esté instalado.
-    # Arrancar desde esa entrada causaría kernel panic (módulos eliminados).
     local _esp=""
     for _candidate in /efi /boot/efi /boot; do
         if mountpoint -q "$_candidate" \
@@ -62,24 +48,11 @@ post_remove() {
     done
 
     if [[ -n "$_esp" ]]; then
-        # NOTA: "rm -rf $_esp/AvalOS" (versión original) borraba el directorio
-        # COMPLETO. En la práctica las 3 variantes nunca coexisten en el mismo
-        # sistema (conflicts=() entre ellas en el PKGBUILD, y el instalador
-        # solo resuelve/instala una), así que esto no causaba el problema de
-        # "borrar archivos de otra variante instalada" que se sospechó en un
-        # primer momento. Aun así, eliminar solo los archivos de ESTA variante
-        # (en lugar de rm -rf ciego del directorio) es más seguro y se mantiene
-        # como mejora defensiva. El microcode (amd/intel-ucode.img) es
-        # compartido y se deja intacto — no pertenece a ninguna variante.
         if [[ -d "$_esp/AvalOS" ]]; then
             rm -f "$_esp/AvalOS/vmlinuz-${_pkgbase}" \
                   "$_esp/AvalOS/initramfs-${_pkgbase}.img"
             echo "   ✓ vmlinuz + initramfs de ${_pkgbase} eliminados de ${_esp}/AvalOS/"
         fi
-        # NOTA: "avalos.conf" es literal — mismo motivo que en _update_bootloader().
-        # El instalador siempre crea la entrada con ese nombre fijo, sin importar
-        # la variante instalada; no hay "avalos-bore.conf" ni "avalos-compat.conf"
-        # que crear o limpiar por separado.
         local _entry="$_esp/loader/entries/avalos.conf"
         if [[ -f "$_entry" ]]; then
             rm -f "$_entry"
@@ -90,39 +63,23 @@ post_remove() {
     fi
 }
 
-# ── Detecta qué bootloader está activo y lo actualiza ────────────────────────
 _update_bootloader() {
-    # ── GRUB ──────────────────────────────────────────────────────────────────
     if command -v grub-mkconfig &>/dev/null && [[ -f /boot/grub/grub.cfg ]]; then
         echo ":: AvalOS — Actualizando entradas de GRUB…"
         grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null \
             || echo "[WARN] grub-mkconfig falló — actualiza con: grub-mkconfig -o /boot/grub/grub.cfg"
     fi
 
-    # ── systemd-boot ──────────────────────────────────────────────────────────
-    # Copia el kernel e initramfs nuevos a la ESP (instalador los pone en /boot/efi/AvalOS/)
     if command -v bootctl &>/dev/null && bootctl is-installed &>/dev/null; then
         echo ":: AvalOS — Actualizando archivos de kernel en la ESP (systemd-boot)…"
-        # FIX: _pkgbase se declara primero porque _kver se deriva de él (ver abajo).
         local _pkgbase="linux-avalos"
         local _kver
-        # FIX: "grep avalos | grep -v bore | grep -v compat" rompía tras el sed
-        # global de build-kernel.yml — para la copia -bore, "grep avalos-bore"
-        # seguido de "grep -v bore" se anulan entre sí y _kver queda vacío
-        # siempre, saltando todo el bloque de abajo (incluyendo la copia a la
-        # ESP). En su lugar, anclamos al sufijo exacto de ESTA variante
-        # (ej. "-avalos$", "-avalos-bore$", "-avalos-compat$"), derivado de
-        # _pkgbase — que el sed global SÍ transforma correctamente.
         _kver=$(ls /usr/lib/modules/ | grep -- "-${_pkgbase#linux-}\$" | tail -1)
         local _esp=""
-        # Detectar punto de montaje de la ESP
         for _candidate in /efi /boot/efi /boot; do
             if mountpoint -q "$_candidate" \
                && { [[ -d "$_candidate/EFI" ]] || [[ -d "$_candidate/loader" ]]; } \
                && stat -f -c %T "$_candidate" 2>/dev/null | grep -qiE 'fat|vfat|msdos'; then
-                # WARN-01 FIX: verificar que es realmente FAT32 (filesystem de la ESP).
-                # Sin esta comprobación, /boot con un directorio EFI/ residual podría
-                # tomarse como ESP en sistemas con GRUB donde /boot es ext4.
                 _esp="$_candidate"
                 break
             fi
@@ -132,13 +89,8 @@ _update_bootloader() {
             local _dest="$_esp/AvalOS"
             mkdir -p "$_dest"
 
-            # Copiar vmlinuz siempre (el PKGBUILD garantiza que existe)
             cp "/boot/vmlinuz-${_pkgbase}" "$_dest/vmlinuz-${_pkgbase}" 2>/dev/null || true
 
-            # FIX: copiar initramfs solo si existe y fue generado correctamente.
-            # Antes se intentaba la copia incondicionalmente con "|| echo [WARN]",
-            # lo que dejaba la ESP con un initramfs de la versión anterior sin
-            # ninguna indicación visible en el log de instalación.
             local _initramfs="/boot/initramfs-${_pkgbase}.img"
             if [[ -f "$_initramfs" ]]; then
                 cp "$_initramfs" "$_dest/initramfs-${_pkgbase}.img"
@@ -149,31 +101,8 @@ _update_bootloader() {
                 echo "       Comando: mkinitcpio -p linux-avalos"
             fi
 
-            # FIX: actualizar (o crear) la entrada .conf de systemd-boot.
-            # Antes el script copiaba vmlinuz+initramfs pero nunca tocaba la entrada
-            # .conf, por lo que si el kernel release string cambió entre versiones,
-            # el menú de boot seguía apuntando a la versión anterior.
-            #
-            # NOTA: el nombre de archivo es literal "avalos.conf" para las 3
-            # variantes (avalos/bore/compat) — INTENCIONAL, no un bug. El
-            # instalador (skill_instalar_usb.py) siempre escribe la entrada
-            # inicial como "avalos.conf", sin importar qué variante se instaló,
-            # y solo resuelve/instala UNA variante de kernel por sistema (con
-            # fallback entre ellas, nunca múltiples a la vez). Las 3 variantes
-            # además declaran conflicts=() entre sí en el PKGBUILD, por lo que
-            # pacman nunca permite tenerlas instaladas simultáneamente — no
-            # existe el escenario "avalos + bore coexistiendo". Derivar este
-            # nombre de _pkgbase (intento anterior) rompía precisamente el
-            # caso real de TRANSICIÓN entre variantes (ej. activar BORE más
-            # tarde vía pacman): buscaría "avalos-bore.conf", que el instalador
-            # nunca crea con ese nombre, dejando la entrada real "avalos.conf"
-            # sin actualizar tras el cambio de variante.
             local _entry="$_esp/loader/entries/avalos.conf"
             if [[ -f "$_entry" ]]; then
-                # BUG-01 FIX: actualizar título Y rutas de kernel/initrd en la entrada .conf.
-                # El sed anterior solo actualizaba 'title' — si el nombre base del kernel
-                # cambia entre versiones, las líneas linux= e initrd= quedaban apuntando
-                # al nombre anterior y el sistema arrancaba el kernel viejo con título nuevo.
                 sed -i \
                     -e "s|^title.*|title   AvalOS Linux (${_kver})|" \
                     -e "s|^linux .*|linux   /AvalOS/vmlinuz-${_pkgbase}|" \
@@ -187,7 +116,6 @@ _update_bootloader() {
                 echo "         ${_entry}"
             fi
 
-            # Copiar microcode si existe
             for _uc in amd-ucode.img intel-ucode.img; do
                 [[ -f "/boot/$_uc" ]] && cp "/boot/$_uc" "$_dest/$_uc"
             done
@@ -196,8 +124,6 @@ _update_bootloader() {
         fi
     fi
 
-    # ── rEFInd ────────────────────────────────────────────────────────────────
-    # rEFInd detecta kernels automáticamente — solo necesita refind-install en actualizaciones mayores
     if command -v refind-install &>/dev/null && \
        [[ -d /boot/EFI/refind || -d /efi/EFI/refind || -d /boot/efi/EFI/refind ]]; then
         echo ":: AvalOS — rEFInd detectado (detecta kernels automáticamente, no se requiere acción)."
