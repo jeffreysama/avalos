@@ -33,11 +33,4 @@ The current ISOs in Releases are **highly experimental**. Use them only for test
 
 For now, you can:
 1. Download the latest experimental ISO from [Releases](https://github.com/jeffreysama/avalos/releases)
-2. Use the included USB maker scripts
-
----
-
-## 🛠️ Building from Source
-
-```bash
-# Coming soon...
+2. Use the included USB maker scripts (if u want)
