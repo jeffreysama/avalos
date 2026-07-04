@@ -24,7 +24,7 @@ env:
   MARCH: x86-64-v3
   MARCH_COMPAT: x86-64-v2
   PKGBUILD_DIR: pkgs/linux-avalos
-  FALLBACK_KERNEL_VER: "7.0.11"
+  FALLBACK_KERNEL_VER: "7.1.2"
 
 jobs:
   check-version:
@@ -233,7 +233,6 @@ jobs:
 
           sed -i 's|provides=(\"linux=\${pkgver}\")|provides=(\"linux=\${pkgver}\" \"linux-avalos-compat=\${pkgver}\")|' "$COMPAT_DIR/PKGBUILD"
 
-          sed -i '/^[[:space:]]*conflicts=.*/d' "$COMPAT_DIR/PKGBUILD"
           sed -i 's|conflicts=(\"linux-avalos-compat\" \"linux-avalos-compat-headers\" \"linux-avalos-bore\" \"linux-avalos-bore-headers\")|conflicts=(\"linux-avalos\" \"linux-avalos-headers\" \"linux-avalos-bore\" \"linux-avalos-bore-headers\")|' "$COMPAT_DIR/PKGBUILD"
 
           cp "$COMPAT_DIR/linux-avalos.install" "$COMPAT_DIR/linux-avalos-compat.install"
@@ -242,8 +241,6 @@ jobs:
           sed -i 's|^install=linux-avalos\.install$|install=linux-avalos-compat.install|' "$COMPAT_DIR/PKGBUILD"
 
           sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v2, AMD+Intel, EEVDF (Celeron N/Pentium Silver, sin AVX2)|g' "$COMPAT_DIR/PKGBUILD"
-
-          sed -i 's|CONFIG_GENERIC_CPU3|CONFIG_GENERIC_CPU2|g' "$COMPAT_DIR/PKGBUILD"
 
           echo "PKGBUILD compat generado:"
           grep -E "^pkg(base|name|ver|rel)" "$COMPAT_DIR/PKGBUILD"
