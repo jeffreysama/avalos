@@ -24,7 +24,7 @@ env:
   MARCH: x86-64-v3
   MARCH_COMPAT: x86-64-v2
   PKGBUILD_DIR: pkgs/linux-avalos
-  FALLBACK_KERNEL_VER: "6.17.13"
+  FALLBACK_KERNEL_VER: "7.1.2"
 
 jobs:
   check-version:
@@ -43,15 +43,20 @@ jobs:
           else
             KERNEL_VER=""
 
-            KERNEL_VER=$(curl -fsSL --max-time 15 https://www.kernel.org/finger_banner 2>/dev/null \
-              | grep "stable:" \
-              | grep -oP '\d+\.\d+\.\d+' \
-              | head -1 || true)
+            # Primario: releases.json trae un campo latest_stable.version dedicado —
+            # no depende de adivinar el orden del array "releases" (mainline va primero
+            # ahí, y un head -1 sobre versiones X.Y.Z puede agarrar la rama equivocada).
+            KERNEL_VER=$(curl -fsSL --max-time 15 https://www.kernel.org/releases.json 2>/dev/null \
+              | jq -r '.latest_stable.version // empty' 2>/dev/null || true)
 
             if [[ -z "$KERNEL_VER" ]]; then
-              echo "finger_banner fallo, intentando API JSON..."
-              KERNEL_VER=$(curl -fsSL --max-time 15 https://www.kernel.org/releases.json 2>/dev/null \
-                | grep -oP '"version"\s*:\s*"\K[0-9]+\.[0-9]+\.[0-9]+' \
+              echo "releases.json fallo (o sin jq), intentando finger_banner..."
+              # FIX: el formato real de finger_banner es texto natural
+              # ("The latest stable version of the Linux kernel is: X.Y.Z"),
+              # nunca ha tenido "stable:" con dos puntos — ese patrón no
+              # coincidía nunca y este método siempre fallaba en silencio.
+              KERNEL_VER=$(curl -fsSL --max-time 15 https://www.kernel.org/finger_banner 2>/dev/null \
+                | grep -oP 'latest stable version of the Linux kernel is:\s*\K[0-9]+\.[0-9]+\.[0-9]+' \
                 | head -1 || true)
             fi
 
@@ -59,6 +64,8 @@ jobs:
               echo "Todas las fuentes fallaron, usando version de fallback: ${{ env.FALLBACK_KERNEL_VER }}"
               KERNEL_VER="${{ env.FALLBACK_KERNEL_VER }}"
             fi
+
+            echo "Version detectada: $KERNEL_VER"
           fi
 
           echo "kernel_ver=$KERNEL_VER" >> "$GITHUB_OUTPUT"

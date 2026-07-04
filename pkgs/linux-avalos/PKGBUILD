@@ -1,6 +1,6 @@
 pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
-pkgver=6.17.13
+pkgver=7.1.2
 pkgrel=1
 pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
