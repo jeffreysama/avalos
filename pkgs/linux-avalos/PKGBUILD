@@ -1,6 +1,6 @@
 pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
-pkgver=7.0.11
+pkgver=6.17.13
 pkgrel=1
 pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
@@ -41,7 +41,6 @@ prepare() {
     scripts/config --set-str CONFIG_LOCALVERSION "${_expected_lv}"
 
     scripts/config \
-        -e CONFIG_GENERIC_CPU3 \
         -e CONFIG_X86_FEATURE_NAMES \
         -e CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE \
         -d CONFIG_CC_OPTIMIZE_FOR_SIZE
@@ -111,10 +110,18 @@ prepare() {
 
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld olddefconfig
 
-    if ! grep -q 'CONFIG_GENERIC_CPU3=y' .config; then
-        echo "[ERROR] CONFIG_GENERIC_CPU3 no activo en .config — el kernel NO tiene optimizaciones v3"
-        echo "        Verificar Kconfig del kernel ${pkgver}. Opciones CPU disponibles:"
-        grep -E 'CONFIG_(GENERIC_CPU|MNATIVE)' .config || true
+    # NOTA: el kernel mainline no tiene un símbolo Kconfig para x86-64-v2/v3/v4
+    # (verificado contra arch/x86/Kconfig.cpu — no existe, ni siquiera vía el
+    # parche de terceros que usábamos de referencia, que CachyOS ya no aplica
+    # en sus kernel-patches para esta rama). La optimización real de CPU pasa
+    # por KCFLAGS (arch/x86/Makefile: KBUILD_CFLAGS += $(KCFLAGS), como una de
+    # las últimas asignaciones — por eso pisa el "-march=x86-64 -mtune=generic"
+    # por defecto). Lo que hay que validar es que KCFLAGS traiga el march
+    # correcto, no un símbolo Kconfig que no existe.
+    if [[ ! "${KCFLAGS:-}" =~ -march=x86-64-v[234] ]]; then
+        echo "[ERROR] KCFLAGS no contiene un -march=x86-64-vN válido — revisa el workflow"
+        echo "        KCFLAGS actual: '${KCFLAGS:-<vacío>}'"
+        echo "        Sin esto el kernel compila con el march genérico por defecto, sin optimización real."
         exit 1
     fi
 
