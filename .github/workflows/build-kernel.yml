@@ -192,7 +192,7 @@ jobs:
           rm -f "$BORE_DIR/linux-avalos.install"
           sed -i 's|^install=linux-avalos\.install$|install=linux-avalos-bore.install|' "$BORE_DIR/PKGBUILD"
 
-          BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${MAJOR}.${MINOR}/sched/0001-bore-cachy.patch"
+          BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${MAJOR}.${MINOR}/sched/0001-bore.patch"
           if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
              && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
             echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
