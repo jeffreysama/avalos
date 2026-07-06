@@ -302,11 +302,49 @@ jobs:
       - name: Firmar paquetes y base de datos con GPG
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           cd /tmp/avalos-repo
 
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-          echo "310A08970CFBDC61:6:" | gpg --import-ownertrust
+          if [[ -z "$(echo -n "$GPG_PRIVATE_KEY" | tr -d '[:space:]')" ]]; then
+            echo "Error: el secret GPG_PRIVATE_KEY esta vacio o no existe en este repo"
+            echo "Revisa Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          if echo "$GPG_PRIVATE_KEY" | grep -q "BEGIN PGP PRIVATE KEY"; then
+            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          else
+            echo "$GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
+          fi
+
+          GPG_FPR=$(gpg --list-secret-keys --with-colons --fingerprint 2>/dev/null | awk -F: '/^fpr:/ { print $10; exit }')
+          if [[ -z "$GPG_FPR" ]]; then
+            echo "Error: la importacion no genero ninguna llave secreta utilizable"
+            exit 1
+          fi
+          echo "Llave secreta importada: $GPG_FPR"
+
+          echo "${GPG_FPR}:6:" | gpg --import-ownertrust
+
+          if [[ -z "$(echo -n "$GPG_PASSPHRASE" | tr -d '[:space:]')" ]]; then
+            echo "Error: el secret GPG_PASSPHRASE esta vacio o no existe en este repo"
+            echo "Revisa Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          echo "allow-loopback-pinentry" >> "$HOME/.gnupg/gpg-agent.conf"
+          echo "default-cache-ttl 1800" >> "$HOME/.gnupg/gpg-agent.conf"
+          echo "max-cache-ttl 1800" >> "$HOME/.gnupg/gpg-agent.conf"
+          gpgconf --kill gpg-agent
+          sleep 1
+
+          echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --no-armor -o /dev/null /dev/null
+          if [[ $? -ne 0 ]]; then
+            echo "Error: la passphrase no desbloqueo la llave secreta, revisa el secret GPG_PASSPHRASE"
+            exit 1
+          fi
+          echo "Passphrase valida, cache del agente listo"
 
           for pkg in *.pkg.tar.zst; do
             gpg --batch --yes --detach-sign --no-armor "$pkg"
