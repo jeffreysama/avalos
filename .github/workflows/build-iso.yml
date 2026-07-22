@@ -57,7 +57,13 @@ jobs:
           GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
         run: |
           echo "$GPG_PUBLIC_KEY" | pacman-key --add -
-          pacman-key --lsign-key 310A08970CFBDC61
+          GPG_FPR=$(echo "$GPG_PUBLIC_KEY" | gpg --with-colons --import-options show-only --import - 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
+          if [[ -z "$GPG_FPR" ]]; then
+            echo "::error::No se pudo extraer el fingerprint desde el secret GPG_PUBLIC_KEY"
+            exit 1
+          fi
+          echo "Fingerprint detectado: $GPG_FPR"
+          pacman-key --lsign-key "$GPG_FPR"
 
           printf '\n[avalos]\nSigLevel = Required DatabaseOptional\nServer = https://github.com/jeffreysama/avalos/releases/download/repo\n' \
             >> /etc/pacman.conf

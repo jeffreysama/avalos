@@ -30,10 +30,19 @@ prepare() {
     fi
 
     echo "  → Aplicando config base..."
-    if grep -q 'AVALOS_FALLBACK_DEFCONFIG' ../config 2>/dev/null; then
-        echo "  → Config fallback detectado — generando base con defconfig..."
+    # FIX-CONFIG-VACIO: antes solo se chequeaba el marcador AVALOS_FALLBACK_DEFCONFIG.
+    # Si ../config queda vacío por otra razón (ej. gen-config.sh se corta a mitad de
+    # camino), ese grep no matchea, cae al else, y se copia un .config vacío sin que
+    # nadie se entere — olddefconfig rellena TODO con defaults desnudos del kernel
+    # (nada de overlay/dm_snapshot/crypto_lz4, y probablemente le falten más cosas).
+    # Ahora se valida tamaño real, no solo el marcador.
+    local _cfg_lines=0
+    [[ -f ../config ]] && _cfg_lines=$(wc -l < ../config)
+    if grep -q 'AVALOS_FALLBACK_DEFCONFIG' ../config 2>/dev/null || (( _cfg_lines < 500 )); then
+        echo "  → ../config ausente/incompleto (${_cfg_lines} líneas, se esperan miles) — generando base con defconfig..."
         make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld defconfig
     else
+        echo "  → Usando ../config (${_cfg_lines} líneas)"
         cp ../config .config
     fi
 

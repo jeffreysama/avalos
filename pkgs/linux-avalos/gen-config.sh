@@ -13,24 +13,25 @@ echo "    pkgver: $PKGVER  (${MAJOR}.${MINOR}.x)"
 
 if [[ -f /proc/config.gz ]]; then
     echo "    Fuente: /proc/config.gz (kernel actual del host)"
-    zcat /proc/config.gz > "$OUT"
-    if [[ -s "$OUT" ]]; then
+    # FIX-SET-E: zcat suelto (sin if) + set -e de la linea 2 = si zcat falla
+    # (permisos, WSL sin IKCONFIG_PROC real, etc.) el script muere aqui mismo,
+    # dejando "$OUT" en 0 bytes y sin llegar jamas a los fallbacks de abajo.
+    if zcat /proc/config.gz > "$OUT" 2>/dev/null && [[ -s "$OUT" ]]; then
         echo "    ✓ config generado desde /proc/config.gz"
         exit 0
     else
-        echo "    [WARN] /proc/config.gz generó archivo vacío — continuando con siguiente fuente"
+        echo "    [WARN] /proc/config.gz no se pudo leer o generó archivo vacío — continuando con siguiente fuente"
         rm -f "$OUT"
     fi
 fi
 
 if [[ -f "/boot/config-$(uname -r)" ]]; then
     echo "    Fuente: /boot/config-$(uname -r)"
-    cp "/boot/config-$(uname -r)" "$OUT"
-    if [[ -s "$OUT" ]]; then
+    if cp "/boot/config-$(uname -r)" "$OUT" 2>/dev/null && [[ -s "$OUT" ]]; then
         echo "    ✓ config generado desde /boot"
         exit 0
     else
-        echo "    [WARN] /boot/config-$(uname -r) está vacío — continuando con siguiente fuente"
+        echo "    [WARN] /boot/config-$(uname -r) no se pudo copiar o está vacío — continuando con siguiente fuente"
         rm -f "$OUT"
     fi
 fi
