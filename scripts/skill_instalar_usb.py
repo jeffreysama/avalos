@@ -2330,7 +2330,7 @@ DISTRIB_DESCRIPTION="AvalOS"
 
                 _fp ="310A08970CFBDC61"
                 _tmp =MOUNT_ROOT /"tmp"/"avalos.gpg"
-                _rc ,_ =self ._run ([
+                _rc ,_ =self ._run_cmd ([
                 "bash","-c",
                 f"gpg --homedir /etc/pacman.d/gnupg --armor --export {_fp } > {_tmp } 2>/dev/null"
                 ])

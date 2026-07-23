@@ -83,8 +83,8 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
-          echo "kernel=linux (live) → linux-avalos o compat según CPU detectada" >> "$GITHUB_OUTPUT"
-          echo "Kernel live: linux estándar | Post-instalación: linux-avalos/compat según CPU"
+          echo "kernel=linux-avalos-compat (live) → linux-avalos/bore o compat según CPU detectada" >> "$GITHUB_OUTPUT"
+          echo "Kernel live: linux-avalos-compat (v2) | Post-instalación: linux-avalos/bore/compat según CPU"
 
       - name: Preparar perfil archiso
         run: |
@@ -351,7 +351,7 @@ jobs:
 
           NOTES="## AvalOS ${VERSION}
 
-          **Kernel live:** linux (estándar Arch) · Post-instalación: linux-avalos o linux-avalos-compat según CPU
+          **Kernel live:** linux-avalos-compat (v2, arranca en prácticamente cualquier CPU x86-64) · Post-instalación: linux-avalos/linux-avalos-bore (v3+) o linux-avalos-compat (v2) según CPU
           **Base:** Arch Linux (rolling)
           **Entorno:** Hyprland · Wayland · Tokyo Night
 
@@ -389,7 +389,7 @@ jobs:
           echo "| Campo | Valor |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | ${{ steps.vars.outputs.version }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Kernel live | linux (estándar Arch) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Kernel live | linux-avalos-compat |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Kernel instalado | linux-avalos / linux-avalos-compat (detectado por instalador) |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Tamano | ${iso_size:-desconocido} |" >> "$GITHUB_STEP_SUMMARY"
           if [[ -n "${iso_file:-}" ]]; then
