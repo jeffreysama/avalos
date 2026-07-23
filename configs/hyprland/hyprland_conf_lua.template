@@ -224,3 +224,9 @@ hl.bind("XF86MonBrightnessDown",
 hl.window_rule({ match = { class = "pavucontrol" },         float = true, size = { 800, 600 } })
 hl.window_rule({ match = { class = "nm-connection-editor" }, float = true })
 hl.window_rule({ match = { class = "blueman-manager" },      float = true })
+hl.window_rule({
+    match  = { class = "avalos-wallpaper" },
+    float  = true,
+    center = true,
+    size   = { 1000, 700 },
+})
