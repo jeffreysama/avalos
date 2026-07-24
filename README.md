@@ -23,7 +23,7 @@ It features **Hyprland** (Wayland) as the default desktop environment, deliverin
 
 > **Project in very early development**
 
-The current ISOs in Releases are **highly experimental**. Use them only for testing and at your own risk. A stable and usable ISO is planned for release soon.
+The current ISOs in Releases are **experimental**. Use them only for testing and at your own risk. A stable and usable ISO is planned for release soon.
 
 ---
 
