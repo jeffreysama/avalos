@@ -4,7 +4,7 @@
 ║  PyWebView · WebView2 · Fosfor verde                            ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-Prepara una USB booteable con Ventoy y copia el instalador GAIA.
+Prepara una USB booteable con Ventoy y copia el instalador Aval.
 
   FASE 1 — En Windows (este .exe):
     1. Detecta USBs disponibles (≥8 GB recomendado)
@@ -28,8 +28,8 @@ REQUISITOS WINDOWS:
 
 BUILD:
   pip install pyinstaller pywebview requests
-  pyinstaller gaia_usb_maker.spec
-  → dist/gaia_usb_maker.exe
+  pyinstaller avalos_usb_maker.spec
+  → dist/avalos_usb_maker.exe
 """
 
 from __future__ import annotations
@@ -656,8 +656,8 @@ def _get_drive_letter(disk_num: int) -> str | None:
 #  API PYWEBVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 
-class GAIAAPI:
-    def __init__(self, app: "GAIAApp"):
+class AvalAPI:
+    def __init__(self, app: "AvalApp"):
         self._a = app
 
     def check_admin(self) -> bool:
@@ -726,7 +726,7 @@ class GAIAAPI:
             f"⚠  TODOS LOS DATOS del disco serán destruidos por Ventoy.\n"
             f"   Esta acción no se puede deshacer."
         )
-        return bool(self._a.win.create_confirmation_dialog("GAIA — Confirmar", msg))
+        return bool(self._a.win.create_confirmation_dialog("AvalOS — Confirmar", msg))
 
     def start_process(self, disk_num: str, iso_path: str):
         threading.Thread(
@@ -742,7 +742,7 @@ class GAIAAPI:
 #  APLICACIÓN PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
-class GAIAApp:
+class AvalApp:
     def __init__(self):
         self.win: webview.Window | None = None
         self._aborted = False
@@ -803,12 +803,19 @@ class GAIAApp:
             self._status(f"Instalando Ventoy en Disk {disk_num}…")
             self._log("\n── Instalando Ventoy ──\n", "STP")
 
+            # Sintaxis oficial del modo CLI de Ventoy2Disk.exe en Windows:
+            #   Ventoy2Disk.exe VTOYCLI /I /PhyDrive:N [/GPT] [/NOUSBCheck] ...
+            # (ventoy.net/en/doc_windows_cli.html — soportado desde Ventoy 1.0.86).
+            # NO son los mismos flags que Ventoy2Disk.sh en Linux (-i/-I -s -g /dev/sdX);
+            # ese binario es un .exe de Windows, no entiende flags estilo Unix.
             vtoy_cmd = [
                 str(ventoy_exe),
-                "-I",                       # Install (overwrite existing)
-                "-s",                       # Silent — no GUI de Ventoy
-                "-g",                       # GPT en lugar de MBR
-                f"\\\\.\\PhysicalDrive{disk_num}"
+                "VTOYCLI",
+                "/I",                        # Install (overwrite existing)
+                f"/PhyDrive:{disk_num}",     # Disco por numero de PhysicalDrive
+                "/GPT",                      # GPT en lugar de MBR
+                "/NOUSBCheck",               # ya viene filtrado por BusType=USB, pero
+                                              # Ventoy a veces no reconoce el tipo igual
             ]
             self._log(f"$ {' '.join(vtoy_cmd)}", "CMD")
             rc = subprocess.run(
@@ -882,9 +889,9 @@ class GAIAApp:
             if self._aborted:
                 return
 
-            # 6. Copiar instalador GAIA + launcher
+            # 6. Copiar instalador Aval + launcher
             self._step("script", "active")
-            self._status("Copiando instalador GAIA…")
+            self._status("Copiando instalador Aval…")
             self._log(f"\n── Copiando instalador → {drive}:\\ ──\n", "STP")
 
             dest_dir = Path(f"{drive}:\\")
@@ -914,9 +921,9 @@ class GAIAApp:
                 "   (BIOS/UEFI → selecciona la USB como boot device)\n\n"
                 "2. Ventoy mostrará un menú → selecciona el ISO de AvalOS\n\n"
                 "3. SDDM abrirá Hyprland live automáticamente\n\n"
-                "4. El instalador gráfico se abre SOLO (wizard azul Tokyo Night)\n"
+                "4. El instalador gráfico se abre SOLO (wizard Tokyo Night)\n"
                 "   · Si lo cierras: Super+I para reabrirlo\n"
-                "   · O desde Waybar: botón Instalar AvalOS (barra superior)\n\n"
+                "   · O abre una terminal (Super+Return) y ejecuta: avalos-install\n\n"
                 "5. Completa el wizard:\n"
                 "   · Selecciona el disco destino (ej: tu USB de 128GB)\n"
                 "   · Nombre de usuario / Contraseña / Hostname / Timezone\n"
@@ -958,8 +965,8 @@ def main():
         except Exception:
             pass
 
-    app  = GAIAApp()
-    api  = GAIAAPI(app)
+    app  = AvalApp()
+    api  = AvalAPI(app)
 
     win = webview.create_window(
         title            = "AvalOS — USB Maker",
