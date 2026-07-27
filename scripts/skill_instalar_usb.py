@@ -2565,7 +2565,7 @@ export XDG_SESSION_TYPE=wayland
 
         ref_conf =MOUNT_ROOT /"etc"/"xdg"/"reflector"/"reflector.conf"
         ref_conf .parent .mkdir (parents =True ,exist_ok =True )
-        ref_conf .write_text ("--country SV,US,MX,GT\n--latest 10\n--sort rate\n--protocol https\n")
+        ref_conf .write_text ("--country SV,US,MX,GT,JP\n--latest 10\n--sort rate\n--protocol https\n")
         self ._run_chroot (["systemctl","enable","reflector.timer"])
 
         linger =MOUNT_ROOT /"etc/systemd/system/avalos-enable-linger.service"
@@ -2921,7 +2921,7 @@ WantedBy=multi-user.target
             self ._log (self ._t ("log-section-mirrors"),"step")
             self ._run_cmd (["pacman","-Sy","--noconfirm","--needed","reflector"],timeout =120 )
             rc ,_ =self ._run_cmd ([
-            "reflector","--country","SV,US,MX,GT",
+            "reflector","--country","SV,US,MX,GT,JP",
             "--latest","10","--sort","rate",
             "--protocol","https","--save","/etc/pacman.d/mirrorlist",
             ],timeout =120 )
