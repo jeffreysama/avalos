@@ -28,6 +28,9 @@ configuration {
    * Sin cycle=true, al llegar al último resultado la selección no
    * salta al primero — comportamiento confuso con el teclado. */
   cycle:               true;
+  /* SUGERENCIA (revisión externa, verificada): dpi: 0 activa
+   * autodetección de escala HiDPI en vez de un valor fijo. */
+  dpi:                 0;
 }
 
 * {
@@ -46,6 +49,13 @@ window {
   border:           2px solid @border-color;
   border-radius:    10px;
   width:            480px;
+  /* SUGERENCIA (revisión externa, verificada): sin esto la ventana usa
+   * fake-transparency (screenshot del fondo) y el blur de Hyprland
+   * (decoration.blur en hyprland.lua) no tiene ningún alfa real sobre
+   * el que operar — la ventana se ve sólida pese a que el resto del
+   * sistema sí tiene blur. "real" habilita transparencia real vía el
+   * compositor, consistente con el resto de AvalOS. */
+  transparency:     "real";
   /* INFO-01: location, anchor, x-offset e y-offset son ignorados por rofi-wayland.
    * En Wayland el compositor (Hyprland) posiciona la ventana — rofi-wayland
    * siempre aparece centrado en el monitor activo independientemente de estos valores.

@@ -4,6 +4,14 @@
 
 LANG_CODE="${LANG%%_*}"   # "es_SV.UTF-8" → "es"
 
+# SUGERENCIA (revisión externa, aplicada): cargar el tema explícito en
+# vez de depender de que config.rasi sea el default activo del usuario.
+# Ahora mismo rofi ya lo carga solo (config.rasi ES su path por defecto),
+# pero esto blinda el powermenu para el día que AvalOS permita cambiar
+# de tema — el menú de energía siempre va a usar Tokyo Night pase lo
+# que pase con el tema "activo" del usuario en ese momento.
+ROFI_THEME="$HOME/.config/rofi/config.rasi"
+
 case "$LANG_CODE" in
   es)
     T_OFF="  Apagar"
@@ -38,6 +46,7 @@ esac
 # -no-custom impide seleccionar entradas que no estén en la lista.
 chosen=$(printf '%s\n' "$T_LOCK" "$T_SUSPEND" "$T_LOGOUT" "$T_REBOOT" "$T_OFF" \
   | rofi -dmenu \
+         -theme "$ROFI_THEME" \
          -i \
          -no-custom \
          -p "$T_TITLE" \
@@ -61,7 +70,7 @@ _confirm() {
   esac
   local result
   result=$(printf '%s\n' "$yes" "$no" \
-    | rofi -dmenu -i -no-custom -p "$msg" \
+    | rofi -dmenu -theme "$ROFI_THEME" -i -no-custom -p "$msg" \
            -theme-str 'window {width: 180px;} listview {lines: 2;}')
   [[ "$result" == "$yes" ]]
 }
