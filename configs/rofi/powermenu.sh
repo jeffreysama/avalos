@@ -107,7 +107,11 @@ elif [[ "$chosen" == "$T_LOGOUT" ]]; then
   if command -v uwsm &>/dev/null && uwsm check is-active &>/dev/null; then
     uwsm stop
   else
-    hyprctl dispatch exit
+    # FIX: "hyprctl dispatch exit" (sintaxis clásica) ya NO funciona con
+    # raíz Lua — falla con "expected a dispatcher". Confirmado en vivo
+    # durante pruebas y contra wiki.hypr.land/Configuring/Basics/Dispatchers
+    # y el hyprland.lua de ejemplo oficial de hyprwm/Hyprland.
+    hyprctl dispatch 'hl.dsp.exit()'
   fi
 elif [[ "$chosen" == "$T_LOCK" ]]; then
   # BUG-4 FIX: hyprlock sin verificar si ya está corriendo.
