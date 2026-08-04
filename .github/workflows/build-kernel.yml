@@ -104,6 +104,8 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      bore_result: ${{ steps.build_bore.outcome }}
     container:
       image: archlinux:base-devel
       options: --privileged
@@ -168,6 +170,18 @@ jobs:
             '
 
       - name: Compilar linux-avalos-bore
+        id: build_bore
+        # FIX: sin esto, si el parche BORE no aplica limpio contra el
+        # point-release exacto del kernel (CachyOS actualiza su carpeta
+        # major.minor con cierto retraso tras cada release de kernel.org —
+        # no es instantáneo), este step fallaba y GitHub Actions saltaba
+        # TODOS los pasos siguientes por default: compat NUNCA se
+        # compilaba, y nada se publicaba en Releases — ni siquiera
+        # linux-avalos estándar, que sí había compilado bien.
+        # continue-on-error deja que el resto del pipeline siga cuando
+        # BORE específicamente falla, sin ocultar el problema (ver el
+        # step "Resumen" al final, que ahora sí lo reporta).
+        continue-on-error: true
         if: github.event.inputs.build_bore != 'false' || github.event_name == 'schedule'
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
@@ -427,11 +441,20 @@ jobs:
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           BUILD_RESULT="${{ needs.build-kernel.result }}"
+          BORE_RESULT="${{ needs.build-kernel.outputs.bore_result }}"
           echo "## AvalOS Kernel Build" >> "$GITHUB_STEP_SUMMARY"
           echo "| Campo | Valor |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | \`${KERNEL_VER}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Resultado | ${BUILD_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          # FIX: con continue-on-error en el step de BORE, un fallo ahí ya
+          # no bloquea el resto del pipeline — pero eso no debe significar
+          # que el fallo quede invisible. Esta fila lo muestra siempre.
+          if [[ "$BORE_RESULT" == "failure" ]]; then
+            echo "| BORE | ⚠️ falló este ciclo (parche upstream de CachyOS aún no actualizado para esta versión exacta — normal, no es bug de AvalOS) |" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -n "$BORE_RESULT" ]]; then
+            echo "| BORE | ${BORE_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "| Arquitectura | x86-64-v3 (AMD+Intel) |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Compilador | Clang/LLVM + ThinLTO |" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$BUILD_RESULT" == "success" ]]; then
