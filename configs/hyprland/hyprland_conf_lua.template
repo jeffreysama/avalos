@@ -139,16 +139,16 @@ hl.bind(mod .. " + V",
 
 -- Ventanas
 hl.bind(mod .. " + Q", hl.dsp.window.close())
-hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
+hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ action = "toggle" }))
 hl.bind(mod .. " + T", hl.dsp.window.float({ action = "toggle" }))
 hl.bind(mod .. " + SHIFT + L",
     hl.dsp.exec_cmd("pidof hyprlock || hyprlock"))
 
 -- Redimensionar con teclado (el .conf anterior no lo tenía; el live sí)
-hl.bind(mod .. " + CTRL + right", hl.dsp.resize({ dx =  30, dy =   0 }), { repeating = true })
-hl.bind(mod .. " + CTRL + left",  hl.dsp.resize({ dx = -30, dy =   0 }), { repeating = true })
-hl.bind(mod .. " + CTRL + up",    hl.dsp.resize({ dx =   0, dy = -30 }), { repeating = true })
-hl.bind(mod .. " + CTRL + down",  hl.dsp.resize({ dx =   0, dy =  30 }), { repeating = true })
+hl.bind(mod .. " + CTRL + right", hl.dsp.window.resize({ x =  30, y =   0, relative = true }), { repeating = true })
+hl.bind(mod .. " + CTRL + left",  hl.dsp.window.resize({ x = -30, y =   0, relative = true }), { repeating = true })
+hl.bind(mod .. " + CTRL + up",    hl.dsp.window.resize({ x =   0, y = -30, relative = true }), { repeating = true })
+hl.bind(mod .. " + CTRL + down",  hl.dsp.window.resize({ x =   0, y =  30, relative = true }), { repeating = true })
 
 -- Powermenu (con fallback a poweroff si el script no existe)
 -- FIX: el .conf anterior tenía esto en SUPER+SHIFT+P y usaba SUPER+SHIFT+E
@@ -160,33 +160,33 @@ hl.bind(mod .. " + SHIFT + E",
     hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
 
 -- Foco — flechas y HJKL
-hl.bind(mod .. " + left",  hl.dsp.focus.move("l"))
-hl.bind(mod .. " + right", hl.dsp.focus.move("r"))
-hl.bind(mod .. " + up",    hl.dsp.focus.move("u"))
-hl.bind(mod .. " + down",  hl.dsp.focus.move("d"))
-hl.bind(mod .. " + H",     hl.dsp.focus.move("l"))
-hl.bind(mod .. " + L",     hl.dsp.focus.move("r"))
-hl.bind(mod .. " + K",     hl.dsp.focus.move("u"))
-hl.bind(mod .. " + J",     hl.dsp.focus.move("d"))
+hl.bind(mod .. " + left",  hl.dsp.focus({ direction = "left" }))
+hl.bind(mod .. " + right", hl.dsp.focus({ direction = "right" }))
+hl.bind(mod .. " + up",    hl.dsp.focus({ direction = "up" }))
+hl.bind(mod .. " + down",  hl.dsp.focus({ direction = "down" }))
+hl.bind(mod .. " + H",     hl.dsp.focus({ direction = "left" }))
+hl.bind(mod .. " + L",     hl.dsp.focus({ direction = "right" }))
+hl.bind(mod .. " + K",     hl.dsp.focus({ direction = "up" }))
+hl.bind(mod .. " + J",     hl.dsp.focus({ direction = "down" }))
 
 -- Mover ventanas
-hl.bind(mod .. " + SHIFT + left",  hl.dsp.window.move("l"))
-hl.bind(mod .. " + SHIFT + right", hl.dsp.window.move("r"))
-hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move("u"))
-hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move("d"))
+hl.bind(mod .. " + SHIFT + left",  hl.dsp.window.move({ direction = "left" }))
+hl.bind(mod .. " + SHIFT + right", hl.dsp.window.move({ direction = "right" }))
+hl.bind(mod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "up" }))
+hl.bind(mod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "down" }))
 
 -- Workspaces — scroll con ratón y Tab
-hl.bind(mod .. " + mouse_down", hl.dsp.workspace.relative(1))
-hl.bind(mod .. " + mouse_up",   hl.dsp.workspace.relative(-1))
-hl.bind(mod .. " + Tab",        hl.dsp.workspace.relative(1))
-hl.bind(mod .. " + SHIFT + Tab", hl.dsp.workspace.relative(-1))
+hl.bind(mod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
+hl.bind(mod .. " + mouse_up",   hl.dsp.focus({ workspace = "e-1" }))
+hl.bind(mod .. " + Tab",        hl.dsp.focus({ workspace = "e+1" }))
+hl.bind(mod .. " + SHIFT + Tab", hl.dsp.focus({ workspace = "e-1" }))
 
 -- Workspaces 1–9
 for i = 1, 9 do
     hl.bind(mod .. " + " .. i,
-        hl.dsp.workspace.go(tostring(i)))
+        hl.dsp.focus({ workspace = i }))
     hl.bind(mod .. " + SHIFT + " .. i,
-        hl.dsp.window.move({ workspace = tostring(i) }))
+        hl.dsp.window.move({ workspace = i }))
 end
 
 -- Captura de pantalla
