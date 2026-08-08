@@ -297,6 +297,49 @@ jobs:
 
           echo "Entradas de boot inyectadas (UEFI + BIOS)"
 
+      - name: Verificación de integridad ELF (diagnóstico)
+        # Puramente informativo — nunca falla el build. Objetivo: encontrar
+        # si algún binario/librería crítico terminó corrupto o no-ELF
+        # durante el armado del airootfs, en vez de adivinar leyendo texto
+        # que pasa demasiado rápido en pantalla durante el boot real.
+        run: |
+          echo "[AvalOS] === Chequeo de integridad de binarios/librerías ==="
+          echo "[AvalOS] --- Ejecutables no-ELF en \$AIROOTFS ---"
+          find "$AIROOTFS/usr/bin" "$AIROOTFS/usr/sbin" "$AIROOTFS/bin" "$AIROOTFS/sbin" \
+            -type f -print0 2>/dev/null | \
+          while IFS= read -r -d '' f; do
+              tipo=$(file -b "$f")
+              case "$tipo" in
+                  *ELF*|*"script"*) ;;
+                  *) echo "[AvalOS] [NON-ELF EXEC] $f -> $tipo" ;;
+              esac
+          done
+
+          echo "[AvalOS] --- Librerías no-ELF en \$AIROOTFS/usr/lib ---"
+          find "$AIROOTFS/usr/lib" -type f \( -name '*.so' -o -name '*.so.*' \) -print0 2>/dev/null | \
+          while IFS= read -r -d '' f; do
+              tipo=$(file -b "$f")
+              case "$tipo" in
+                  *ELF*) ;;
+                  *) echo "[AvalOS] [NON-ELF LIB] $f -> $tipo" ;;
+              esac
+          done
+
+          echo "[AvalOS] === Binarios críticos ==="
+          for f in \
+              /usr/bin/systemd /usr/bin/login /usr/bin/agetty /usr/bin/bash \
+              /usr/bin/Hyprland /usr/bin/hyprctl /usr/bin/sddm \
+              /usr/bin/dbus-daemon /usr/lib/systemd/systemd
+          do
+              if [[ -f "$AIROOTFS$f" ]]; then
+                  echo "[AvalOS] --- $f ---"
+                  file "$AIROOTFS$f"
+              else
+                  echo "[AvalOS] [MISSING] $f"
+              fi
+          done
+          echo "[AvalOS] === Fin del chequeo ELF ==="
+
       - name: Construir ISO con mkarchiso
         timeout-minutes: 60
         run: |
