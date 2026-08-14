@@ -50,7 +50,7 @@ chosen=$(printf '%s\n' "$T_LOCK" "$T_SUSPEND" "$T_LOGOUT" "$T_REBOOT" "$T_OFF" \
          -i \
          -no-custom \
          -p "$T_TITLE" \
-         -theme-str 'window {width: 220px;} listview {lines: 5;}')
+         -theme-str 'window {width: 280px;} listview {lines: 5;}')
 
 # BUG-2 FIX: chosen vacío (usuario cerró rofi con Escape) no se manejaba.
 # Sin este guard, el script continuaba y evaluaba todas las condiciones
@@ -71,7 +71,7 @@ _confirm() {
   local result
   result=$(printf '%s\n' "$yes" "$no" \
     | rofi -dmenu -theme "$ROFI_THEME" -i -no-custom -p "$msg" \
-           -theme-str 'window {width: 180px;} listview {lines: 2;}')
+           -theme-str 'window {width: 320px;} listview {lines: 2;}')
   [[ "$result" == "$yes" ]]
 }
 
@@ -119,3 +119,8 @@ elif [[ "$chosen" == "$T_LOCK" ]]; then
   # instancias de hyprlock solapadas. pidof evita la duplicación.
   pidof hyprlock || hyprlock
 fi
+
+
+
+
+exit 0
