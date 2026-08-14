@@ -104,6 +104,8 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       bore_result: ${{ steps.build_bore.outcome }}
     container:
@@ -168,6 +170,29 @@ jobs:
               MAKEFLAGS="-j${JOBS}" \
               makepkg -s --noconfirm --needed --skippgpcheck
             '
+
+      - name: Sincronizar pkgver con el repo
+        # FIX: el PKGBUILD del repo quedaba desactualizado (siempre mostraba
+        # la version con la que se creo el archivo la primera vez) porque el
+        # 'sed' de "Actualizar pkgver en PKGBUILD" solo tocaba la copia local
+        # del runner — nunca se commiteaba de vuelta. Con el cron semanal ya
+        # activo, esto hacia que 'git log'/'cat PKGBUILD' mintieran sobre que
+        # kernel esta realmente publicado. Ahora, si el build principal (no
+        # bore/compat, esos son copias efimeras que no se trackean en git)
+        # tuvo exito, se commitea pkgver/pkgrel de vuelta a la rama por defecto.
+        if: success()
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if git diff --quiet -- "${{ env.PKGBUILD_DIR }}/PKGBUILD"; then
+            echo "PKGBUILD ya estaba en la version correcta — nada que commitear"
+          else
+            git config user.name "avalos-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add "${{ env.PKGBUILD_DIR }}/PKGBUILD"
+            git commit -m "chore(kernel): bump linux-avalos a ${{ needs.check-version.outputs.kernel_ver }}"
+            git push origin HEAD:"${{ github.ref_name }}"
+            echo "PKGBUILD actualizado y commiteado (${{ needs.check-version.outputs.kernel_ver }})"
+          fi
 
       - name: Compilar linux-avalos-bore
         id: build_bore
