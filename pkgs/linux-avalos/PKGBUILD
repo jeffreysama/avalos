@@ -117,7 +117,37 @@ prepare() {
         -d CONFIG_MODULE_SIG_FORCE \
         -d CONFIG_MODULE_SIG_ALL
 
+    # FIX: overlay/dm_snapshot/crypto_lz4 dependen 100% del .config base que
+    # arma gen-config.sh — si esa descarga falla en CI (red, mirror caido,
+    # etc.) gen-config.sh cae a su fallback minimo y 'make olddefconfig'
+    # sobre eso genera un kernel sin estos modulos. A diferencia de los
+    # drivers de GPU/red de arriba (forzados explicitamente con -e/-m), estos
+    # 3 nunca se forzaban, y su ausencia solo se manifiesta como bug en vivo
+    # (mkinitcpio "module not found: crypto_lz4", boot roto en live/rescate)
+    # — exactamente lo que paso el 15-ago con 7.1.8 en hardware real. Se
+    # fuerzan aqui como modulos para no depender de que el .config base los
+    # traiga bien.
+    scripts/config \
+        -m CONFIG_OVERLAY_FS \
+        -m CONFIG_DM_SNAPSHOT \
+        -m CONFIG_CRYPTO_LZ4 \
+        -m CONFIG_CRYPTO_LZ4HC
+
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld olddefconfig
+
+    # Verificacion post-olddefconfig: 'make olddefconfig' puede degradar un
+    # simbolo forzado arriba si detecta una dependencia Kconfig no satisfecha
+    # (pasa en silencio, sin error visible). Si alguno de estos 3 termina
+    # deshabilitado, abortar el build ahora — en CI, con log claro — en vez
+    # de descubrirlo despues en un mkinitcpio roto en la maquina de un cliente.
+    for _sym in CONFIG_OVERLAY_FS CONFIG_DM_SNAPSHOT CONFIG_CRYPTO_LZ4; do
+        if ! grep -qE "^${_sym}=[ym]$" .config; then
+            echo "[ERROR] ${_sym} no quedo habilitado en .config tras olddefconfig"
+            echo "        Esto rompe el boot live/rescate (mkinitcpio 'module not found')."
+            grep -E "^# ${_sym} is not set|^${_sym}=" .config || echo "        (${_sym} ausente del .config)"
+            exit 1
+        fi
+    done
 
     # NOTA: el kernel mainline no tiene un símbolo Kconfig para x86-64-v2/v3/v4
     # (verificado contra arch/x86/Kconfig.cpu — no existe, ni siquiera vía el
