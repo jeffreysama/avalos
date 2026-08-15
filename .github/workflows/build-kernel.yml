@@ -175,22 +175,51 @@ jobs:
         # FIX: el PKGBUILD del repo quedaba desactualizado (siempre mostraba
         # la version con la que se creo el archivo la primera vez) porque el
         # 'sed' de "Actualizar pkgver en PKGBUILD" solo tocaba la copia local
-        # del runner — nunca se commiteaba de vuelta. Con el cron semanal ya
-        # activo, esto hacia que 'git log'/'cat PKGBUILD' mintieran sobre que
-        # kernel esta realmente publicado. Ahora, si el build principal (no
-        # bore/compat, esos son copias efimeras que no se trackean en git)
-        # tuvo exito, se commitea pkgver/pkgrel de vuelta a la rama por defecto.
+        # del runner — nunca se commiteaba de vuelta.
+        #
+        # FIX-2 (post-mortem run #41): el intento anterior de este step usaba
+        # 'cd "$GITHUB_WORKSPACE"' + 'git diff' a secas y murio con "fatal:
+        # not in a git directory" (exit 128), bloqueando TODO el resto del
+        # job (bore, compat, firma GPG, publicacion) durante 36 minutos de
+        # compute perdido. Causa exacta no confirmada (posible mismatch de
+        # working dir dentro del contenedor archlinux:base-devel, o issue de
+        # ownership tras el 'chown -R builder:builder' del step anterior).
+        # En vez de perseguir la causa exacta bajo presion, este step ahora:
+        #   1. Usa 'git -C' explicito en vez de 'cd' (no depende del cwd real
+        #      del shell del step).
+        #   2. Registra 'safe.directory' por si el bug real era el chown de
+        #      ownership (git rechaza operar en dirs que no son del usuario
+        #      actual salvo que se marquen como seguras explicitamente).
+        #   3. Si aun asi $GITHUB_WORKSPACE no resulta ser un repo git valido,
+        #      imprime diagnostico (pwd, ls) y sale limpio en vez de fallar.
+        #   4. continue-on-error: true — este paso es "nice to have" (deja el
+        #      repo prolijo), NUNCA debe poder bloquear bore/compat/firma/
+        #      publicacion, que es lo que realmente importa entregar.
         if: success()
+        continue-on-error: true
         run: |
-          cd "$GITHUB_WORKSPACE"
-          if git diff --quiet -- "${{ env.PKGBUILD_DIR }}/PKGBUILD"; then
+          set -uo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+
+          if [[ ! -d "$GITHUB_WORKSPACE/.git" ]]; then
+            echo "::warning::GITHUB_WORKSPACE no es un repo git valido, se omite el commit del bump de version"
+            echo "--- diagnostico ---"
+            echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+            pwd
+            ls -la "$GITHUB_WORKSPACE" 2>&1 | head -20
+            exit 0
+          fi
+
+          if git -C "$GITHUB_WORKSPACE" diff --quiet -- "${{ env.PKGBUILD_DIR }}/PKGBUILD"; then
             echo "PKGBUILD ya estaba en la version correcta — nada que commitear"
           else
-            git config user.name "avalos-bot"
-            git config user.email "actions@users.noreply.github.com"
-            git add "${{ env.PKGBUILD_DIR }}/PKGBUILD"
-            git commit -m "chore(kernel): bump linux-avalos a ${{ needs.check-version.outputs.kernel_ver }}"
-            git push origin HEAD:"${{ github.ref_name }}"
+            git -C "$GITHUB_WORKSPACE" config user.name "avalos-bot"
+            git -C "$GITHUB_WORKSPACE" config user.email "actions@users.noreply.github.com"
+            git -C "$GITHUB_WORKSPACE" add "${{ env.PKGBUILD_DIR }}/PKGBUILD"
+            git -C "$GITHUB_WORKSPACE" commit -m "chore(kernel): bump linux-avalos a ${{ needs.check-version.outputs.kernel_ver }}"
+            git -C "$GITHUB_WORKSPACE" push \
+              "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ env.AVALOS_REPO }}.git" \
+              "HEAD:${{ github.ref_name }}"
             echo "PKGBUILD actualizado y commiteado (${{ needs.check-version.outputs.kernel_ver }})"
           fi
 
