@@ -172,6 +172,15 @@ package_linux-avalos() {
     echo "  → Instalando módulos…"
     make LLVM=1 INSTALL_MOD_PATH="${pkgdir}/usr" INSTALL_MOD_STRIP=1 modules_install
 
+    # FIX: 'make modules_install' crea automaticamente un symlink 'build'
+    # (y a veces 'source') en usr/lib/modules/${_kver}/ apuntando al arbol
+    # de fuentes del kernel. package_linux-avalos-headers() tambien instala
+    # su PROPIO directorio real en esa misma ruta ${_kver}/build — con las
+    # dos cosas presentes, pacman rechaza la instalacion por conflicto de
+    # archivo entre linux-avalos y linux-avalos-headers. El symlink debe
+    # pertenecer solo al paquete de headers, asi que se borra aqui.
+    rm -f "${modulesdir}/build" "${modulesdir}/source"
+
     local image_name
     image_name="$(make LLVM=1 -s image_name)"
 
