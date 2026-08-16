@@ -61,12 +61,35 @@ DOWNLOADED=false
 # 'pacman -Sw' usa el sistema de mirrors real de Arch (pacman.conf, no una
 # URL fija), descarga el paquete SIN instalarlo, y deja rastro claro en el
 # log si falla. Este script corre dentro del contenedor archlinux:base-devel
-# del CI, asi que pacman ya esta disponible.
+# del CI COMO USUARIO 'builder' (sudo -u builder bash gen-config.sh), no como
+# root — por eso 'pacman -Sy'/'pacman -Sw' necesitan 'sudo' aqui (builder
+# tiene NOPASSWD:ALL configurado por el workflow). Sin el 'sudo', pacman
+# fallaba por falta de permisos para escribir en /var/lib/pacman/, y como el
+# intento anterior de este fix silenciaba todo con '&>/dev/null', ese fallo
+# real quedaba invisible en el log — parecia "no hay red" cuando en realidad
+# era "permiso denegado". Ahora se captura el output real para diagnostico.
 if command -v pacman &>/dev/null; then
     echo "    Fuente: pacman -Sw (paquete oficial 'linux' de Arch)"
-    if pacman -Sy --noconfirm &>/dev/null \
-       && pacman -Sw --noconfirm --cachedir "$_tmpdir_pacman" linux &>/dev/null; then
-        PKG_FILE=$(find "$_tmpdir_pacman" -maxdepth 1 -name "linux-*.pkg.tar.zst" | sort -V | tail -1)
+    _pacman_log="$_tmpdir/pacman.log"
+    _sudo=""
+    [[ "$(id -u)" != "0" ]] && _sudo="sudo"
+    if $_sudo pacman -Sy --noconfirm > "$_pacman_log" 2>&1 \
+       && $_sudo pacman -Sw --noconfirm --nodeps --nodeps --cachedir "$_tmpdir_pacman" linux >> "$_pacman_log" 2>&1; then
+        # FIX: 'pacman -Sw linux' sin '--nodeps --nodeps' tambien descarga las
+        # dependencias de 'linux' (incluyendo 'linux-firmware', que SI depende
+        # de el) al mismo --cachedir. El glob "linux-*.pkg.tar.zst" original
+        # coincidia tambien con "linux-firmware-*" y "linux-firmware-whence-*",
+        # y 'sort -V | tail -1' podia terminar eligiendo ESE archivo en vez
+        # del kernel real — que ademas ni siquiera trae /boot/config, asi que
+        # el resultado habria sido: o bien un config equivocado, o una nueva
+        # caida silenciosa al fallback de defconfig, disfrazada de "exito".
+        # '--nodeps --nodeps' (doble, para ignorar TODAS las dependencias, no
+        # solo un nivel) evita que aparezca nada mas que el propio 'linux' en
+        # el cachedir. El patron de busqueda ademas se restringe a exigir un
+        # digito justo despues de "linux-" (la version del kernel), lo cual
+        # por si solo ya excluye "linux-firmware*"/"linux-headers*" como
+        # defensa adicional aunque --nodeps fallara por algun motivo.
+        PKG_FILE=$(find "$_tmpdir_pacman" -maxdepth 1 -name "linux-[0-9]*-x86_64.pkg.tar.zst" | sort -V | tail -1)
         if [[ -n "$PKG_FILE" ]]; then
             if tar -I zstd -xf "$PKG_FILE" -C "$_tmpdir" "./boot/config" 2>/dev/null \
                || tar -I zstd -xf "$PKG_FILE" -C "$_tmpdir" "boot/config" 2>/dev/null; then
@@ -81,6 +104,9 @@ if command -v pacman &>/dev/null; then
     fi
     if ! $DOWNLOADED; then
         echo "    [WARN] pacman -Sw no pudo traer/extraer el paquete linux — probando siguiente fuente"
+        echo "    --- output de pacman (diagnóstico) ---"
+        tail -20 "$_pacman_log" 2>/dev/null | sed 's/^/    /'
+        echo "    ---------------------------------------"
     fi
 fi
 
