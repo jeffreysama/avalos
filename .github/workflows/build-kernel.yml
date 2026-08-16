@@ -137,10 +137,37 @@ jobs:
       - name: Actualizar pkgver en PKGBUILD
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
-          sed -i "s|^pkgver=.*|pkgver=${KERNEL_VER}|" ${{ env.PKGBUILD_DIR }}/PKGBUILD
-          sed -i "s|^pkgrel=.*|pkgrel=1|" ${{ env.PKGBUILD_DIR }}/PKGBUILD
+          PKGBUILD_FILE="${{ env.PKGBUILD_DIR }}/PKGBUILD"
+
+          # FIX: este step antes SIEMPRE reseteaba pkgrel=1, sin importar si
+          # pkgver realmente cambio. Resultado real (15-ago): cuando se
+          # arreglo el .config del kernel (symlink 'build', luego
+          # overlay/dm_snapshot/crypto_lz4, luego gen-config.sh) SIN que
+          # cambiara la version de Linux upstream (7.1.8 seguia siendo
+          # 7.1.8), el paquete republicado quedo con el string de version
+          # IDENTICO al build roto anterior (7.1.8-1) — pacman -Syu no
+          # detecto ninguna actualizacion disponible, y hubo que forzar con
+          # 'pacman -S linux-avalos' a mano en la laptop del cliente. Con
+          # este fix: si pkgver NO cambio respecto al valor actual en el
+          # archivo, se incrementa pkgrel en vez de resetearlo — asi
+          # cualquier fix al PKGBUILD (sin bump de kernel) es detectable
+          # como actualizacion real. Si pkgver SI cambio (nueva version de
+          # Linux), se resetea pkgrel=1 como es la convencion estandar.
+          CURRENT_VER=$(grep '^pkgver=' "$PKGBUILD_FILE" | cut -d= -f2)
+          CURRENT_REL=$(grep '^pkgrel=' "$PKGBUILD_FILE" | cut -d= -f2)
+
+          if [[ "$CURRENT_VER" == "$KERNEL_VER" ]]; then
+            NEW_REL=$(( CURRENT_REL + 1 ))
+            echo "pkgver sin cambios (${KERNEL_VER}) — incrementando pkgrel: ${CURRENT_REL} -> ${NEW_REL}"
+          else
+            NEW_REL=1
+            echo "pkgver cambio (${CURRENT_VER} -> ${KERNEL_VER}) — reseteando pkgrel a 1"
+          fi
+
+          sed -i "s|^pkgver=.*|pkgver=${KERNEL_VER}|" "$PKGBUILD_FILE"
+          sed -i "s|^pkgrel=.*|pkgrel=${NEW_REL}|" "$PKGBUILD_FILE"
           echo "PKGBUILD actualizado:"
-          grep -E "^pkg(ver|rel)" ${{ env.PKGBUILD_DIR }}/PKGBUILD
+          grep -E "^pkg(ver|rel)" "$PKGBUILD_FILE"
 
       - name: Generar config base del kernel
         run: |
