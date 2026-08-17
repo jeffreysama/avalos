@@ -102,13 +102,27 @@ DOWNLOADED=false
 # intento anterior de este fix silenciaba todo con '&>/dev/null', ese fallo
 # real quedaba invisible en el log — parecia "no hay red" cuando en realidad
 # era "permiso denegado". Ahora se captura el output real para diagnostico.
+# FIX-SANDBOX (17-ago): pacman 7 introdujo un sandbox por landlock que
+# ejecuta la DESCARGA REAL como el usuario sin privilegios 'alpm'
+# (DownloadUser = alpm en pacman.conf), sin importar que pacman en si se haya
+# invocado via sudo/root. Ese sandbox conoce las rutas normales de pacman
+# (/var/cache/pacman/pkg, /var/lib/pacman/sync — por eso 'pacman -Sy' de
+# abajo funciona bien), pero NO tiene por que tener acceso al directorio que
+# nosotros armamos con 'mktemp -d' (dueño 'builder', modo 700) y pasamos via
+# '--cachedir'. El resultado es exactamente lo que se vio en un build real:
+# "-Sy" completa la sincronizacion de bases de datos sin problema, y luego
+# "-Sw --cachedir $_tmpdir_pacman" falla con "Permission denied" al intentar
+# escribir el .part del paquete — no es un problema de red ni de que falte
+# sudo, es el sandbox del usuario alpm chocando con un directorio que no
+# conoce. '--disable-sandbox' devuelve la descarga a correr con los mismos
+# privilegios de quien invoco pacman (root, via sudo), igual que en pacman <7.
 if command -v pacman &>/dev/null; then
     echo "    Fuente: pacman -Sw (paquete oficial 'linux' de Arch)"
     _pacman_log="$_tmpdir/pacman.log"
     _sudo=""
     [[ "$(id -u)" != "0" ]] && _sudo="sudo"
-    if $_sudo pacman -Sy --noconfirm > "$_pacman_log" 2>&1 \
-       && $_sudo pacman -Sw --noconfirm --nodeps --nodeps --cachedir "$_tmpdir_pacman" linux >> "$_pacman_log" 2>&1; then
+    if $_sudo pacman -Sy --noconfirm --disable-sandbox > "$_pacman_log" 2>&1 \
+       && $_sudo pacman -Sw --noconfirm --nodeps --nodeps --disable-sandbox --cachedir "$_tmpdir_pacman" linux >> "$_pacman_log" 2>&1; then
         # FIX: 'pacman -Sw linux' sin '--nodeps --nodeps' tambien descarga las
         # dependencias de 'linux' (incluyendo 'linux-firmware', que SI depende
         # de el) al mismo --cachedir. El glob "linux-*.pkg.tar.zst" original
