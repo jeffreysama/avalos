@@ -146,14 +146,33 @@ if command -v pacman &>/dev/null; then
                     cp "$CONFIG_FILE" "$OUT"
                     echo "    ✓ config extraído vía pacman -Sw (${PKG_FILE##*/})"
                     DOWNLOADED=true
+                else
+                    # FIX-DIAG (17-ago): antes esto caia en silencio al WARN
+                    # generico de mas abajo, sin decir CUAL de los 4 pasos
+                    # (comando pacman / find del .pkg.tar.zst / tar de
+                    # boot/config / boot/config vacio) fue el que fallo —
+                    # obligando a ir a cazar el log completo a mano cada vez.
+                    echo "    [WARN] pacman -Sw: boot/config se extrajo de ${PKG_FILE##*/} pero salió vacío o no existe"
                 fi
+            else
+                echo "    [WARN] pacman -Sw: no se pudo extraer boot/config de ${PKG_FILE##*/} — contenido real del paquete:"
+                tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -i boot | head -10 | sed 's/^/           /'
             fi
+        else
+            echo "    [WARN] pacman -Sw: el comando terminó sin error pero no se encontró ningún .pkg.tar.zst en $_tmpdir_pacman"
+            echo "           Contenido real de $_tmpdir_pacman:"
+            find "$_tmpdir_pacman" -maxdepth 2 2>/dev/null | sed 's/^/           /'
         fi
+    else
+        echo "    [WARN] pacman -Sy o pacman -Sw devolvieron código de error (ver diagnóstico abajo)"
     fi
     if ! $DOWNLOADED; then
-        echo "    [WARN] pacman -Sw no pudo traer/extraer el paquete linux — probando siguiente fuente"
-        echo "    --- output de pacman (diagnóstico) ---"
-        tail -20 "$_pacman_log" 2>/dev/null | sed 's/^/    /'
+        echo "    --- output completo de pacman (diagnóstico) ---"
+        # FIX-DIAG: 'tail -20' venia cortando justo el error real cuando -Sy
+        # y -Sw comparten el mismo log ("$_pacman_log" con > y luego >>) — la
+        # salida de -Sy sola ya ocupa varias lineas, asi que un fallo tardio
+        # de -Sw quedaba fuera de la ventana de 20 lineas. Se sube a 60.
+        tail -60 "$_pacman_log" 2>/dev/null | sed 's/^/    /'
         echo "    ---------------------------------------"
     fi
 fi
