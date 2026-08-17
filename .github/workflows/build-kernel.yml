@@ -83,6 +83,24 @@ jobs:
             exit 0
           fi
 
+          # FIX (16-ago): el pre-check de "ya publicado" de abajo es correcto
+          # para el cron semanal — ahí el único propósito es no recompilar si
+          # kernel.org no publicó nada nuevo esa semana. Pero compara solo
+          # KERNEL_VER, no pkgrel: si alguien edita PKGBUILD/gen-config.sh
+          # sin que la versión del kernel cambie (exactamente lo que hicimos
+          # hoy), este mismo pre-check encontraría el asset
+          # "linux-avalos-${KERNEL_VER}" del build anterior y saltaría el
+          # build entero — obligando a acordarse de tildar "force_rebuild" a
+          # mano cada vez que se toca el código fuente sin bump de versión.
+          # Un disparo manual (workflow_dispatch) ya es, de por sí, una señal
+          # explícita de "quiero que esto corra ahora"; no tiene sentido que
+          # también dependa de este pre-check pensado para el cron.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Disparo manual (workflow_dispatch) - se compila sin mirar si ya esta publicada"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           EXISTING=$(gh release view "${{ env.REPO_TAG }}" \
             --repo "${{ env.AVALOS_REPO }}" \
             --json assets \
@@ -270,6 +288,26 @@ jobs:
           MINOR="${KERNEL_VER#*.}"; MINOR="${MINOR%.*}"
           JOBS=$(nproc)
 
+          # FIX (16-ago): 'makepkg -s' guarda src/ y pkg/ como subcarpetas del
+          # propio directorio del PKGBUILD (no hay SRCDEST/PKGDEST custom
+          # aquí). Para cuando llegamos aquí, "linux-avalos" ya corrió su
+          # 'makepkg -s' completo, así que PKGBUILD_DIR/src/linux-${KERNEL_VER}
+          # tiene el kernel YA COMPILADO (miles de .o, vmlinux, ThinLTO, etc.)
+          # sin el parche BORE. Sin este 'rm -rf', el 'cp -r' de abajo
+          # duplicaba ese árbol entero dentro de BORE_DIR — ningún
+          # 'makepkg -s' de aquí abajo pasa --noextract, así que sí se
+          # re-extrae el tarball limpio encima, pero tar sobrescribe
+          # archivos, no borra los que sobran: los .o/.cmd viejos se quedan.
+          # El tracking de kbuild (basado en hash de comando, no solo mtime)
+          # probablemente salva la corrección del build, pero no salva el
+          # espacio en disco — con runners de ~14GB libres y un árbol de
+          # kernel con ThinLTO duplicado dos veces (bore + compat), es la
+          # misma clase de bug que ya mordió una vez con /tmp en WSL, solo
+          # que en otro lugar. Empezar cada variante desde una copia limpia
+          # (solo PKGBUILD, config, install, patches) es más barato y más
+          # confiable que arrastrar el build anterior.
+          rm -rf "${{ env.PKGBUILD_DIR }}/src" "${{ env.PKGBUILD_DIR }}/pkg"
+
           BORE_DIR="${{ env.PKGBUILD_DIR }}-bore"
           cp -r "${{ env.PKGBUILD_DIR }}" "$BORE_DIR"
           chown -R builder:builder "$BORE_DIR"
@@ -286,6 +324,11 @@ jobs:
           sed -i 's|linux-avalos|linux-avalos-bore|g' "$BORE_DIR/linux-avalos-bore.install"
           rm -f "$BORE_DIR/linux-avalos.install"
           sed -i 's|^install=linux-avalos\.install$|install=linux-avalos-bore.install|' "$BORE_DIR/PKGBUILD"
+
+          # Cosmetico: sin esto, 'pacman -Si linux-avalos-bore' mostraba el
+          # mismo pkgdesc que el estandar, palabra por palabra — no se podía
+          # distinguir uno de otro por descripción.
+          sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF+BORE|g' "$BORE_DIR/PKGBUILD"
 
           BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${MAJOR}.${MINOR}/sched/0001-bore.patch"
           if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
@@ -322,6 +365,13 @@ jobs:
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           JOBS=$(nproc)
+
+          # FIX (16-ago): mismo motivo que en el paso de BORE de arriba —
+          # src/ y pkg/ del build estándar (v3) quedarían duplicados dentro
+          # de COMPAT_DIR si no se limpian antes del 'cp -r', arrastrando un
+          # árbol ya compilado con las flags equivocadas (-march=x86-64-v3
+          # en vez de v2) y arriesgando espacio en disco del runner.
+          rm -rf "${{ env.PKGBUILD_DIR }}/src" "${{ env.PKGBUILD_DIR }}/pkg"
 
           COMPAT_DIR="${{ env.PKGBUILD_DIR }}-compat"
           cp -r "${{ env.PKGBUILD_DIR }}" "$COMPAT_DIR"
