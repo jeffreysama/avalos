@@ -151,6 +151,24 @@ prepare() {
         -m CONFIG_HID_MULTITOUCH \
         -m CONFIG_I2C_HID_ACPI
 
+    # FIX (17-ago): bug conocido, viejo y recurrente de upstream — con
+    # Clang+ThinLTO, ciertas funciones gigantes de drivers/gpu/drm/amd/display
+    # (las dml*_ModeSupportAndSystemConfigurationFull de dcn30/dcn31/dcn314,
+    # y variantes similares en otras dcnXX segun la version del kernel)
+    # superan el limite de 2048 bytes de stack frame que el kernel chequea
+    # por defecto (CONFIG_FRAME_WARN). Con GCC no pasa (genera frames mas
+    # chicos para el mismo codigo); con ThinLTO especificamente el chequeo se
+    # hace en el LINKER (ld.lld) sobre el codigo YA optimizado por LTO, como
+    # error duro — no como warning descartable. El propio kernel ya sube este
+    # limite para builds con KASAN/KCSAN via CFLAGS por archivo (ver commits
+    # 6740ec97bcdb y 5b750b22530f de drm/amd/display), pero no cubre todas
+    # las variantes dcnXX ni todas las configs — cada version nueva de AMD
+    # display puede volver a disparar esto con un archivo dcnXX distinto. En
+    # vez de parchear codigo fuente (fragil entre bumps de version de
+    # kernel.org), se sube el limite globalmente via config: no se toca
+    # ningun .c, y cubre variantes dcnXX futuras sin mantenimiento.
+    scripts/config --set-val CONFIG_FRAME_WARN 4096
+
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld olddefconfig
 
     # Verificacion post-olddefconfig: 'make olddefconfig' puede degradar un
