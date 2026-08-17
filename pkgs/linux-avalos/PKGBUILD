@@ -1,7 +1,7 @@
 pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
 pkgver=7.1.8
-pkgrel=2
+pkgrel=1
 pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
 url="https://github.com/jeffreysama/avalos"
@@ -133,6 +133,24 @@ prepare() {
         -m CONFIG_CRYPTO_LZ4 \
         -m CONFIG_CRYPTO_LZ4HC
 
+    # FIX (16-ago): mismo criterio que el bloque de arriba — wifi (Atheros
+    # AR9565, chip PCI, driver ath9k; no necesita firmware externo) y el
+    # touchpad de la laptop de David tampoco se forzaban explicitamente,
+    # dependian 100% de que gen-config.sh trajera un .config completo — que
+    # es justo lo que fallo el 15-ago. Se fuerzan aqui como defensa adicional
+    # a la validacion ya arreglada en gen-config.sh, no como reemplazo de
+    # ella. Se cubre tanto el touchpad PS/2 clasico (Synaptics/ALPS/Elantech
+    # — lo mas probable en un ASUS X556UAK de esta generacion) como I2C-HID
+    # por si el hardware real resulta ser ese otro camino.
+    scripts/config \
+        -m CONFIG_ATH9K \
+        -m CONFIG_MOUSE_PS2 \
+        -e CONFIG_MOUSE_PS2_SYNAPTICS \
+        -e CONFIG_MOUSE_PS2_ALPS \
+        -e CONFIG_MOUSE_PS2_ELANTECH \
+        -m CONFIG_HID_MULTITOUCH \
+        -m CONFIG_I2C_HID_ACPI
+
     make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld olddefconfig
 
     # Verificacion post-olddefconfig: 'make olddefconfig' puede degradar un
@@ -140,10 +158,16 @@ prepare() {
     # (pasa en silencio, sin error visible). Si alguno de estos 3 termina
     # deshabilitado, abortar el build ahora — en CI, con log claro — en vez
     # de descubrirlo despues en un mkinitcpio roto en la maquina de un cliente.
-    for _sym in CONFIG_OVERLAY_FS CONFIG_DM_SNAPSHOT CONFIG_CRYPTO_LZ4; do
+    # Se agregan CONFIG_ATH9K y CONFIG_MOUSE_PS2 al mismo chequeo — no se
+    # incluyen HID_MULTITOUCH/I2C_HID_ACPI aqui a proposito: son cobertura
+    # defensiva por si el hardware real usa ese camino en vez de PS/2, y no
+    # queremos abortar el build entero por un driver que puede no aplicar a
+    # este hardware especifico.
+    for _sym in CONFIG_OVERLAY_FS CONFIG_DM_SNAPSHOT CONFIG_CRYPTO_LZ4 CONFIG_ATH9K CONFIG_MOUSE_PS2; do
         if ! grep -qE "^${_sym}=[ym]$" .config; then
             echo "[ERROR] ${_sym} no quedo habilitado en .config tras olddefconfig"
-            echo "        Esto rompe el boot live/rescate (mkinitcpio 'module not found')."
+            echo "        Esto puede romper el boot live/rescate (overlay/dm_snapshot/crypto_lz4)"
+            echo "        o dejar sin wifi/touchpad el hardware real (ath9k/mouse_ps2)."
             grep -E "^# ${_sym} is not set|^${_sym}=" .config || echo "        (${_sym} ausente del .config)"
             exit 1
         fi
@@ -269,5 +293,13 @@ package_linux-avalos-headers() {
 
     find . -name 'Kconfig*' -exec install -Dm644 {} "${builddir}/{}" \;
 
-    sed -i "s|${srcdir}|/usr/src|g" "${builddir}/Makefile"
+    # FIX (16-ago): esto reemplazaba la ruta absoluta de build en CI
+    # (${srcdir}, algo como /home/builder/.../src/linux-7.1.8) por "/usr/src"
+    # a secas — pero los headers NO se instalan en /usr/src, se instalan en
+    # "${builddir}" (= /usr/lib/modules/${_kver}/build una vez en el sistema
+    # real). Si esta sustitucion llegaba a encontrar coincidencias, dejaba
+    # una referencia absoluta apuntando a un directorio que no existe en la
+    # maquina del cliente, en vez de a donde realmente quedan los headers —
+    # relevante para builds externos de modulos (DKMS y similares).
+    sed -i "s|${srcdir}|${builddir}|g" "${builddir}/Makefile"
 }

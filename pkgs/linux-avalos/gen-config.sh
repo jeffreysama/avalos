@@ -11,14 +11,40 @@ MINOR="${PKGVER#*.}"; MINOR="${MINOR%.*}"
 echo "==> gen-config.sh — AvalOS kernel config"
 echo "    pkgver: $PKGVER  (${MAJOR}.${MINOR}.x)"
 
+# FIX-HOST-CONFIG (16-ago): tanto /proc/config.gz como /boot/config-$(uname -r)
+# reflejan el kernel de la maquina que esta corriendo el script AHORA MISMO —
+# no el kernel real de Arch que este proyecto necesita empaquetar. En CI eso
+# es el kernel del contenedor/runner (comparten kernel via runc, asi que
+# /proc/config.gz expone el del host ubuntu-latest, no el de Arch); local
+# puede ser cualquier kernel que la maquina tenga booteado en ese momento —
+# incluyendo un linux-avalos ya roto, lo que perpetuaria en silencio el mismo
+# bug de wifi/touchpad del 15-ago en un rebuild futuro. Antes estas dos
+# fuentes aceptaban cualquier archivo no vacio sin mirar su CONTENIDO,
+# saltandose por completo la validacion de "N+ simbolos habilitados" que ya
+# existia mas abajo, pero solo para la rama de pacman/curl. Se centraliza esa
+# validacion en una funcion y se aplica ahora a las 3 fuentes por igual.
+MIN_ENABLED_SYMBOLS=3000
+
+_count_enabled_symbols() {
+    grep -cE '^CONFIG_[A-Z0-9_]+=[ym]$' "$OUT" 2>/dev/null || echo 0
+}
+
 if [[ -f /proc/config.gz ]]; then
     echo "    Fuente: /proc/config.gz (kernel actual del host)"
     # FIX-SET-E: zcat suelto (sin if) + set -e de la linea 2 = si zcat falla
     # (permisos, WSL sin IKCONFIG_PROC real, etc.) el script muere aqui mismo,
     # dejando "$OUT" en 0 bytes y sin llegar jamas a los fallbacks de abajo.
     if zcat /proc/config.gz > "$OUT" 2>/dev/null && [[ -s "$OUT" ]]; then
-        echo "    ✓ config generado desde /proc/config.gz"
-        exit 0
+        _n=$(_count_enabled_symbols)
+        if (( _n >= MIN_ENABLED_SYMBOLS )); then
+            echo "    ✓ config generado desde /proc/config.gz (${_n} símbolos habilitados)"
+            exit 0
+        else
+            echo "    [WARN] /proc/config.gz solo trae ${_n} símbolos habilitados (se esperan miles)."
+            echo "           Esto es casi seguro el kernel del HOST/runner, no un kernel de"
+            echo "           escritorio de Arch — descartando y probando la siguiente fuente."
+            rm -f "$OUT"
+        fi
     else
         echo "    [WARN] /proc/config.gz no se pudo leer o generó archivo vacío — continuando con siguiente fuente"
         rm -f "$OUT"
@@ -28,8 +54,16 @@ fi
 if [[ -f "/boot/config-$(uname -r)" ]]; then
     echo "    Fuente: /boot/config-$(uname -r)"
     if cp "/boot/config-$(uname -r)" "$OUT" 2>/dev/null && [[ -s "$OUT" ]]; then
-        echo "    ✓ config generado desde /boot"
-        exit 0
+        _n=$(_count_enabled_symbols)
+        if (( _n >= MIN_ENABLED_SYMBOLS )); then
+            echo "    ✓ config generado desde /boot (${_n} símbolos habilitados)"
+            exit 0
+        else
+            echo "    [WARN] /boot/config-$(uname -r) solo trae ${_n} símbolos habilitados (se esperan miles)."
+            echo "           Probablemente el kernel del HOST/runner, no uno de escritorio de"
+            echo "           Arch — descartando y probando la siguiente fuente."
+            rm -f "$OUT"
+        fi
     else
         echo "    [WARN] /boot/config-$(uname -r) no se pudo copiar o está vacío — continuando con siguiente fuente"
         rm -f "$OUT"
@@ -141,9 +175,9 @@ fi
 # minimo de 3000 simbolos ACTIVOS (no solo lineas totales) para aceptar el
 # archivo como valido antes de darlo por bueno.
 if $DOWNLOADED; then
-    _enabled_count=$(grep -cE '^CONFIG_[A-Z0-9_]+=[ym]$' "$OUT" 2>/dev/null || echo 0)
+    _enabled_count=$(_count_enabled_symbols)
     echo "    Símbolos habilitados detectados: ${_enabled_count}"
-    if (( _enabled_count < 3000 )); then
+    if (( _enabled_count < MIN_ENABLED_SYMBOLS )); then
         echo "    [WARN] Solo ${_enabled_count} símbolos habilitados (se esperan miles) —"
         echo "           el archivo descargado no parece un .config completo de Arch."
         echo "           Descartando y cayendo al fallback de defconfig."
