@@ -139,23 +139,39 @@ if command -v pacman &>/dev/null; then
         # defensa adicional aunque --nodeps fallara por algun motivo.
         PKG_FILE=$(find "$_tmpdir_pacman" -maxdepth 1 -name "linux-[0-9]*-x86_64.pkg.tar.zst" | sort -V | tail -1)
         if [[ -n "$PKG_FILE" ]]; then
-            if tar -I zstd -xf "$PKG_FILE" -C "$_tmpdir" "./boot/config" 2>/dev/null \
-               || tar -I zstd -xf "$PKG_FILE" -C "$_tmpdir" "boot/config" 2>/dev/null; then
-                CONFIG_FILE=$(find "$_tmpdir/boot" -name "config" 2>/dev/null | head -1)
-                if [[ -f "$CONFIG_FILE" ]] && [[ -s "$CONFIG_FILE" ]]; then
-                    cp "$CONFIG_FILE" "$OUT"
-                    echo "    ✓ config extraído vía pacman -Sw (${PKG_FILE##*/})"
-                    DOWNLOADED=true
+            # FIX-CONFIGPATH (17-ago): Arch dejo de empaquetar el config en
+            # 'boot/config' — ahora vive en 'usr/lib/modules/<kver>/config',
+            # parte de la misma migracion de /boot a /usr/lib/modules/ que ya
+            # se ve en el resto del paquete (vmlinuz, modulos, etc — ver
+            # ArchWiki: "Kernel packages are installed under the
+            # /usr/lib/modules/ path"). Antes esto asumia 'boot/config' fijo
+            # y caia en silencio al fallback de defconfig cuando esa ruta
+            # dejo de existir — paso de verdad el 17-ago con el bump a 7.2.
+            # En vez de hardcodear la ruta nueva (y volver a romperse si Arch
+            # reorganiza otra vez), se busca dentro del listado real del
+            # paquete cualquier archivo que termine en '/config' (o sea
+            # exactamente 'config'), sea cual sea su ubicacion.
+            _config_path_in_pkg=$(tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -E '(^|/)config$' | head -1)
+            if [[ -n "$_config_path_in_pkg" ]]; then
+                if tar -I zstd -xf "$PKG_FILE" -C "$_tmpdir" "$_config_path_in_pkg" 2>/dev/null; then
+                    CONFIG_FILE="$_tmpdir/$_config_path_in_pkg"
+                    if [[ -f "$CONFIG_FILE" ]] && [[ -s "$CONFIG_FILE" ]]; then
+                        cp "$CONFIG_FILE" "$OUT"
+                        echo "    ✓ config extraído vía pacman -Sw (${PKG_FILE##*/}, ${_config_path_in_pkg})"
+                        DOWNLOADED=true
+                    else
+                        # FIX-DIAG (17-ago): antes esto caia en silencio al WARN
+                        # generico de mas abajo, sin decir CUAL de los pasos
+                        # (comando pacman / find del .pkg.tar.zst / ubicar
+                        # config dentro del paquete / config vacio) fue el que
+                        # fallo — obligando a ir a cazar el log completo a mano.
+                        echo "    [WARN] pacman -Sw: '${_config_path_in_pkg}' se extrajo de ${PKG_FILE##*/} pero salió vacío"
+                    fi
                 else
-                    # FIX-DIAG (17-ago): antes esto caia en silencio al WARN
-                    # generico de mas abajo, sin decir CUAL de los 4 pasos
-                    # (comando pacman / find del .pkg.tar.zst / tar de
-                    # boot/config / boot/config vacio) fue el que fallo —
-                    # obligando a ir a cazar el log completo a mano cada vez.
-                    echo "    [WARN] pacman -Sw: boot/config se extrajo de ${PKG_FILE##*/} pero salió vacío o no existe"
+                    echo "    [WARN] pacman -Sw: '${_config_path_in_pkg}' aparece en el listado de ${PKG_FILE##*/} pero tar no pudo extraerlo"
                 fi
             else
-                echo "    [WARN] pacman -Sw: no se pudo extraer boot/config de ${PKG_FILE##*/} — contenido real del paquete:"
+                echo "    [WARN] pacman -Sw: no se encontró ningún archivo 'config' dentro de ${PKG_FILE##*/} — contenido real del paquete:"
                 tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -i boot | head -10 | sed 's/^/           /'
             fi
         else
@@ -182,14 +198,15 @@ if ! $DOWNLOADED; then
     for url in "${ARCH_CONFIG_URLS[@]}"; do
         echo "    Intentando: $url"
         if curl -fsSL --max-time 60 -o "$_tmpdir/linux.pkg.tar.zst" "$url" 2>/dev/null; then
-            if tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
-                   "./boot/config" 2>/dev/null \
-               || tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" \
-                   "boot/config" 2>/dev/null; then
-                CONFIG_FILE=$(find "$_tmpdir/boot" -name "config" | head -1)
+            # Mismo fix que en la rama de pacman de arriba: no asumir
+            # 'boot/config', buscarlo donde sea que este dentro del paquete.
+            _config_path_in_pkg=$(tar -I zstd -tf "$_tmpdir/linux.pkg.tar.zst" 2>/dev/null | grep -E '(^|/)config$' | head -1)
+            if [[ -n "$_config_path_in_pkg" ]] \
+               && tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" "$_config_path_in_pkg" 2>/dev/null; then
+                CONFIG_FILE="$_tmpdir/$_config_path_in_pkg"
                 if [[ -f "$CONFIG_FILE" ]] && [[ -s "$CONFIG_FILE" ]]; then
                     cp "$CONFIG_FILE" "$OUT"
-                    echo "    ✓ config extraído del paquete Arch Linux (descarga directa)"
+                    echo "    ✓ config extraído del paquete Arch Linux (descarga directa, ${_config_path_in_pkg})"
                     DOWNLOADED=true
                     break
                 fi
