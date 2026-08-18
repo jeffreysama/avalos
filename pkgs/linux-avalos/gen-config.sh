@@ -71,7 +71,7 @@ if [[ -f "/boot/config-$(uname -r)" ]]; then
 fi
 
 ARCH_CONFIG_URLS=(
-    "https://archlinux.org/packages/core/x86_64/linux/download/"
+    "https://archlinux.org/packages/core/x86_64/linux-headers/download/"
 )
 
 _tmpdir=$(mktemp -d)
@@ -117,40 +117,43 @@ DOWNLOADED=false
 # conoce. '--disable-sandbox' devuelve la descarga a correr con los mismos
 # privilegios de quien invoco pacman (root, via sudo), igual que en pacman <7.
 if command -v pacman &>/dev/null; then
-    echo "    Fuente: pacman -Sw (paquete oficial 'linux' de Arch)"
+    echo "    Fuente: pacman -Sw (paquete 'linux-headers' oficial de Arch)"
     _pacman_log="$_tmpdir/pacman.log"
     _sudo=""
     [[ "$(id -u)" != "0" ]] && _sudo="sudo"
     if $_sudo pacman -Sy --noconfirm --disable-sandbox > "$_pacman_log" 2>&1 \
-       && $_sudo pacman -Sw --noconfirm --nodeps --nodeps --disable-sandbox --cachedir "$_tmpdir_pacman" linux >> "$_pacman_log" 2>&1; then
-        # FIX: 'pacman -Sw linux' sin '--nodeps --nodeps' tambien descarga las
-        # dependencias de 'linux' (incluyendo 'linux-firmware', que SI depende
-        # de el) al mismo --cachedir. El glob "linux-*.pkg.tar.zst" original
-        # coincidia tambien con "linux-firmware-*" y "linux-firmware-whence-*",
-        # y 'sort -V | tail -1' podia terminar eligiendo ESE archivo en vez
-        # del kernel real — que ademas ni siquiera trae /boot/config, asi que
-        # el resultado habria sido: o bien un config equivocado, o una nueva
-        # caida silenciosa al fallback de defconfig, disfrazada de "exito".
-        # '--nodeps --nodeps' (doble, para ignorar TODAS las dependencias, no
-        # solo un nivel) evita que aparezca nada mas que el propio 'linux' en
-        # el cachedir. El patron de busqueda ademas se restringe a exigir un
-        # digito justo despues de "linux-" (la version del kernel), lo cual
-        # por si solo ya excluye "linux-firmware*"/"linux-headers*" como
-        # defensa adicional aunque --nodeps fallara por algun motivo.
-        PKG_FILE=$(find "$_tmpdir_pacman" -maxdepth 1 -name "linux-[0-9]*-x86_64.pkg.tar.zst" | sort -V | tail -1)
+       && $_sudo pacman -Sw --noconfirm --nodeps --nodeps --disable-sandbox --cachedir "$_tmpdir_pacman" linux-headers >> "$_pacman_log" 2>&1; then
+        # FIX-PKG (18-ago): el paquete 'linux' de Arch NO trae ningun archivo
+        # de config en absoluto — se confirmo bajando el paquete real y
+        # listando su contenido completo. El .config vive en 'linux-headers'
+        # (misma logica que este propio PKGBUILD: el config va con los
+        # headers, no con el kernel binario), por eso el objetivo cambio de
+        # 'linux' a 'linux-headers' arriba. De paso, 'linux-headers' pesa
+        # bastante menos (sin modulos .ko ni vmlinuz), asi que esto tambien
+        # deja la descarga mas liviana. '--nodeps --nodeps' (doble, para
+        # ignorar TODAS las dependencias) evita que aparezca nada mas que el
+        # propio 'linux-headers' en el cachedir — sin esto, tambien bajaria
+        # 'linux' (su dependencia) al mismo directorio. El patron de busqueda
+        # exige un digito justo despues de "linux-headers-" (la version), lo
+        # cual excluye cualquier otro archivo que termine en el cachedir.
+        PKG_FILE=$(find "$_tmpdir_pacman" -maxdepth 1 -name "linux-headers-[0-9]*-x86_64.pkg.tar.zst" | sort -V | tail -1)
         if [[ -n "$PKG_FILE" ]]; then
-            # FIX-CONFIGPATH (17-ago): Arch dejo de empaquetar el config en
-            # 'boot/config' — ahora vive en 'usr/lib/modules/<kver>/config',
-            # parte de la misma migracion de /boot a /usr/lib/modules/ que ya
-            # se ve en el resto del paquete (vmlinuz, modulos, etc — ver
-            # ArchWiki: "Kernel packages are installed under the
-            # /usr/lib/modules/ path"). Antes esto asumia 'boot/config' fijo
-            # y caia en silencio al fallback de defconfig cuando esa ruta
-            # dejo de existir — paso de verdad el 17-ago con el bump a 7.2.
-            # En vez de hardcodear la ruta nueva (y volver a romperse si Arch
-            # reorganiza otra vez), se busca dentro del listado real del
-            # paquete cualquier archivo que termine en '/config' (o sea
-            # exactamente 'config'), sea cual sea su ubicacion.
+            # FIX-CONFIGPATH (17-ago, corregido 18-ago): Arch dejo de
+            # empaquetar el config en 'boot/config' — ahora vive en
+            # 'usr/lib/modules/<kver>/build/.config' (nota el PUNTO inicial:
+            # es ".config", no "config" — el intento anterior de este fix
+            # buscaba "config" a secas y por eso seguia sin encontrarlo aun
+            # apuntando al paquete correcto). Parte de la misma migracion de
+            # /boot a /usr/lib/modules/ que ya se ve en el resto del paquete
+            # (vmlinuz, modulos, etc — ver ArchWiki: "Kernel packages are
+            # installed under the /usr/lib/modules/ path"). Antes esto
+            # asumia 'boot/config' fijo y caia en silencio al fallback de
+            # defconfig cuando esa ruta dejo de existir — paso de verdad el
+            # 17-ago con el bump a 7.2. En vez de hardcodear la ruta nueva (y
+            # volver a romperse si Arch reorganiza otra vez), se busca
+            # dentro del listado real del paquete cualquier archivo que
+            # termine en 'config' o '.config', sea cual sea su ubicacion.
+            #
             # FIX-PIPEFAIL (17-ago): si 'grep' no encuentra ninguna linea que
             # matchee, sale con estado 1 — y con 'pipefail' activo (set -euo
             # pipefail en la linea 2), eso hacia que TODA esta asignacion
@@ -160,7 +163,7 @@ if command -v pacman &>/dev/null; then
             # "Fuente: pacman -Sw...", sin ningun mensaje despues. El '|| true'
             # hace que "no encontre nada" sea un resultado normal (variable
             # vacia) en vez de un fallo fatal del script completo.
-            _config_path_in_pkg=$(tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -E '(^|/)config$' | head -1 || true)
+            _config_path_in_pkg=$(tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -E '(^|/)\.?config$' | head -1 || true)
             if [[ -n "$_config_path_in_pkg" ]]; then
                 if tar -I zstd -xf "$PKG_FILE" -C "$_tmpdir" "$_config_path_in_pkg" 2>/dev/null; then
                     CONFIG_FILE="$_tmpdir/$_config_path_in_pkg"
@@ -180,8 +183,8 @@ if command -v pacman &>/dev/null; then
                     echo "    [WARN] pacman -Sw: '${_config_path_in_pkg}' aparece en el listado de ${PKG_FILE##*/} pero tar no pudo extraerlo"
                 fi
             else
-                echo "    [WARN] pacman -Sw: no se encontró ningún archivo 'config' dentro de ${PKG_FILE##*/} — contenido real del paquete:"
-                tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -i boot | head -10 | sed 's/^/           /' || true
+                echo "    [WARN] pacman -Sw: no se encontró ningún archivo 'config'/'.config' dentro de ${PKG_FILE##*/} — contenido real del paquete (filtrado a Kconfig/config):"
+                tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -iE 'config|kconfig' | head -15 | sed 's/^/           /' || true
             fi
         else
             echo "    [WARN] pacman -Sw: el comando terminó sin error pero no se encontró ningún .pkg.tar.zst en $_tmpdir_pacman"
@@ -210,7 +213,7 @@ if ! $DOWNLOADED; then
             # Mismo fix que en la rama de pacman de arriba: no asumir
             # 'boot/config', buscarlo donde sea que este dentro del paquete.
             # Mismo fix de pipefail que en la rama de pacman de arriba.
-            _config_path_in_pkg=$(tar -I zstd -tf "$_tmpdir/linux.pkg.tar.zst" 2>/dev/null | grep -E '(^|/)config$' | head -1 || true)
+            _config_path_in_pkg=$(tar -I zstd -tf "$_tmpdir/linux.pkg.tar.zst" 2>/dev/null | grep -E '(^|/)\.?config$' | head -1 || true)
             if [[ -n "$_config_path_in_pkg" ]] \
                && tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" "$_config_path_in_pkg" 2>/dev/null; then
                 CONFIG_FILE="$_tmpdir/$_config_path_in_pkg"
