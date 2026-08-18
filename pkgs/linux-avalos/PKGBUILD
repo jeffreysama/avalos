@@ -1,7 +1,7 @@
 pkgbase=linux-avalos
 pkgname=(linux-avalos linux-avalos-headers)
-pkgver=7.2
-pkgrel=2
+pkgver=7.1.8
+pkgrel=1
 pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
 arch=(x86_64)
 url="https://github.com/jeffreysama/avalos"
