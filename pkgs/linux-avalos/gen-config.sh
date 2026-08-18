@@ -151,7 +151,16 @@ if command -v pacman &>/dev/null; then
             # reorganiza otra vez), se busca dentro del listado real del
             # paquete cualquier archivo que termine en '/config' (o sea
             # exactamente 'config'), sea cual sea su ubicacion.
-            _config_path_in_pkg=$(tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -E '(^|/)config$' | head -1)
+            # FIX-PIPEFAIL (17-ago): si 'grep' no encuentra ninguna linea que
+            # matchee, sale con estado 1 — y con 'pipefail' activo (set -euo
+            # pipefail en la linea 2), eso hacia que TODA esta asignacion
+            # fallara y 'set -e' matara el script entero aqui mismo, ANTES
+            # de llegar a imprimir el WARN de diagnostico de mas abajo. Pasó
+            # de verdad: un run reciente murió en seco justo despues de
+            # "Fuente: pacman -Sw...", sin ningun mensaje despues. El '|| true'
+            # hace que "no encontre nada" sea un resultado normal (variable
+            # vacia) en vez de un fallo fatal del script completo.
+            _config_path_in_pkg=$(tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -E '(^|/)config$' | head -1 || true)
             if [[ -n "$_config_path_in_pkg" ]]; then
                 if tar -I zstd -xf "$PKG_FILE" -C "$_tmpdir" "$_config_path_in_pkg" 2>/dev/null; then
                     CONFIG_FILE="$_tmpdir/$_config_path_in_pkg"
@@ -172,12 +181,12 @@ if command -v pacman &>/dev/null; then
                 fi
             else
                 echo "    [WARN] pacman -Sw: no se encontró ningún archivo 'config' dentro de ${PKG_FILE##*/} — contenido real del paquete:"
-                tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -i boot | head -10 | sed 's/^/           /'
+                tar -I zstd -tf "$PKG_FILE" 2>/dev/null | grep -i boot | head -10 | sed 's/^/           /' || true
             fi
         else
             echo "    [WARN] pacman -Sw: el comando terminó sin error pero no se encontró ningún .pkg.tar.zst en $_tmpdir_pacman"
             echo "           Contenido real de $_tmpdir_pacman:"
-            find "$_tmpdir_pacman" -maxdepth 2 2>/dev/null | sed 's/^/           /'
+            find "$_tmpdir_pacman" -maxdepth 2 2>/dev/null | sed 's/^/           /' || true
         fi
     else
         echo "    [WARN] pacman -Sy o pacman -Sw devolvieron código de error (ver diagnóstico abajo)"
@@ -188,7 +197,7 @@ if command -v pacman &>/dev/null; then
         # y -Sw comparten el mismo log ("$_pacman_log" con > y luego >>) — la
         # salida de -Sy sola ya ocupa varias lineas, asi que un fallo tardio
         # de -Sw quedaba fuera de la ventana de 20 lineas. Se sube a 60.
-        tail -60 "$_pacman_log" 2>/dev/null | sed 's/^/    /'
+        tail -60 "$_pacman_log" 2>/dev/null | sed 's/^/    /' || true
         echo "    ---------------------------------------"
     fi
 fi
@@ -200,7 +209,8 @@ if ! $DOWNLOADED; then
         if curl -fsSL --max-time 60 -o "$_tmpdir/linux.pkg.tar.zst" "$url" 2>/dev/null; then
             # Mismo fix que en la rama de pacman de arriba: no asumir
             # 'boot/config', buscarlo donde sea que este dentro del paquete.
-            _config_path_in_pkg=$(tar -I zstd -tf "$_tmpdir/linux.pkg.tar.zst" 2>/dev/null | grep -E '(^|/)config$' | head -1)
+            # Mismo fix de pipefail que en la rama de pacman de arriba.
+            _config_path_in_pkg=$(tar -I zstd -tf "$_tmpdir/linux.pkg.tar.zst" 2>/dev/null | grep -E '(^|/)config$' | head -1 || true)
             if [[ -n "$_config_path_in_pkg" ]] \
                && tar -I zstd -xf "$_tmpdir/linux.pkg.tar.zst" -C "$_tmpdir" "$_config_path_in_pkg" 2>/dev/null; then
                 CONFIG_FILE="$_tmpdir/$_config_path_in_pkg"
