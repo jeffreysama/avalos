@@ -135,15 +135,36 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-kernel:
-    name: Compilar linux-avalos
+  prepare:
+    name: Preparar PKGBUILD y config
+    # FIX-JOBS (18-ago): antes "linux-avalos", "linux-avalos-bore" y
+    # "linux-avalos-compat" compilaban uno detras de otro DENTRO del mismo
+    # job. Mientras el config del kernel era el fallback minimo (defconfig),
+    # esto entraba comodo en las 6 horas — pero una vez que gen-config.sh
+    # empezo a traer el .config REAL de Arch (9474 simbolos habilitados en
+    # vez de una sola linea de fallback), cada variante paso a tardar
+    # ~3h+ ella sola. Sumadas, las 3 pasan las 6 horas, que es un LIMITE
+    # DURO de infraestructura en runners hospedados de GitHub — no se puede
+    # subir con timeout-minutes, ni con Free/Pro/Team/Enterprise. Un build
+    # real se corto asi: estandar goto 3h14m, bore fallo rapido (21s, parche
+    # de CachyOS no actualizado todavia para esta version exacta), y compat
+    # llevaba 2h44m cuando el job entero fue cancelado por exceder 6h.
+    #
+    # La solucion real es que cada variante corra en su PROPIO job, en
+    # paralelo, cada uno con su propio presupuesto de 6h — el tiempo total
+    # de espera pasa a ser lo que tarde la mas lenta (~3h-4h) en vez de la
+    # suma de las tres (~6h30m+). Este job "prepare" hace UNA sola vez el
+    # trabajo que antes se repetia (o mas bien, se compartia via el mismo
+    # directorio) al principio: bump de pkgver/pkgrel, commit de vuelta al
+    # repo, y generar el config base — y lo deja listo como artifact para
+    # que "build-standard"/"build-bore"/"build-compat" lo bajen cada uno por
+    # su lado, sin pisarse entre si (cada job corre en un runner y
+    # contenedor totalmente separado, sin filesystem compartido).
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      bore_result: ${{ steps.build_bore.outcome }}
     container:
       image: archlinux:base-devel
       options: --privileged
@@ -205,35 +226,6 @@ jobs:
           echo "PKGBUILD actualizado:"
           grep -E "^pkg(ver|rel)" "$PKGBUILD_FILE"
 
-      - name: Generar config base del kernel
-        run: |
-          if [[ ! -f "${{ env.PKGBUILD_DIR }}/gen-config.sh" ]]; then
-            echo "Error: gen-config.sh no encontrado en ${{ env.PKGBUILD_DIR }}"
-            exit 1
-          fi
-          if [[ ! -x "${{ env.PKGBUILD_DIR }}/gen-config.sh" ]]; then
-            echo "gen-config.sh existe pero no tiene permiso de ejecución — añadiendo..."
-            chmod +x "${{ env.PKGBUILD_DIR }}/gen-config.sh"
-          fi
-          chown -R builder:builder ${{ env.PKGBUILD_DIR }}
-          sudo -u builder bash ${{ env.PKGBUILD_DIR }}/gen-config.sh
-
-      - name: Compilar linux-avalos
-        run: |
-          chown -R builder:builder ${{ env.PKGBUILD_DIR }}
-          JOBS=$(nproc)
-          sudo -u builder env \
-            JOBS="$JOBS" \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            KCFLAGS="-march=${{ env.MARCH }} -mtune=generic" \
-            bash -c '
-              set -euo pipefail
-              cd '"${{ env.PKGBUILD_DIR }}"'
-              MAKEFLAGS="-j${JOBS}" \
-              makepkg -s --noconfirm --needed --skippgpcheck
-            '
-
       - name: Sincronizar pkgver con el repo
         # FIX: el PKGBUILD del repo quedaba desactualizado (siempre mostraba
         # la version con la que se creo el archivo la primera vez) porque el
@@ -256,8 +248,17 @@ jobs:
         #   3. Si aun asi $GITHUB_WORKSPACE no resulta ser un repo git valido,
         #      imprime diagnostico (pwd, ls) y sale limpio en vez de fallar.
         #   4. continue-on-error: true — este paso es "nice to have" (deja el
-        #      repo prolijo), NUNCA debe poder bloquear bore/compat/firma/
-        #      publicacion, que es lo que realmente importa entregar.
+        #      repo prolijo), NUNCA debe poder bloquear la generacion del
+        #      config ni los builds, que es lo que realmente importa entregar.
+        #
+        # FIX-JOBS (18-ago): movido aqui (antes corria despues de que
+        # compilara el kernel estandar, gateado por 'if: success()' sobre ESE
+        # build). Con la version en 3 jobs separados, atar este commit al
+        # resultado de un build especifico ya no encaja bien — se vuelve a
+        # commitear apenas se determina la version, de forma optimista. Si
+        # el build despues falla, el peor caso es que el proximo run
+        # incremente pkgrel una vez de mas de lo estrictamente necesario —
+        # inofensivo, pkgrel no necesita ser correlativo sin huecos.
         if: success()
         continue-on-error: true
         run: |
@@ -286,20 +287,138 @@ jobs:
             echo "PKGBUILD actualizado y commiteado (${{ needs.check-version.outputs.kernel_ver }})"
           fi
 
+      - name: Generar config base del kernel
+        run: |
+          if [[ ! -f "${{ env.PKGBUILD_DIR }}/gen-config.sh" ]]; then
+            echo "Error: gen-config.sh no encontrado en ${{ env.PKGBUILD_DIR }}"
+            exit 1
+          fi
+          if [[ ! -x "${{ env.PKGBUILD_DIR }}/gen-config.sh" ]]; then
+            echo "gen-config.sh existe pero no tiene permiso de ejecución — añadiendo..."
+            chmod +x "${{ env.PKGBUILD_DIR }}/gen-config.sh"
+          fi
+          chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+          sudo -u builder bash ${{ env.PKGBUILD_DIR }}/gen-config.sh
+
+      - name: Subir PKGBUILD preparado
+        # Se sube TODO el directorio (PKGBUILD ya con pkgver/pkgrel
+        # actualizados + config generado + linux-avalos.install + demas
+        # archivos de soporte) para que build-standard/build-bore/
+        # build-compat lo bajen cada uno en su propio job, sin necesitar
+        # checkout del repo completo ni volver a correr gen-config.sh
+        # (que ademas pega contra pacman/la red — hacerlo 3 veces seria
+        # mas lento y mas fragil que hacerlo una sola vez aca).
+        uses: actions/upload-artifact@v7
+        with:
+          name: prepared-pkgbuild
+          path: ${{ env.PKGBUILD_DIR }}
+          retention-days: 1
+
+  build-standard:
+    name: Compilar linux-avalos
+    needs: [check-version, prepare]
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Instalar dependencias de build
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel git curl wget \
+            bc bison flex python \
+            clang llvm lld \
+            pahole cpio perl tar xz zstd libelf \
+            github-cli
+
+      - name: Descargar PKGBUILD preparado
+        uses: actions/download-artifact@v7
+        with:
+          name: prepared-pkgbuild
+          path: ${{ env.PKGBUILD_DIR }}
+
+      - name: Crear usuario builder
+        run: |
+          useradd -m -G wheel builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
+      - name: Compilar linux-avalos
+        run: |
+          chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+          JOBS=$(nproc)
+          sudo -u builder env \
+            JOBS="$JOBS" \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            KCFLAGS="-march=${{ env.MARCH }} -mtune=generic" \
+            bash -c '
+              set -euo pipefail
+              cd '"${{ env.PKGBUILD_DIR }}"'
+              MAKEFLAGS="-j${JOBS}" \
+              makepkg -s --noconfirm --needed --skippgpcheck
+            '
+
+      - name: Subir paquetes compilados
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-standard
+          path: |
+            ${{ env.PKGBUILD_DIR }}/*.pkg.tar.zst
+            ${{ env.PKGBUILD_DIR }}/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build-bore:
+    name: Compilar linux-avalos-bore
+    needs: [check-version, prepare]
+    if: github.event.inputs.build_bore != 'false' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Instalar dependencias de build
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel git curl wget \
+            bc bison flex python \
+            clang llvm lld \
+            pahole cpio perl tar xz zstd libelf \
+            github-cli
+
+      - name: Descargar PKGBUILD preparado
+        uses: actions/download-artifact@v7
+        with:
+          name: prepared-pkgbuild
+          path: ${{ env.PKGBUILD_DIR }}
+
+      - name: Crear usuario builder
+        run: |
+          useradd -m -G wheel builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
       - name: Compilar linux-avalos-bore
-        id: build_bore
-        # FIX: sin esto, si el parche BORE no aplica limpio contra el
-        # point-release exacto del kernel (CachyOS actualiza su carpeta
-        # major.minor con cierto retraso tras cada release de kernel.org —
-        # no es instantáneo), este step fallaba y GitHub Actions saltaba
-        # TODOS los pasos siguientes por default: compat NUNCA se
-        # compilaba, y nada se publicaba en Releases — ni siquiera
-        # linux-avalos estándar, que sí había compilado bien.
-        # continue-on-error deja que el resto del pipeline siga cuando
-        # BORE específicamente falla, sin ocultar el problema (ver el
-        # step "Resumen" al final, que ahora sí lo reporta).
-        continue-on-error: true
-        if: github.event.inputs.build_bore != 'false' || github.event_name == 'schedule'
+        # FIX-JOBS (18-ago): antes tenia continue-on-error a nivel de step
+        # para no bloquear compat/firma/publicacion si el parche BORE no
+        # aplicaba limpio (CachyOS actualiza su carpeta major.minor con
+        # cierto retraso tras cada release de kernel.org). Ahora que BORE es
+        # su propio job, ese "no bloquear al resto" se logra distinto: el
+        # job "publish" solo exige que build-standard y build-compat hayan
+        # tenido exito (needs.build-*.result == 'success'), sin exigirlo de
+        # build-bore — asi que si este job entero falla, el resto del
+        # pipeline sigue igual. El resultado se sigue reportando en
+        # "Resumen" al final via needs.build-bore.result directamente.
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           MAJOR="${KERNEL_VER%%.*}"
@@ -308,22 +427,11 @@ jobs:
 
           # FIX (16-ago): 'makepkg -s' guarda src/ y pkg/ como subcarpetas del
           # propio directorio del PKGBUILD (no hay SRCDEST/PKGDEST custom
-          # aquí). Para cuando llegamos aquí, "linux-avalos" ya corrió su
-          # 'makepkg -s' completo, así que PKGBUILD_DIR/src/linux-${KERNEL_VER}
-          # tiene el kernel YA COMPILADO (miles de .o, vmlinux, ThinLTO, etc.)
-          # sin el parche BORE. Sin este 'rm -rf', el 'cp -r' de abajo
-          # duplicaba ese árbol entero dentro de BORE_DIR — ningún
-          # 'makepkg -s' de aquí abajo pasa --noextract, así que sí se
-          # re-extrae el tarball limpio encima, pero tar sobrescribe
-          # archivos, no borra los que sobran: los .o/.cmd viejos se quedan.
-          # El tracking de kbuild (basado en hash de comando, no solo mtime)
-          # probablemente salva la corrección del build, pero no salva el
-          # espacio en disco — con runners de ~14GB libres y un árbol de
-          # kernel con ThinLTO duplicado dos veces (bore + compat), es la
-          # misma clase de bug que ya mordió una vez con /tmp en WSL, solo
-          # que en otro lugar. Empezar cada variante desde una copia limpia
-          # (solo PKGBUILD, config, install, patches) es más barato y más
-          # confiable que arrastrar el build anterior.
+          # aquí). Con la version en jobs separados esto ya no puede pasar
+          # (cada job baja el artifact "prepared-pkgbuild" limpio, sin src/
+          # ni pkg/ — nunca corrio 'makepkg' en ese directorio todavia), pero
+          # se deja el 'rm -rf' igual como red de seguridad barata por si
+          # algun cambio futuro reintroduce el problema.
           rm -rf "${{ env.PKGBUILD_DIR }}/src" "${{ env.PKGBUILD_DIR }}/pkg"
 
           BORE_DIR="${{ env.PKGBUILD_DIR }}-bore"
@@ -379,16 +487,58 @@ jobs:
               makepkg -s --noconfirm --needed --skippgpcheck
             '
 
+      - name: Subir paquetes compilados (BORE)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-bore
+          path: |
+            ${{ env.PKGBUILD_DIR }}-bore/*.pkg.tar.zst
+            ${{ env.PKGBUILD_DIR }}-bore/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build-compat:
+    name: Compilar linux-avalos-compat (x86-64-v2)
+    needs: [check-version, prepare]
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Instalar dependencias de build
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel git curl wget \
+            bc bison flex python \
+            clang llvm lld \
+            pahole cpio perl tar xz zstd libelf \
+            github-cli
+
+      - name: Descargar PKGBUILD preparado
+        uses: actions/download-artifact@v7
+        with:
+          name: prepared-pkgbuild
+          path: ${{ env.PKGBUILD_DIR }}
+
+      - name: Crear usuario builder
+        run: |
+          useradd -m -G wheel builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
       - name: Compilar linux-avalos-compat (x86-64-v2)
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           JOBS=$(nproc)
 
-          # FIX (16-ago): mismo motivo que en el paso de BORE de arriba —
-          # src/ y pkg/ del build estándar (v3) quedarían duplicados dentro
-          # de COMPAT_DIR si no se limpian antes del 'cp -r', arrastrando un
-          # árbol ya compilado con las flags equivocadas (-march=x86-64-v3
-          # en vez de v2) y arriesgando espacio en disco del runner.
+          # FIX (16-ago): mismo motivo que en build-bore — con jobs separados
+          # esto ya no puede pasar en la practica, se deja como red de
+          # seguridad barata.
           rm -rf "${{ env.PKGBUILD_DIR }}/src" "${{ env.PKGBUILD_DIR }}/pkg"
 
           COMPAT_DIR="${{ env.PKGBUILD_DIR }}-compat"
@@ -427,23 +577,60 @@ jobs:
               makepkg -s --noconfirm --needed --skippgpcheck
             '
 
+      - name: Subir paquetes compilados (compat)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-compat
+          path: |
+            ${{ env.PKGBUILD_DIR }}-compat/*.pkg.tar.zst
+            ${{ env.PKGBUILD_DIR }}-compat/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  publish:
+    name: Publicar
+    # FIX-JOBS (18-ago): exige exito de build-standard Y build-compat (igual
+    # que antes, cuando "Compilar linux-avalos-compat" tampoco tenia
+    # continue-on-error y un fallo ahi bloqueaba todo lo que seguia). BORE
+    # queda afuera de esta condicion a proposito — su fallo nunca debe
+    # bloquear la publicacion, igual que con el continue-on-error de antes.
+    # 'always()' es necesario en el if para que este job pueda evaluarse
+    # incluso si build-bore fallo (sin el, un job upstream fallido hace que
+    # GitHub salte automaticamente los jobs dependientes).
+    needs: [check-version, build-standard, build-bore, build-compat]
+    if: always() && needs.build-standard.result == 'success' && needs.build-compat.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Instalar dependencias de build
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel github-cli
+
+      - name: Descargar paquetes compilados
+        # 'pattern' baja las 3 artifacts que matcheen "packages-*" de una
+        # sola vez, cada una a su propia subcarpeta bajo el path indicado.
+        # Si build-bore no llego a subir nada (fallo antes de esa etapa, o
+        # 'if-no-files-found: ignore' no genero artifact), simplemente no
+        # aparece aca — no hace falta manejarlo como caso especial.
+        uses: actions/download-artifact@v7
+        with:
+          pattern: packages-*
+          path: /tmp/downloaded-packages
+
       - name: Generar base de datos del repo de pacman
         run: |
           mkdir -p /tmp/avalos-repo
 
-          find ${{ env.PKGBUILD_DIR }} \
-               -name "*.pkg.tar.zst" 2>/dev/null \
-               -exec cp {} /tmp/avalos-repo/ \;
-
-          BORE_DIR="${{ env.PKGBUILD_DIR }}-bore"
-          find "$BORE_DIR" \
-               -name "*.pkg.tar.zst" 2>/dev/null \
-               -exec cp {} /tmp/avalos-repo/ \; || true
-
-          COMPAT_DIR="${{ env.PKGBUILD_DIR }}-compat"
-          find "$COMPAT_DIR" \
-               -name "*.pkg.tar.zst" 2>/dev/null \
-               -exec cp {} /tmp/avalos-repo/ \; || true
+          find /tmp/downloaded-packages -name "*.pkg.tar.zst" -exec cp {} /tmp/avalos-repo/ \;
 
           cd /tmp/avalos-repo
 
@@ -573,39 +760,44 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: build-logs-${{ needs.check-version.outputs.kernel_ver }}
-          path: |
-            ${{ env.PKGBUILD_DIR }}/*.log
-            ${{ env.PKGBUILD_DIR }}-bore/*.log
-            ${{ env.PKGBUILD_DIR }}-compat/*.log
+          path: /tmp/downloaded-packages/**/*.log
           retention-days: 7
           if-no-files-found: ignore
 
   notify:
     name: Resumen
-    needs: [check-version, build-kernel]
+    needs: [check-version, build-standard, build-bore, build-compat, publish]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Resumen del build
         run: |
           KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
-          BUILD_RESULT="${{ needs.build-kernel.result }}"
-          BORE_RESULT="${{ needs.build-kernel.outputs.bore_result }}"
+          # FIX-JOBS (18-ago): antes BORE_RESULT venia de un output custom
+          # (needs.build-kernel.outputs.bore_result) leido desde un step
+          # dentro del job monolitico. Con BORE como job propio, su
+          # resultado ya esta disponible directo via needs.build-bore.result
+          # — no hace falta declarar ningun output a mano.
+          BUILD_RESULT="${{ needs.build-standard.result }}"
+          BORE_RESULT="${{ needs.build-bore.result }}"
+          COMPAT_RESULT="${{ needs.build-compat.result }}"
+          PUBLISH_RESULT="${{ needs.publish.result }}"
           echo "## AvalOS Kernel Build" >> "$GITHUB_STEP_SUMMARY"
           echo "| Campo | Valor |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Version | \`${KERNEL_VER}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Resultado | ${BUILD_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
-          # FIX: con continue-on-error en el step de BORE, un fallo ahí ya
-          # no bloquea el resto del pipeline — pero eso no debe significar
-          # que el fallo quede invisible. Esta fila lo muestra siempre.
+          echo "| linux-avalos (estándar) | ${BUILD_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| linux-avalos-compat | ${COMPAT_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
+          # FIX: con BORE como job separado (sin bloquear al resto), un
+          # fallo ahí no debe quedar invisible. Esta fila lo muestra siempre.
           if [[ "$BORE_RESULT" == "failure" ]]; then
             echo "| BORE | ⚠️ falló este ciclo (parche upstream de CachyOS aún no actualizado para esta versión exacta — normal, no es bug de AvalOS) |" >> "$GITHUB_STEP_SUMMARY"
           elif [[ -n "$BORE_RESULT" ]]; then
             echo "| BORE | ${BORE_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "| Publicación | ${PUBLISH_RESULT} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Arquitectura | x86-64-v3 (AMD+Intel) |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Compilador | Clang/LLVM + ThinLTO |" >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$BUILD_RESULT" == "success" ]]; then
+          if [[ "$PUBLISH_RESULT" == "success" ]]; then
             echo "Publicado en: https://github.com/${{ env.AVALOS_REPO }}/releases/tag/${{ env.REPO_TAG }}" >> "$GITHUB_STEP_SUMMARY"
           fi
