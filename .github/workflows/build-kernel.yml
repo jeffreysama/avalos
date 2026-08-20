@@ -689,8 +689,18 @@ jobs:
           gpgconf --kill gpg-agent
           sleep 1
 
-          echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --no-armor -o /dev/null /dev/null
-          if [[ $? -ne 0 ]]; then
+          # FIX-GPG-CHECK (19-ago): este step corre bajo el 'bash -e' que GH
+          # Actions aplica por defecto a los steps 'run:'. Con passphrase
+          # incorrecta, gpg (el ultimo comando de la tuberia) devuelve
+          # codigo de error y 'set -e' abortaba el script AHI MISMO, antes
+          # de llegar siquiera a leer "$?" en la linea de abajo — el mensaje
+          # de error a medida nunca se imprimia, solo quedaba el generico
+          # "Process completed with exit code 1" de GitHub, sin decir que el
+          # secret GPG_PASSPHRASE era el problema. Envolver el pipe
+          # directamente en "if ! ...; then" lo pone como condicion de un
+          # if, que es una de las excepciones donde 'set -e' NO aborta —
+          # asi el chequeo y el mensaje si llegan a ejecutarse.
+          if ! echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --no-armor -o /dev/null /dev/null; then
             echo "Error: la passphrase no desbloqueo la llave secreta, revisa el secret GPG_PASSPHRASE"
             exit 1
           fi
@@ -739,12 +749,21 @@ jobs:
         if: env.upload_ok == 'true'
         run: |
           echo "Limpiando paquetes de versiones anteriores..."
-          CURRENT_FILES=$(ls /tmp/avalos-repo/*.pkg.tar.zst 2>/dev/null | xargs -I{} basename {} || true)
+          # FIX-SIG-CLEANUP (19-ago): antes CURRENT_FILES solo listaba
+          # *.pkg.tar.zst (sin sus .sig), y el grep de abajo tampoco
+          # contemplaba '.sig' — asi que un .sig de un build viejo nunca
+          # encajaba en ninguna de las dos listas y quedaba huerfano para
+          # siempre, aunque su .pkg.tar.zst real ya se hubiera borrado. Se
+          # amplia el glob local a *.pkg.tar.zst* (agarra tambien los .sig
+          # de HOY) y el grep remoto a que el '.sig' final sea opcional, asi
+          # los .sig viejos huerfanos entran al mismo ciclo de limpieza que
+          # sus .pkg.tar.zst.
+          CURRENT_FILES=$(ls /tmp/avalos-repo/*.pkg.tar.zst* 2>/dev/null | xargs -I{} basename {} || true)
           gh release view "${{ env.REPO_TAG }}" \
             --repo "${{ env.AVALOS_REPO }}" \
             --json assets \
             --jq '.assets[].name' 2>/dev/null \
-            | grep '\.pkg\.tar\.zst$' \
+            | grep -E '\.pkg\.tar\.zst(\.sig)?$' \
             | while IFS= read -r asset; do
               if ! echo "$CURRENT_FILES" | grep -qxF "$asset"; then
                 echo "  Eliminando obsoleto: $asset"
