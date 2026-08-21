@@ -1,0 +1,10 @@
+[SddmGreeterTheme]
+Name=AvalOS
+Description=AvalOS SDDM Theme — Tokyo Night
+Author=AvalOS Team
+License=GPL-3.0
+Type=sddm-theme
+Version=1.0
+Website=https://github.com/jeffreysama/avalos
+Screenshot=
+MainScript=Main.qml
