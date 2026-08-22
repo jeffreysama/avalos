@@ -1021,6 +1021,18 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     <!-- LEFT: discos -->
     <div class="cfg-left">
       <div class="cfg-section-title" data-i18n="sec-disk">▸ Disco de destino</div>
+      <div id="auto-partition-warning" style="
+        font-family:var(--font-mono); font-size:10px; padding:8px 12px;
+        background:rgba(247,118,142,.08); border-bottom:1px solid rgba(247,118,142,.25);
+        color:var(--tn-red); line-height:1.5; flex-shrink:0;
+        display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <span data-i18n="warn-auto-partition">⚠ El particionado automático borra <strong>todo</strong> el disco elegido sin posibilidad de deshacer. Si preferís controlarlo vos mismo, usá el modo manual.</span>
+        <button id="btn-manual-mode" onclick="abrirModoManual()" data-i18n="btn-manual-mode"
+          style="flex-shrink:0;padding:6px 12px;font-size:10px;background:#24283b;color:#c0caf5;
+                 border:1px solid var(--tn-red);border-radius:6px;cursor:pointer;white-space:nowrap;">
+          Modo manual
+        </button>
+      </div>
       <div id="live-disk-banner" data-i18n="disk-current-unavailable" style="
         font-family:var(--font-mono); font-size:10px; padding:8px 12px;
         background:rgba(224,175,104,.07); border-bottom:1px solid rgba(224,175,104,.2);
@@ -1611,6 +1623,43 @@ function selectDisk(name) {
   });
 }
 
+// ── Modo manual (particionado a mano en terminal real) ─────────────
+// El terminal NO corre dentro del webview (webkit2gtk no tiene uno
+// embebido) — Python lanza un emulador real del sistema y bloquea hasta
+// que el usuario lo cierra. Por eso este botón se deshabilita mientras
+// tanto: evita doble-click y dos terminales superpuestas.
+async function abrirModoManual() {
+  if (!_selDisco) {
+    showFormError(t('val-select-disk'));
+    return;
+  }
+  const btn = document.getElementById('btn-manual-mode');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = t('btn-manual-mode-open');
+  try {
+    const abierto = await window.pywebview.api.abrir_terminal_particionado();
+    if (!abierto) {
+      showFormError(t('err-no-terminal-found'));
+      return;
+    }
+    const resultado = await window.pywebview.api.verificar_particionado_manual(_selDisco);
+    if (resultado && resultado.ok) {
+      window._modoManualListo = true;
+      showFormError(t('ok-manual-partition-detected'));
+    } else {
+      window._modoManualListo = false;
+      showFormError(t('warn-manual-no-partitions'));
+    }
+  } catch (e) {
+    console.error('abrirModoManual:', e);
+    if (window.__showJsError) window.__showJsError('abrirModoManual: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 // ── Form helpers ─────────────────────────────────────────────────
 function sanitizeUser(el) {
   el.value = el.value.toLowerCase()
@@ -2015,6 +2064,52 @@ class InstaladorAPI :
     def abortar_instalacion (self ):
         self ._v ._abortado =True
         return True
+
+    def abrir_terminal_particionado (self ):
+        """Modo manual: lanza una terminal real del live ISO (no dentro
+        del webview — webkit2gtk no tiene terminal embebido) para que el
+        usuario corra cfdisk/parted/mkfs a mano. Se prueban varios
+        emuladores comunes en orden porque este archivo no puede confirmar
+        cuál viene empaquetado en el airootfs del ISO (eso se decide en
+        build-iso.yml, fuera de este módulo) — así el botón no depende de
+        adivinar uno solo y fallar en silencio si no está.
+        Bloquea (subprocess.run, no Popen) hasta que el usuario cierre la
+        terminal, para que el JS sepa cuándo volver a habilitar el wizard."""
+        _candidatos =[
+        ["foot"],
+        ["kitty"],
+        ["alacritty"],
+        ["xterm"],
+        ["konsole"],
+        ["gnome-terminal"],
+        ]
+        for _cmd in _candidatos :
+            if shutil .which (_cmd [0 ]):
+                try :
+                    subprocess .run (_cmd ,check =False )
+                    return True
+                except Exception as e :
+                    self ._v ._log (self ._v ._t ("log-terminal-launch-warn",term =_cmd [0 ],e =e ),"warn")
+                    continue
+        self ._v ._log (self ._v ._t ("err-no-terminal-found"),"err")
+        return False
+
+    def verificar_particionado_manual (self ,disco :str ):
+        """Modo manual: tras volver de la terminal, re-lee el disco con
+        lsblk (vía listar_discos(), la misma fuente de verdad que usa la
+        pantalla de selección) y confirma que el usuario dejó al menos una
+        partición creada. No valida esquema GPT/EFI+root específico a
+        propósito — en modo manual el usuario asume esa responsabilidad;
+        el instalador solo confirma que hay algo particionado antes de
+        dejar avanzar el wizard, para no arrancar iniciar_instalacion()
+        sobre un disco todavía en blanco por error."""
+        for _d in listar_discos ():
+            if _d ["name"]==disco :
+                return {
+                "ok":len (_d ["particiones"])>0 ,
+                "particiones":_d ["particiones"],
+                }
+        return {"ok":False ,"particiones":[]}
 
     def reintentar (self ):
 
@@ -2907,7 +3002,50 @@ WantedBy=multi-user.target
                 return
             self ._log (self ._t ("log-disk-not-mounted",dev =dev ),"ok")
 
-            rc_wipe ,_ =self ._run_cmd (["wipefs","-a",dev ])
+            # FIX (particionado): 'wipefs' puede fallar con
+            # "probing initialization failed: Device or resource busy"
+            # aunque el disco no esté montado (confirmado en /proc/mounts
+            # arriba). Es una condición de carrera conocida y documentada
+            # en udisks2/udev: el kernel abre brevemente el device node
+            # para (re)enumerar metadata justo después de que un disco
+            # nuevo aparece o cambia, y wipefs no puede abrirlo con O_EXCL
+            # mientras tanto. Es transitorio — 'udevadm settle' + reintentos
+            # con backoff es la mitigación estándar (mismo patrón que usa
+            # ceph-volume en producción, ver comentario "workaround probable
+            # race condition" en su código). No hay garantía de timing
+            # exacta (systemd-udev-settle.service(8) es explícito: "There
+            # can be no guarantee that hardware is fully discovered at any
+            # specific time"), por eso reintentamos en vez de esperar una
+            # sola vez.
+            try :
+                subprocess .run (["udevadm","settle","--timeout=5"],check =False )
+            except Exception :
+                pass
+
+            rc_wipe =1
+            _wipe_out =""
+            for _intento in range (1 ,4 ):
+                _wipe_cmd =["wipefs","-a",dev ]
+                if _intento ==3 :
+                    # Último intento: --force evita el chequeo O_EXCL de
+                    # wipefs (confirmado en 'wipefs --help' del propio
+                    # binario). Solo se usa acá, no antes — los intentos
+                    # 1-2 son "limpios" (settle + retry) para no enmascarar
+                    # un problema real si /proc/mounts tuviera un falso
+                    # negativo por alguna razón.
+                    _wipe_cmd =["wipefs","-a","-f",dev ]
+                rc_wipe ,_wipe_out =self ._run_cmd (_wipe_cmd )
+                if rc_wipe ==0 :
+                    break
+                if _intento <3 :
+                    self ._log (
+                    self ._t ("log-wipefs-retry",intento =_intento ,dev =dev ),
+                    "warn")
+                    try :
+                        subprocess .run (["udevadm","settle","--timeout=5"],check =False )
+                    except Exception :
+                        pass
+                    time .sleep (2 *_intento )
             if rc_wipe !=0 :
                 self ._step ("part","error")
                 self ._jsc ("pyErrorPaso",
