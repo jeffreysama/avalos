@@ -881,6 +881,37 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 }
 #btn-close-done:hover { color: var(--tn-text); border-color: var(--tn-white); }
 </style>
+<script>
+(function () {
+  var overlay = null;
+  var shown = {};
+  function showJsError(msg) {
+    if (shown[msg]) return;
+    shown[msg] = true;
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'js-error-overlay';
+      overlay.style.cssText =
+        'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
+        'background:#3a0d0d;color:#ff9494;font:11px/1.5 monospace;' +
+        'padding:8px 12px;max-height:38vh;overflow:auto;white-space:pre-wrap;' +
+        'border-bottom:2px solid #ff5555;';
+      (document.body || document.documentElement).appendChild(overlay);
+    }
+    var line = document.createElement('div');
+    line.textContent = msg;
+    overlay.appendChild(line);
+  }
+  window.__showJsError = showJsError;
+  window.addEventListener('error', function (e) {
+    showJsError('JS ERROR: ' + e.message + '  @' + (e.filename || '?') + ':' + e.lineno + ':' + e.colno);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    showJsError('PROMISE REJECTION: ' + (r && r.message ? r.message : String(r)));
+  });
+})();
+</script>
 </head>
 <body>
 
@@ -1267,6 +1298,36 @@ const STRINGS = STRINGS_PLACEHOLDER;
 
 let _lang = 'en';
 
+// MOVIDO: PASOS vivía como `const` mucho más abajo (sección INSTALL PAGE).
+// applyLang() lo lee vía "typeof PASOS" y se llama desde chooseLang() —
+// osea, en CADA click/tecla de idioma. Cualquier excepción sin capturar
+// entre el inicio del script y la línea vieja de PASOS (ej. alguna de las
+// IIFEs initTZ/initLocale/initKeymap tirando por lo que sea en el entorno
+// real) dejaba PASOS atascado en su temporal dead zone para siempre. A
+// partir de ahí, TODO click o tecla repetía el mismo ReferenceError
+// "Cannot access 'PASOS' before initialization" a medio camino de
+// chooseLang() — antes de llegar a showPage() — y visualmente parecía que
+// el click "no hacía nada". Declarándolo aquí arriba, antes de cualquier
+// IIFE que pueda fallar, se lo saca por completo de esa cadena de fallos.
+const PASOS = [
+  { id:'uefi',     label:'Detectando modo de arranque',        detail:'UEFI / BIOS Legacy' },
+  { id:'net',      label:'Verificando conexión a internet',    detail:'Requerida para pacstrap' },
+  { id:'tools',    label:'Verificando herramientas',           detail:'parted, mkfs, pacstrap…' },
+  { id:'part',     label:'Particionando disco destino',        detail:'' },
+  { id:'format',   label:'Formateando particiones',            detail:'FAT32 (EFI) + Btrfs (root)' },
+  { id:'mount',    label:'Montando sistema de archivos',       detail:'' },
+  { id:'mirrors',  label:'Optimizando mirrors con reflector',  detail:'Seleccionando mirrors más rápidos' },
+  { id:'pacstrap', label:'Instalando sistema base',            detail:'pacstrap — puede tardar varios minutos' },
+  { id:'fstab',    label:'Generando fstab',                    detail:'' },
+  { id:'config',   label:'Configurando sistema',               detail:'locale · hostname · timezone · initramfs' },
+  { id:'grub',     label:'Instalando bootloader',               detail:'' },
+  { id:'services', label:'Habilitando servicios',              detail:'NetworkManager · bluetooth · SDDM' },
+  { id:'user',     label:'Creando usuario del sistema',        detail:'' },
+  { id:'aur',      label:'Instalando paquetes AUR (yay)',      detail:'Proton-GE · Heroic (solo si Gaming activo)' },
+  { id:'hypr', label:'Configurando Hyprland + Wayland',    detail:'SDDM · Waybar · hyprland.lua' },
+  { id:'umount',   label:'Desmontando y finalizando',          detail:'' },
+];
+
 function t(key, params) {
   // BUG-FIX: no usar || para encadenar fallbacks — en JS, "" es falsy, así que
   // (dict[key] || fallback) devolvería 'key' en lugar de "" para las claves
@@ -1340,25 +1401,14 @@ function chooseLang(code) {
   showPage('welcome');
 }
 
-// REFUERZO: además del onclick inline en cada <button>, delegamos el click
-// en el contenedor de la página. Si algún día el onclick inline no dispara
-// por lo que sea (ej. un problema de hit-testing del compositor sobre la
-// capa del botón), el delegado en el padre —que cubre un área más simple—
-// sigue funcionando. chooseLang() es idempotente, así que no hay problema
-// si ambos llegan a disparar para el mismo click.
-document.getElementById('pg-lang').addEventListener('click', function (e) {
-  const btn = e.target.closest('button[data-lang]');
-  if (btn) chooseLang(btn.dataset.lang);
-});
-
-// REFUERZO: selección por teclado, totalmente independiente del click del
-// mouse (otro pipeline de eventos en GTK/WebKit — no depende del hit-test
-// del compositor). 1-4 elige directo; ↑/↓ mueve el foco entre botones y
-// Enter/Espacio confirma el que tiene foco (comportamiento nativo del
-// <button>, ya cubierto, pero explicitado aquí para no depender de eso).
+// REFUERZO: el keydown se registra ANTES que el delegado de click, a
+// propósito — document.addEventListener('keydown', ...) nunca puede fallar
+// (document siempre existe), a diferencia de getElementById('pg-lang') de
+// abajo. Poniéndolo primero, el atajo de teclado queda registrado pase lo
+// que pase con la línea siguiente.
 document.addEventListener('keydown', function (e) {
   const pgLang = document.getElementById('pg-lang');
-  if (!pgLang.classList.contains('active')) return;
+  if (!pgLang || !pgLang.classList.contains('active')) return;
 
   const langBtns = Array.from(pgLang.querySelectorAll('button[data-lang]'));
   const byKeyNumber = { '1': 'en', '2': 'es', '3': 'zh', '4': 'ja' };
@@ -1379,6 +1429,20 @@ document.addEventListener('keydown', function (e) {
   }
 });
 
+// REFUERZO: delegado de click sobre el contenedor de idioma. Envuelto en
+// try/catch — si getElementById('pg-lang') fallara por lo que sea, no debe
+// tumbar el resto del script (el keydown de arriba y todo lo que sigue
+// abajo, como las IIFEs de timezone/locale/keymap, deben seguir corriendo).
+try {
+  document.getElementById('pg-lang').addEventListener('click', function (e) {
+    const btn = e.target.closest('button[data-lang]');
+    if (btn) chooseLang(btn.dataset.lang);
+  });
+} catch (err) {
+  console.error('lang click delegate:', err);
+  if (window.__showJsError) window.__showJsError('lang click delegate: ' + err.message);
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  NAVIGATION
 // ══════════════════════════════════════════════════════════════════
@@ -1397,37 +1461,52 @@ let _bootloader = 'grub';  // 'grub' | 'sd-boot' | 'refind' | 'none'
 let _modoUsb  = false;
 
 // populate timezone select
-(function initTZ() {
-  const sel = document.getElementById('f-tz');
-  window._tzList.forEach(tz => {
-    const opt = document.createElement('option');
-    opt.value = tz; opt.textContent = tz;
-    if (tz === window._defaultTZ) opt.selected = true;
-    sel.appendChild(opt);
-  });
-})();
+try {
+  (function initTZ() {
+    const sel = document.getElementById('f-tz');
+    window._tzList.forEach(tz => {
+      const opt = document.createElement('option');
+      opt.value = tz; opt.textContent = tz;
+      if (tz === window._defaultTZ) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  })();
+} catch (err) {
+  console.error('initTZ:', err);
+  if (window.__showJsError) window.__showJsError('initTZ: ' + err.message);
+}
 
 // populate locale select
-(function initLocale() {
-  const sel = document.getElementById('f-locale');
-  window._localeList.forEach(([code, label]) => {
-    const opt = document.createElement('option');
-    opt.value = code; opt.textContent = label;
-    if (code === window._defaultLocale) opt.selected = true;
-    sel.appendChild(opt);
-  });
-})();
+try {
+  (function initLocale() {
+    const sel = document.getElementById('f-locale');
+    window._localeList.forEach(([code, label]) => {
+      const opt = document.createElement('option');
+      opt.value = code; opt.textContent = label;
+      if (code === window._defaultLocale) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  })();
+} catch (err) {
+  console.error('initLocale:', err);
+  if (window.__showJsError) window.__showJsError('initLocale: ' + err.message);
+}
 
 // populate keymap select
-(function initKeymap() {
-  const sel = document.getElementById('f-keymap');
-  window._keymapList.forEach(([code, label]) => {
-    const opt = document.createElement('option');
-    opt.value = code; opt.textContent = label;
-    if (code === window._defaultKeymap) opt.selected = true;
-    sel.appendChild(opt);
-  });
-})();
+try {
+  (function initKeymap() {
+    const sel = document.getElementById('f-keymap');
+    window._keymapList.forEach(([code, label]) => {
+      const opt = document.createElement('option');
+      opt.value = code; opt.textContent = label;
+      if (code === window._defaultKeymap) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  })();
+} catch (err) {
+  console.error('initKeymap:', err);
+  if (window.__showJsError) window.__showJsError('initKeymap: ' + err.message);
+}
 
 // ── Disk selection ────────────────────────────────────────────────
 function pyRenderDiscos(discosJson) {
@@ -1692,25 +1771,6 @@ function validarEIniciar() {
 // ══════════════════════════════════════════════════════════════════
 //  INSTALL PAGE
 // ══════════════════════════════════════════════════════════════════
-const PASOS = [
-  { id:'uefi',     label:'Detectando modo de arranque',        detail:'UEFI / BIOS Legacy' },
-  { id:'net',      label:'Verificando conexión a internet',    detail:'Requerida para pacstrap' },
-  { id:'tools',    label:'Verificando herramientas',           detail:'parted, mkfs, pacstrap…' },
-  { id:'part',     label:'Particionando disco destino',        detail:'' },
-  { id:'format',   label:'Formateando particiones',            detail:'FAT32 (EFI) + Btrfs (root)' },
-  { id:'mount',    label:'Montando sistema de archivos',       detail:'' },
-  { id:'mirrors',  label:'Optimizando mirrors con reflector',  detail:'Seleccionando mirrors más rápidos' },
-  { id:'pacstrap', label:'Instalando sistema base',            detail:'pacstrap — puede tardar varios minutos' },
-  { id:'fstab',    label:'Generando fstab',                    detail:'' },
-  { id:'config',   label:'Configurando sistema',               detail:'locale · hostname · timezone · initramfs' },
-  { id:'grub',     label:'Instalando bootloader',               detail:'' },
-  { id:'services', label:'Habilitando servicios',              detail:'NetworkManager · bluetooth · SDDM' },
-  { id:'user',     label:'Creando usuario del sistema',        detail:'' },
-  { id:'aur',      label:'Instalando paquetes AUR (yay)',      detail:'Proton-GE · Heroic (solo si Gaming activo)' },
-  { id:'hypr', label:'Configurando Hyprland + Wayland',    detail:'SDDM · Waybar · hyprland.lua' },
-  { id:'umount',   label:'Desmontando y finalizando',          detail:'' },
-];
-
 let logLines = 0, startTime = null, timerIv = null, abortado = false;
 
 function initSteps() {
@@ -3785,7 +3845,7 @@ if __name__ =="__main__":
     win .events .loaded +=_on_loaded
 
     try :
-        webview .start (debug =False )
+        webview .start (debug =True )
     except Exception as e :
         print (f"ERROR al iniciar pywebview: {e }")
         print ("Asegúrate de que webkit2gtk-4.1 esté instalado:")
