@@ -483,6 +483,10 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
   width:16px; height:16px; line-height:14px; text-align:center; }
 .page { display: none; height: 100vh; width: 100vw; flex-direction: column; }
 .page.active { display: flex; }
+/* NOTA: no vuelvas a poner style="display:..." inline en ninguna .page —
+   un display inline gana a .page/.page.active por especificidad de cascada
+   y la página queda "pegada" visible aunque se le quite la clase active. */
+#pg-lang { align-items: center; justify-content: center; height: 100%; gap: 0; }
 
 /* ── SCROLLBAR ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; }
@@ -918,8 +922,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 <!-- ═══════════════════════════════════════════════════════════════════
      PAGE 0 — LANGUAGE SELECTION
 ═══════════════════════════════════════════════════════════════════ -->
-<div id="pg-lang" class="page active" style="display:flex;flex-direction:column;
-     align-items:center;justify-content:center;height:100%;gap:0;">
+<div id="pg-lang" class="page active">
   <div style="font-size:32px;font-weight:700;color:#c0caf5;letter-spacing:0.04em;
               margin-bottom:6px;">AvalOS</div>
   <div style="font-size:12px;color:#565f89;letter-spacing:0.14em;margin-bottom:40px;">
@@ -1418,6 +1421,15 @@ document.addEventListener('keydown', function (e) {
     return;
   }
 
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+    const focused = document.activeElement;
+    if (langBtns.includes(focused)) {
+      e.preventDefault();
+      chooseLang(focused.dataset.lang);
+    }
+    return;
+  }
+
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
     const focusedIdx = langBtns.indexOf(document.activeElement);
@@ -1446,9 +1458,18 @@ try {
 // ══════════════════════════════════════════════════════════════════
 //  NAVIGATION
 // ══════════════════════════════════════════════════════════════════
+// showPage() controla visibilidad SOLO vía la clase 'active' (ver CSS
+// .page/.page.active). No asignes el.style.display aquí ni en el HTML de
+// ninguna .page — un inline style gana a la cascada y la página queda
+// visualmente encima aunque pierda 'active'.
 function showPage(name) {
   ['lang','welcome','config','install'].forEach(p => {
     const el = document.getElementById('pg-' + p);
+    if (!el) {
+      console.error('showPage: no existe #pg-' + p);
+      if (window.__showJsError) window.__showJsError('showPage: falta #pg-' + p);
+      return;
+    }
     el.classList.toggle('active', p === name);
   });
 }
