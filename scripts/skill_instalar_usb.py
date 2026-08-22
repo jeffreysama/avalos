@@ -3658,9 +3658,23 @@ def _build_html ()->str :
 
     contenido =_HTML .replace ("LOGO_PLACEHOLDER",_LOGO_B64 )
     contenido =contenido .replace ("STRINGS_PLACEHOLDER",strings_json )
+    # FIX: el punto de inyección anterior era justo antes del listener
+    # 'pywebviewready' (casi al final del <script>). Pero initTZ()/initLocale()/
+    # initKeymap() son IIFEs que se auto-ejecutan MUCHO antes en el mismo
+    # script (apenas se declaran, no esperan a pywebviewready), y esas IIFEs
+    # son las que leen window._tzList/_localeList/_keymapList. Con el punto
+    # de inyección viejo, esas variables todavía no existían cuando las IIFEs
+    # corrían -> "Cannot read properties of undefined (reading 'forEach')" ->
+    # esa excepción sin capturar abortaba TODO el resto del script, incluyendo
+    # "const PASOS = [...]" más abajo -> los botones de idioma llamaban a
+    # chooseLang()/applyLang(), que a su vez tocaban PASOS todavía no
+    # inicializado -> "Cannot access 'PASOS' before initialization" -> el
+    # click no hacía nada, en los 3 idiomas por igual (confirmado simulando
+    # el DOM completo). Fix: inyectar las variables inmediatamente después de
+    # 'use strict';, ANTES de cualquier IIFE que las consuma.
     return contenido .replace (
-    "window.addEventListener('pywebviewready'",
-    inject +"window.addEventListener('pywebviewready'"
+    "'use strict';",
+    "'use strict';\n"+inject
     )
 
 if __name__ =="__main__":
