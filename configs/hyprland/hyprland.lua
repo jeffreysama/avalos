@@ -141,9 +141,13 @@ hl.bind(mod .. " + Return", hl.dsp.exec_cmd("kitty"))
 hl.bind(mod .. " + Space",  hl.dsp.exec_cmd("rofi -show drun"))
 hl.bind(mod .. " + E",        hl.dsp.exec_cmd("thunar"))
 hl.bind(mod .. " + B",        hl.dsp.exec_cmd("firefox"))
-hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("firefox"))
+hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("microsoft-edge-stable"))
 hl.bind(mod .. " + V",
-    hl.dsp.exec_cmd("cliphist list | rofi -dmenu | cliphist decode | wl-copy"))
+        hl.dsp.exec_cmd("cliphist list | rofi -dmenu | cliphist decode | wl-copy"))
+
+-- Gaming
+hl.bind(mod .. " + S",        hl.dsp.exec_cmd("steam"))
+hl.bind(mod .. " + P",        hl.dsp.exec_cmd("flatpak run com.heroicgameslauncher.hgl"))
 
 -- Ventanas
 hl.bind(mod .. " + Q", hl.dsp.window.close())
