@@ -478,6 +478,9 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 }
 
 /* ── PAGES ──────────────────────────────────────────────────────────────── */
+.lang-key-hint { position:absolute; right:12px; top:50%; transform:translateY(-50%);
+  font-size:10px; color:#565f89; border:1px solid #414868; border-radius:4px;
+  width:16px; height:16px; line-height:14px; text-align:center; }
 .page { display: none; height: 100vh; width: 100vw; flex-direction: column; }
 .page.active { display: flex; }
 
@@ -892,30 +895,45 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     INSTALLER · INSTALADOR · 安装程序
   </div>
   <div style="display:flex;flex-direction:column;gap:12px;width:260px;">
-    <button onclick="chooseLang('en')"
+    <button data-lang="en" onclick="chooseLang('en')"
       style="padding:14px 0;font-size:15px;background:#24283b;color:#c0caf5;
              border:1.5px solid #414868;border-radius:8px;cursor:pointer;
-             transition:border-color .15s,background .15s;"
+             transition:border-color .15s,background .15s;position:relative;"
       onmouseover="this.style.borderColor='#7aa2f7';this.style.background='#1e2035'"
       onmouseout="this.style.borderColor='#414868';this.style.background='#24283b'">
       🇺🇸&nbsp; English
+      <span class="lang-key-hint">1</span>
     </button>
-    <button onclick="chooseLang('es')"
+    <button data-lang="es" onclick="chooseLang('es')"
       style="padding:14px 0;font-size:15px;background:#24283b;color:#c0caf5;
              border:1.5px solid #414868;border-radius:8px;cursor:pointer;
-             transition:border-color .15s,background .15s;"
+             transition:border-color .15s,background .15s;position:relative;"
       onmouseover="this.style.borderColor='#7aa2f7';this.style.background='#1e2035'"
       onmouseout="this.style.borderColor='#414868';this.style.background='#24283b'">
       🇪🇸&nbsp; Español
+      <span class="lang-key-hint">2</span>
     </button>
-    <button onclick="chooseLang('zh')"
+    <button data-lang="zh" onclick="chooseLang('zh')"
       style="padding:14px 0;font-size:15px;background:#24283b;color:#c0caf5;
              border:1.5px solid #414868;border-radius:8px;cursor:pointer;
-             transition:border-color .15s,background .15s;"
+             transition:border-color .15s,background .15s;position:relative;"
       onmouseover="this.style.borderColor='#7aa2f7';this.style.background='#1e2035'"
       onmouseout="this.style.borderColor='#414868';this.style.background='#24283b'">
       🇨🇳&nbsp; 中文简体
+      <span class="lang-key-hint">3</span>
     </button>
+    <button data-lang="ja" onclick="chooseLang('ja')"
+      style="padding:14px 0;font-size:15px;background:#24283b;color:#c0caf5;
+             border:1.5px solid #414868;border-radius:8px;cursor:pointer;
+             transition:border-color .15s,background .15s;position:relative;"
+      onmouseover="this.style.borderColor='#7aa2f7';this.style.background='#1e2035'"
+      onmouseout="this.style.borderColor='#414868';this.style.background='#24283b'">
+      🇯🇵&nbsp; 日本語
+      <span class="lang-key-hint">4</span>
+    </button>
+  </div>
+  <div style="font-size:10px;color:#414868;letter-spacing:0.08em;margin-top:16px;">
+    1‑4 · ↑↓ + Enter
   </div>
   <div id="lang-warning-box"
     style="margin-top:28px;max-width:340px;text-align:center;padding:10px 14px;
@@ -935,7 +953,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 <div id="pg-welcome" class="page">
   <img id="avalos-logo" src="data:image/png;base64,LOGO_PLACEHOLDER"
        style="width:110px;height:110px;object-fit:contain;margin-bottom:-8px;
-              filter:drop-shadow(0 0 18px rgba(122,162,247,.35));border-radius:16px;">
+              border-radius:16px;box-shadow:0 0 18px 4px rgba(122,162,247,.35);">
   <pre class="welcome-logo" style="display:none;">
      _             _  ___  ____
     / \__   ____ _| |/ _ \/ ___|
@@ -1319,9 +1337,47 @@ function chooseLang(code) {
   if (window.pywebview && window.pywebview.api) {
     window.pywebview.api.set_language(code);
   }
-  // 600ms: permite leer la advertencia traducida antes de continuar
-  setTimeout(() => showPage('welcome'), 600);
+  showPage('welcome');
 }
+
+// REFUERZO: además del onclick inline en cada <button>, delegamos el click
+// en el contenedor de la página. Si algún día el onclick inline no dispara
+// por lo que sea (ej. un problema de hit-testing del compositor sobre la
+// capa del botón), el delegado en el padre —que cubre un área más simple—
+// sigue funcionando. chooseLang() es idempotente, así que no hay problema
+// si ambos llegan a disparar para el mismo click.
+document.getElementById('pg-lang').addEventListener('click', function (e) {
+  const btn = e.target.closest('button[data-lang]');
+  if (btn) chooseLang(btn.dataset.lang);
+});
+
+// REFUERZO: selección por teclado, totalmente independiente del click del
+// mouse (otro pipeline de eventos en GTK/WebKit — no depende del hit-test
+// del compositor). 1-4 elige directo; ↑/↓ mueve el foco entre botones y
+// Enter/Espacio confirma el que tiene foco (comportamiento nativo del
+// <button>, ya cubierto, pero explicitado aquí para no depender de eso).
+document.addEventListener('keydown', function (e) {
+  const pgLang = document.getElementById('pg-lang');
+  if (!pgLang.classList.contains('active')) return;
+
+  const langBtns = Array.from(pgLang.querySelectorAll('button[data-lang]'));
+  const byKeyNumber = { '1': 'en', '2': 'es', '3': 'zh', '4': 'ja' };
+
+  if (byKeyNumber[e.key]) {
+    chooseLang(byKeyNumber[e.key]);
+    return;
+  }
+
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const focusedIdx = langBtns.indexOf(document.activeElement);
+    const delta = e.key === 'ArrowDown' ? 1 : -1;
+    const nextIdx = focusedIdx === -1
+      ? 0
+      : (focusedIdx + delta + langBtns.length) % langBtns.length;
+    langBtns[nextIdx].focus();
+  }
+});
 
 // ══════════════════════════════════════════════════════════════════
 //  NAVIGATION
@@ -3689,6 +3745,8 @@ if __name__ =="__main__":
         sys .exit (1 )
 
     os .environ ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"]="1"
+    os .environ ["WEBKIT_DISABLE_COMPOSITING_MODE"]="1"
+    os .environ ["WEBKIT_DISABLE_DMABUF_RENDERER"]="1"
 
     vent =VentanaInstalador ()
     api =InstaladorAPI (vent )
