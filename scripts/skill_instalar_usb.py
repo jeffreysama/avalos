@@ -340,6 +340,137 @@ def _bytes_a_human (b :int )->str :
         fb /=1024.0
     return f"{fb :.1f} PB"
 
+# GUID oficial de partición EFI System en tablas GPT (UEFI Specification,
+# confirmado también en ArchWiki y Microsoft Learn). Es la misma señal que
+# usa el propio firmware UEFI para encontrar la ESP — no una heurística de
+# tamaño u orden.
+_GUID_EFI_SYSTEM_PARTITION ="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+
+def detectar_particiones_manual (dev :str )->dict :
+    """Modo manual: analiza lo que el usuario dejó particionado a mano en
+    'dev' (ej. /dev/nvme0n1) y separa la partición EFI/boot de las
+    candidatas a root.
+
+    GPT: compara PARTTYPE de cada partición contra el GUID oficial de EFI
+    System Partition — señal estructural real, la misma que usa el
+    firmware UEFI.
+
+    MBR (sin tabla GPT): usa 'sfdisk -A dev' sin número de partición, que
+    lista las particiones con el flag bootable/activo encendido (mismo
+    criterio que ya usa 'parted ... set 1 boot on' en el modo automático
+    de este instalador). sfdisk detecta solo internamente si el disco es
+    GPT y avisa por stderr en vez de fallar, así que no hace falta
+    detectar la tabla nosotros mismos antes de llamarlo.
+
+    Devuelve {"efi": "/dev/X" | "", "candidatas_root": [ {"name","size_b",
+    "size_human","fstype"} , ... ], "es_gpt": bool}. No decide sola cuál
+    partición es root si hay más de una candidata — eso lo resuelve el
+    usuario en el dropdown del wizard."""
+    rc ,out ,_ =_ejecutar ([
+    "lsblk","-J","-b","-n","-o",
+    "NAME,SIZE,TYPE,PARTTYPE,FSTYPE,MOUNTPOINTS",dev ,
+    ])
+    if rc !=0 or not out :
+        return {"efi":"","candidatas_root":[],"es_gpt":False }
+    try :
+        datos =json .loads (out )
+    except json .JSONDecodeError :
+        return {"efi":"","candidatas_root":[],"es_gpt":False }
+
+    _nodo_disco =next (
+    (n for n in datos .get ("blockdevices",[])if n .get ("name")==dev .removeprefix ("/dev/")),
+    None ,
+    )
+    _hijos =(_nodo_disco or {}).get ("children",[])or []
+    if not _hijos :
+        # fallback: algunas versiones de lsblk aplanan el árbol si se le
+        # pasa un device específico en vez del disco completo
+        _hijos =datos .get ("blockdevices",[])
+
+    _es_gpt =any ((h .get ("parttype")or "").strip ().lower ()==_GUID_EFI_SYSTEM_PARTITION
+    for h in _hijos )
+
+    _efi =""
+    _boot_flags :set [str ]=set ()
+    if not _es_gpt :
+        # MBR: preguntarle a sfdisk qué partición tiene el flag bootable.
+        # 'sfdisk -A dev' sin número de partición = modo listado (confirmado
+        # en sfdisk(8)). No falla si el disco resulta ser GPT — solo avisa
+        # por stderr y entra en modo PMBR, así que es seguro llamarlo aunque
+        # _es_gpt haya dado False por error.
+        try :
+            _rc_sf ,_out_sf ,_ =_ejecutar (["sfdisk","-A",dev ])
+            if _rc_sf ==0 :
+                for _line in _out_sf .splitlines ():
+                    _line =_line .strip ()
+                    if _line .startswith (dev ):
+                        _boot_flags .add (_line .split ()[0 ].removeprefix ("/dev/"))
+        except Exception :
+            pass
+
+    _candidatas :list [dict ]=[]
+    for _hijo in _hijos :
+        if _hijo .get ("type")!="part":
+            continue
+        _name =_hijo .get ("name","")
+        _parttype =(_hijo .get ("parttype")or "").strip ().lower ()
+        _fstype =(_hijo .get ("fstype")or "").strip ()
+        _size_b =int (_hijo .get ("size")or 0 )
+
+        _es_esta_efi =(
+        (_es_gpt and _parttype ==_GUID_EFI_SYSTEM_PARTITION )
+        or (not _es_gpt and _name in _boot_flags )
+        )
+        if _es_esta_efi and not _efi :
+            _efi ="/dev/"+_name
+            continue
+
+        _candidatas .append ({
+        "name":"/dev/"+_name ,
+        "size_b":_size_b ,
+        "size_human":_bytes_a_human (_size_b ),
+        "fstype":_fstype or "?",
+        })
+
+    return {"efi":_efi ,"candidatas_root":_candidatas ,"es_gpt":_es_gpt }
+
+def detectar_subvolumenes_btrfs (dev_root :str )->list [str ]:
+    """Modo manual: si el usuario ya formateó dev_root con Btrfs y creó
+    sus propios subvolúmenes, los lista para que el instalador pueda
+    saltarse la creación de los que ya existan (según lo acordado) en vez
+    de pisarlos.
+
+    No hay forma de inspeccionar subvolúmenes sin montar el filesystem al
+    menos una vez (confirmado: 'btrfs subvolume list' opera sobre un punto
+    de montaje, no sobre el device crudo) — se monta de solo-lectura
+    ('-o ro') para minimizar riesgo, ya que solo se necesita leer."""
+    _tmp ="/tmp/btrfs_probe_manual"
+    Path (_tmp ).mkdir (parents =True ,exist_ok =True )
+    _rc_mnt ,_ ,_ =_ejecutar (["mount","-o","ro",dev_root ,_tmp ])
+    if _rc_mnt !=0 :
+        try :
+            os .rmdir (_tmp )
+        except OSError :
+            pass
+        return []
+    try :
+        _rc ,_out ,_ =_ejecutar (["btrfs","subvolume","list",_tmp ])
+        if _rc !=0 or not _out :
+            return []
+        _subvols =[]
+        for _line in _out .splitlines ():
+            # formato: "ID 256 gen 12 top level 5 path @home"
+            _m =re .search (r"\bpath\s+(\S+)$",_line .strip ())
+            if _m :
+                _subvols .append (_m .group (1 ))
+        return _subvols
+    finally :
+        _ejecutar (["umount",_tmp ])
+        try :
+            os .rmdir (_tmp )
+        except OSError :
+            pass
+
 def es_uefi ()->bool :
     return Path ("/sys/firmware/efi").exists ()
 
@@ -1040,6 +1171,23 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         ⚠ El <strong>Disco actual</strong> no está disponible como destino
         porque es el disco donde se ejecuta este live ISO.
       </div>
+      <div id="manual-root-picker" style="
+        font-family:var(--font-mono); font-size:10px; padding:10px 12px;
+        background:rgba(122,162,247,.07); border-bottom:1px solid rgba(122,162,247,.25);
+        color:var(--tn-text); display:none; flex-direction:column; gap:6px; flex-shrink:0;">
+        <span data-i18n="manual-pick-root-label">Se detectó más de una partición de datos. Elegí cuál usar como root:</span>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select id="manual-root-select" style="
+            flex:1; padding:6px 8px; background:#1a1b26; color:#c0caf5;
+            border:1px solid rgba(122,162,247,.4); border-radius:6px;
+            font-family:var(--font-mono); font-size:10px;"></select>
+          <button id="btn-confirm-manual-root" onclick="confirmarRootManual()" data-i18n="btn-confirm-root"
+            style="flex-shrink:0;padding:6px 12px;font-size:10px;background:#24283b;color:#c0caf5;
+                   border:1px solid var(--tn-blue);border-radius:6px;cursor:pointer;white-space:nowrap;">
+            Confirmar
+          </button>
+        </div>
+      </div>
       <div id="disk-list">
         <div style="padding:14px;color:var(--tn-dim);font-family:var(--font-mono);font-size:11px;">
           <span data-i18n="disk-detecting-placeholder">Detectando discos…</span>
@@ -1637,6 +1785,7 @@ async function abrirModoManual() {
   const originalText = btn.textContent;
   btn.disabled = true;
   btn.textContent = t('btn-manual-mode-open');
+  document.getElementById('manual-root-picker').style.display = 'none';
   try {
     const abierto = await window.pywebview.api.abrir_terminal_particionado();
     if (!abierto) {
@@ -1644,19 +1793,73 @@ async function abrirModoManual() {
       return;
     }
     const resultado = await window.pywebview.api.verificar_particionado_manual(_selDisco);
-    if (resultado && resultado.ok) {
-      window._modoManualListo = true;
-      showFormError(t('ok-manual-partition-detected'));
-    } else {
-      window._modoManualListo = false;
-      showFormError(t('warn-manual-no-partitions'));
-    }
+    aplicarResultadoParticionadoManual(resultado);
   } catch (e) {
     console.error('abrirModoManual:', e);
     if (window.__showJsError) window.__showJsError('abrirModoManual: ' + e.message);
   } finally {
     btn.disabled = false;
     btn.textContent = originalText;
+  }
+}
+
+// Separado de abrirModoManual() para poder reusarlo si en el futuro se
+// agrega un botón "re-verificar" sin tener que reabrir la terminal.
+function aplicarResultadoParticionadoManual(resultado) {
+  if (!resultado || !resultado.ok) {
+    window._modoManualListo = false;
+    showFormError(t('warn-manual-no-partitions'));
+    return;
+  }
+
+  if (resultado.requiere_seleccion) {
+    // Más de una candidata a root — no se puede continuar todavía, el
+    // usuario tiene que elegir en el dropdown (confirmarRootManual()).
+    window._modoManualListo = false;
+    poblarDropdownRootManual(resultado.candidatas_root);
+    document.getElementById('manual-root-picker').style.display = 'flex';
+    return;
+  }
+
+  // Candidata única — Python ya la fijó como root en
+  // verificar_particionado_manual(), acá solo reflejamos el estado.
+  window._modoManualListo = true;
+  document.getElementById('manual-root-picker').style.display = 'none';
+  showFormError(t('ok-manual-partition-detected'));
+}
+
+function poblarDropdownRootManual(candidatas) {
+  const sel = document.getElementById('manual-root-select');
+  sel.innerHTML = '';
+  candidatas.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.name;
+    opt.textContent = `${c.name} — ${c.size_human} — ${c.fstype}`;
+    sel.appendChild(opt);
+  });
+}
+
+async function confirmarRootManual() {
+  const sel = document.getElementById('manual-root-select');
+  const elegida = sel.value;
+  if (!elegida) return;
+  const btn = document.getElementById('btn-confirm-manual-root');
+  btn.disabled = true;
+  try {
+    const ok = await window.pywebview.api.confirmar_root_manual(_selDisco, elegida);
+    if (ok) {
+      window._modoManualListo = true;
+      document.getElementById('manual-root-picker').style.display = 'none';
+      showFormError(t('ok-manual-partition-detected'));
+    } else {
+      window._modoManualListo = false;
+      showFormError(t('err-manual-invalid-root-choice'));
+    }
+  } catch (e) {
+    console.error('confirmarRootManual:', e);
+    if (window.__showJsError) window.__showJsError('confirmarRootManual: ' + e.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -1835,7 +2038,8 @@ function validarEIniciar() {
   showPage('install');
   const _gaming = window._installGaming === true;
   const _bore   = window._installBore === true;
-  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap, _gaming, _bore);
+  const _manual = window._modoManualListo === true;
+  window.pywebview.api.iniciar_instalacion(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap, _gaming, _bore, _manual);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2037,12 +2241,19 @@ class InstaladorAPI :
     def iniciar_instalacion (self ,username :str ,password :str ,hostname :str ,
     timezone :str ,disco :str ,bootloader :str ,usb :bool ,
     locale :str ="",keymap :str ="",gaming :bool =False ,
-    bore :bool =False ):
+    bore :bool =False ,manual :bool =False ):
         """El usuario pulsó 'Instalar AvalOS' con configuración válida."""
         _username =username .strip ()
         if not _username :
 
             return False
+
+        if manual and not self ._v ._modo_manual_listo :
+            # JS dice modo manual pero Python nunca confirmó una detección
+            # válida (verificar_particionado_manual/confirmar_root_manual)
+            # — no arrancar _run_instalacion() con dev_efi/dev_root vacíos.
+            return False
+
         self ._v ._username =_username
         self ._v ._password =password
         self ._v ._hostname =hostname .strip ()or DEFAULT_HOSTNAME
@@ -2056,6 +2267,7 @@ class InstaladorAPI :
         self ._v ._disco_destino =disco
         self ._v ._bootloader =bootloader if bootloader in ('grub','sd-boot','refind','none')else 'grub'
         self ._v ._modo_usb =bool (usb )
+        self ._v ._modo_manual =bool (manual )and self ._v ._modo_manual_listo
         self ._v ._install_gaming =bool (gaming )
         self ._v ._install_bore =bool (bore )
         self ._v ._config_lista .set ()
@@ -2095,21 +2307,65 @@ class InstaladorAPI :
         return False
 
     def verificar_particionado_manual (self ,disco :str ):
-        """Modo manual: tras volver de la terminal, re-lee el disco con
-        lsblk (vía listar_discos(), la misma fuente de verdad que usa la
-        pantalla de selección) y confirma que el usuario dejó al menos una
-        partición creada. No valida esquema GPT/EFI+root específico a
-        propósito — en modo manual el usuario asume esa responsabilidad;
-        el instalador solo confirma que hay algo particionado antes de
-        dejar avanzar el wizard, para no arrancar iniciar_instalacion()
-        sobre un disco todavía en blanco por error."""
-        for _d in listar_discos ():
-            if _d ["name"]==disco :
-                return {
-                "ok":len (_d ["particiones"])>0 ,
-                "particiones":_d ["particiones"],
-                }
-        return {"ok":False ,"particiones":[]}
+        """Modo manual: tras volver de la terminal, analiza lo que el
+        usuario dejó particionado en 'disco' vía detectar_particiones_manual()
+        (GUID GPT / flag bootable MBR — nunca heurística de tamaño u orden).
+
+        Si hay una sola candidata a root y ya tiene Btrfs, además la sondea
+        con detectar_subvolumenes_btrfs() para saber si el usuario ya creó
+        los subvolúmenes de AvalOS a mano — así _run_instalacion() puede
+        saltarse la creación de los que ya existan en vez de pisarlos.
+
+        Si hay más de una candidata a root, NO elige sola — devuelve la
+        lista completa para que el wizard se la ofrezca al usuario en un
+        dropdown; la decisión final llega después por
+        confirmar_root_manual()."""
+        _info =detectar_particiones_manual (disco )
+        _candidatas =_info ["candidatas_root"]
+
+        if not _candidatas :
+            self ._v ._modo_manual_listo =False
+            return {"ok":False ,"efi":"","candidatas_root":[],"requiere_seleccion":False }
+
+        _subvols_existentes :list [str ]=[]
+        if len (_candidatas )==1 and _candidatas [0 ]["fstype"]=="btrfs":
+            _subvols_existentes =detectar_subvolumenes_btrfs (_candidatas [0 ]["name"])
+
+        self ._v ._modo_manual_efi =_info ["efi"]
+        self ._v ._modo_manual_candidatas =_candidatas
+        self ._v ._modo_manual_subvols_existentes =_subvols_existentes
+        # Solo queda "listo" sin intervención extra si hay una única
+        # candidata — con varias, el wizard debe esperar a
+        # confirmar_root_manual() antes de dejar avanzar el botón Instalar.
+        self ._v ._modo_manual_listo =(len (_candidatas )==1 )
+        if len (_candidatas )==1 :
+            self ._v ._modo_manual_root =_candidatas [0 ]["name"]
+
+        return {
+        "ok":True ,
+        "efi":_info ["efi"],
+        "candidatas_root":_candidatas ,
+        "requiere_seleccion":len (_candidatas )>1 ,
+        "subvols_existentes":_subvols_existentes ,
+        }
+
+    def confirmar_root_manual (self ,disco :str ,root_elegida :str ):
+        """Modo manual: cuando verificar_particionado_manual() devolvió
+        más de una candidata a root, el usuario elige una en el dropdown
+        del wizard y esta llamada la fija como definitiva. Vuelve a validar
+        contra self._v._modo_manual_candidatas (no confía ciegamente en el
+        string que llega de JS) para no aceptar un device arbitrario."""
+        _validas ={c ["name"]for c in self ._v ._modo_manual_candidatas }
+        if root_elegida not in _validas :
+            return False
+        self ._v ._modo_manual_root =root_elegida
+        # Solo re-sondear subvolúmenes si la elección es btrfs y no se hizo
+        # ya en verificar_particionado_manual() (caso de candidata única).
+        _cand =next ((c for c in self ._v ._modo_manual_candidatas if c ["name"]==root_elegida ),None )
+        if _cand and _cand ["fstype"]=="btrfs"and not self ._v ._modo_manual_subvols_existentes :
+            self ._v ._modo_manual_subvols_existentes =detectar_subvolumenes_btrfs (root_elegida )
+        self ._v ._modo_manual_listo =True
+        return True
 
     def reintentar (self ):
 
@@ -2158,6 +2414,12 @@ class VentanaInstalador :
         self ._install_gaming =False
         self ._install_bore =False
         self ._modo_usb =False
+        self ._modo_manual =False
+        self ._modo_manual_listo =False
+        self ._modo_manual_efi =""
+        self ._modo_manual_root =""
+        self ._modo_manual_candidatas :list [dict ]=[]
+        self ._modo_manual_subvols_existentes :list [str ]=[]
         self ._config_lista =threading .Event ()
         self ._lock =threading .Lock ()
 
@@ -2968,17 +3230,22 @@ WantedBy=multi-user.target
             self ._status (self ._t ("status-partitioning",dev =dev ))
             self ._log (self ._t ("log-section-partitioning",dev =dev ),"step")
 
-            self ._jsc ("pyIniciarCountdown",dev ,disco ["model"],disco ["size_human"])
-            for i in range (10 ,0 ,-1 ):
-                if self ._abortado :
-                    self ._jsc ("pyCerrarCountdown")
-                    self ._limpiar_montajes ();return
-                self ._jsc ("pyActualizarCountdown",i -1 )
-                time .sleep (1 )
-            self ._jsc ("pyCerrarCountdown")
+            if not self ._v ._modo_manual :
+                self ._jsc ("pyIniciarCountdown",dev ,disco ["model"],disco ["size_human"])
+                for i in range (10 ,0 ,-1 ):
+                    if self ._abortado :
+                        self ._jsc ("pyCerrarCountdown")
+                        self ._limpiar_montajes ();return
+                    self ._jsc ("pyActualizarCountdown",i -1 )
+                    time .sleep (1 )
+                self ._jsc ("pyCerrarCountdown")
 
             if self ._abortado :self ._limpiar_montajes ();return
 
+            # El chequeo de /proc/mounts aplica en ambos modos: en modo
+            # manual protege contra que el dropdown del wizard haya
+            # apuntado al disco equivocado, exactamente igual que en modo
+            # automático protege contra un disco mal seleccionado.
             self ._log (self ._t ("log-checking-mounted-partitions"),"info")
             with open ("/proc/mounts")as _mf :
                 _proc_mounts =_mf .read ()
@@ -3002,146 +3269,256 @@ WantedBy=multi-user.target
                 return
             self ._log (self ._t ("log-disk-not-mounted",dev =dev ),"ok")
 
-            # FIX (particionado): 'wipefs' puede fallar con
-            # "probing initialization failed: Device or resource busy"
-            # aunque el disco no esté montado (confirmado en /proc/mounts
-            # arriba). Es una condición de carrera conocida y documentada
-            # en udisks2/udev: el kernel abre brevemente el device node
-            # para (re)enumerar metadata justo después de que un disco
-            # nuevo aparece o cambia, y wipefs no puede abrirlo con O_EXCL
-            # mientras tanto. Es transitorio — 'udevadm settle' + reintentos
-            # con backoff es la mitigación estándar (mismo patrón que usa
-            # ceph-volume en producción, ver comentario "workaround probable
-            # race condition" en su código). No hay garantía de timing
-            # exacta (systemd-udev-settle.service(8) es explícito: "There
-            # can be no guarantee that hardware is fully discovered at any
-            # specific time"), por eso reintentamos en vez de esperar una
-            # sola vez.
-            try :
-                subprocess .run (["udevadm","settle","--timeout=5"],check =False )
-            except Exception :
-                pass
+            if self ._v ._modo_manual :
+                # ── MODO MANUAL ──────────────────────────────────────────
+                # El usuario ya particionó (y puede que ya haya formateado)
+                # el disco a mano en una terminal real. dev_efi/dev_root
+                # vienen de verificar_particionado_manual()/
+                # confirmar_root_manual() (InstaladorAPI), que ya los
+                # validó contra detectar_particiones_manual() — no se
+                # vuelve a tocar el esquema de particiones acá.
+                dev_efi =self ._v ._modo_manual_efi
+                dev_root =self ._v ._modo_manual_root
 
-            rc_wipe =1
-            _wipe_out =""
-            for _intento in range (1 ,4 ):
-                _wipe_cmd =["wipefs","-a",dev ]
-                if _intento ==3 :
-                    # Último intento: --force evita el chequeo O_EXCL de
-                    # wipefs (confirmado en 'wipefs --help' del propio
-                    # binario). Solo se usa acá, no antes — los intentos
-                    # 1-2 son "limpios" (settle + retry) para no enmascarar
-                    # un problema real si /proc/mounts tuviera un falso
-                    # negativo por alguna razón.
-                    _wipe_cmd =["wipefs","-a","-f",dev ]
-                rc_wipe ,_wipe_out =self ._run_cmd (_wipe_cmd )
-                if rc_wipe ==0 :
-                    break
-                if _intento <3 :
-                    self ._log (
-                    self ._t ("log-wipefs-retry",intento =_intento ,dev =dev ),
-                    "warn")
-                    try :
-                        subprocess .run (["udevadm","settle","--timeout=5"],check =False )
-                    except Exception :
-                        pass
-                    time .sleep (2 *_intento )
-            if rc_wipe !=0 :
-                self ._step ("part","error")
-                self ._jsc ("pyErrorPaso",
-                self ._t ("err-wipefs-failed",dev =dev ))
-                self ._limpiar_montajes ();return
+                if not dev_root :
+                    self ._step ("part","error")
+                    self ._jsc ("pyErrorPaso",self ._t ("err-manual-no-root-selected"))
+                    self ._limpiar_montajes ();return
 
-            if uefi :
+                if uefi and not dev_efi :
+                    self ._step ("part","error")
+                    self ._jsc ("pyErrorPaso",self ._t ("err-manual-no-efi-found"))
+                    self ._limpiar_montajes ();return
 
-                rc ,_ =self ._run_cmd ([
-                "parted","-s",dev ,
-                "mklabel","gpt",
-                "mkpart","ESP","fat32","1MiB","513MiB",
-                "set","1","esp","on",
-                "mkpart","root","ext4","513MiB","100%",
-                ])
-                dev_efi =dev +("p1"if "nvme"in dev_name or "mmcblk"in dev_name else "1")
-                dev_root =dev +("p2"if "nvme"in dev_name or "mmcblk"in dev_name else "2")
+                if uefi and dev_efi :
+                    # Mismo criterio que para root: blkid vacío/rc!=0 =
+                    # sin filesystem reconocible = el usuario dejó la
+                    # partición EFI creada pero sin formatear a propósito.
+                    # Se formatea con el mismo comando que usa el modo
+                    # automático (mkfs.fat -F32) — si ya tiene FAT32 u
+                    # otro filesystem, se respeta tal cual, igual que root.
+                    _rc_efi ,_fstype_efi ,_ =_ejecutar (["blkid","-s","TYPE","-o","value",dev_efi ])
+                    _fstype_efi =_fstype_efi .strip ()if _rc_efi ==0 else ""
+                    if not _fstype_efi :
+                        rc_efi_fmt ,_ =self ._run_cmd (["mkfs.fat","-F32",dev_efi ])
+                        if rc_efi_fmt !=0 :
+                            self ._step ("part","error")
+                            self ._jsc ("pyErrorPaso",self ._t ("err-mkfs-fat-failed",dev_efi =dev_efi ))
+                            self ._limpiar_montajes ();return
+                        self ._log (self ._t ("log-manual-efi-formatted",dev_efi =dev_efi ),"ok")
+                    else :
+                        self ._log (self ._t ("log-manual-fs-detected",dev_root =dev_efi ,fstype =_fstype_efi ),"ok")
+
+                self ._step ("part","done",self ._t ("step-manual-partitions-detected"))
+                avanzar ()
+
+                if self ._abortado :self ._limpiar_montajes ();return
+
+                self ._step ("format","active")
+                self ._status (self ._t ("status-formatting"))
+                self ._log (self ._t ("log-section-formatting"),"step")
+
+                # ¿La root ya está formateada? blkid con salida vacía/rc!=0
+                # significa "sin filesystem reconocible" — en ese caso el
+                # usuario dejó la partición sin formatear a propósito
+                # (creó el esquema pero delega el mkfs al instalador) y sí
+                # se formatea acá, igual que en modo automático.
+                _rc_fs ,_fstype_actual ,_ =_ejecutar (["blkid","-s","TYPE","-o","value",dev_root ])
+                _fstype_actual =_fstype_actual .strip ()if _rc_fs ==0 else ""
+
+                if not _fstype_actual :
+                    if self ._v ._modo_usb :
+                        rc ,_ =self ._run_cmd (["mkfs.ext4","-O","^has_journal","-F",dev_root ])
+                    else :
+                        rc ,_ =self ._run_cmd (["mkfs.btrfs","-f","-L","AvalOS",dev_root ])
+                    if rc !=0 :
+                        self ._step ("format","error")
+                        self ._jsc ("pyErrorPaso",self ._t ("err-mkfs-failed",dev_root =dev_root ))
+                        self ._limpiar_montajes ();return
+                    _fstype_actual ="ext4"if self ._v ._modo_usb else "btrfs"
+                else :
+                    self ._log (self ._t ("log-manual-fs-detected",dev_root =dev_root ,fstype =_fstype_actual ),"ok")
+
+                if _fstype_actual =="btrfs"and not self ._v ._modo_usb :
+                    _btrfs_tmp ="/tmp/btrfs_setup"
+                    rc_mnt ,_ =self ._run_cmd (["mount",dev_root ,_btrfs_tmp ,"-o","compress=zstd"],
+                    pre_mkdir =_btrfs_tmp )
+                    if rc_mnt !=0 :
+                        self ._step ("format","error")
+                        self ._jsc ("pyErrorPaso",self ._t ("err-btrfs-mount-failed"))
+                        self ._limpiar_montajes ();return
+
+                    # Según lo acordado: crear solo los subvolúmenes que
+                    # falten, sin pisar los que el usuario ya armó a mano.
+                    _existentes =set (self ._v ._modo_manual_subvols_existentes )
+                    _subvols =["@","@home","@snapshots","@log","@cache","@tmp"]
+                    _creados =[]
+                    for sv in _subvols :
+                        if sv in _existentes :
+                            self ._log (self ._t ("log-subvol-already-exists",sv =sv ),"info")
+                            continue
+                        rc_sv ,_ =self ._run_cmd (["btrfs","subvolume","create",
+                        f"{_btrfs_tmp }/{sv }"])
+                        if rc_sv !=0 :
+                            self ._log (self ._t ("log-subvol-create-fail",sv =sv ),"warn")
+                        else :
+                            _creados .append (sv )
+
+                    self ._run_cmd (["umount",_btrfs_tmp ])
+                    if _creados :
+                        self ._log (self ._t ("log-subvols-created",subvols =", ".join (_creados )),"ok")
+
+                _fmt_label =self ._t ("step-fmt-manual-detected",fstype =_fstype_actual .upper ())
+                self ._step ("format","done",_fmt_label )
+
+                try :
+                    subprocess .run (["udevadm","settle","--timeout=5"],check =False )
+                except Exception :
+                    time .sleep (1 )
+                avanzar ()
+
             else :
+                # ── MODO AUTOMÁTICO ──────────────────────────────────────
+                # FIX (particionado): 'wipefs' puede fallar con
+                # "probing initialization failed: Device or resource busy"
+                # aunque el disco no esté montado (confirmado en /proc/mounts
+                # arriba). Es una condición de carrera conocida y documentada
+                # en udisks2/udev: el kernel abre brevemente el device node
+                # para (re)enumerar metadata justo después de que un disco
+                # nuevo aparece o cambia, y wipefs no puede abrirlo con O_EXCL
+                # mientras tanto. Es transitorio — 'udevadm settle' + reintentos
+                # con backoff es la mitigación estándar (mismo patrón que usa
+                # ceph-volume en producción, ver comentario "workaround probable
+                # race condition" en su código). No hay garantía de timing
+                # exacta (systemd-udev-settle.service(8) es explícito: "There
+                # can be no guarantee that hardware is fully discovered at any
+                # specific time"), por eso reintentamos en vez de esperar una
+                # sola vez.
+                try :
+                    subprocess .run (["udevadm","settle","--timeout=5"],check =False )
+                except Exception :
+                    pass
 
-                rc ,_ =self ._run_cmd ([
-                "parted","-s",dev ,
-                "mklabel","msdos",
-                "mkpart","primary","ext4","1MiB","100%",
-                "set","1","boot","on",
-                ])
-                dev_root =dev +("p1"if "nvme"in dev_name or "mmcblk"in dev_name else "1")
-                dev_efi =""
+                rc_wipe =1
+                _wipe_out =""
+                for _intento in range (1 ,4 ):
+                    _wipe_cmd =["wipefs","-a",dev ]
+                    if _intento ==3 :
+                        # Último intento: --force evita el chequeo O_EXCL de
+                        # wipefs (confirmado en 'wipefs --help' del propio
+                        # binario). Solo se usa acá, no antes — los intentos
+                        # 1-2 son "limpios" (settle + retry) para no enmascarar
+                        # un problema real si /proc/mounts tuviera un falso
+                        # negativo por alguna razón.
+                        _wipe_cmd =["wipefs","-a","-f",dev ]
+                    rc_wipe ,_wipe_out =self ._run_cmd (_wipe_cmd )
+                    if rc_wipe ==0 :
+                        break
+                    if _intento <3 :
+                        self ._log (
+                        self ._t ("log-wipefs-retry",intento =_intento ,dev =dev ),
+                        "warn")
+                        try :
+                            subprocess .run (["udevadm","settle","--timeout=5"],check =False )
+                        except Exception :
+                            pass
+                        time .sleep (2 *_intento )
+                if rc_wipe !=0 :
+                    self ._step ("part","error")
+                    self ._jsc ("pyErrorPaso",
+                    self ._t ("err-wipefs-failed",dev =dev ))
+                    self ._limpiar_montajes ();return
 
-            if rc !=0 :
-                self ._step ("part","error")
-                self ._jsc ("pyErrorPaso",self ._t ("err-parted-failed",dev =dev ))
-                self ._limpiar_montajes ();return
+                if uefi :
 
-            try :
-                subprocess .run (["udevadm","settle","--timeout=5"],check =False )
-            except Exception :
-                time .sleep (2 )
-            self ._step ("part","done",
-            "GPT: EFI (512MB) + root"if uefi else "MBR: root (100%)")
-            avanzar ()
+                    rc ,_ =self ._run_cmd ([
+                    "parted","-s",dev ,
+                    "mklabel","gpt",
+                    "mkpart","ESP","fat32","1MiB","513MiB",
+                    "set","1","esp","on",
+                    "mkpart","root","ext4","513MiB","100%",
+                    ])
+                    dev_efi =dev +("p1"if "nvme"in dev_name or "mmcblk"in dev_name else "1")
+                    dev_root =dev +("p2"if "nvme"in dev_name or "mmcblk"in dev_name else "2")
+                else :
 
-            if self ._abortado :self ._limpiar_montajes ();return
+                    rc ,_ =self ._run_cmd ([
+                    "parted","-s",dev ,
+                    "mklabel","msdos",
+                    "mkpart","primary","ext4","1MiB","100%",
+                    "set","1","boot","on",
+                    ])
+                    dev_root =dev +("p1"if "nvme"in dev_name or "mmcblk"in dev_name else "1")
+                    dev_efi =""
 
-            self ._step ("format","active")
-            self ._status (self ._t ("status-formatting"))
-            self ._log (self ._t ("log-section-formatting"),"step")
+                if rc !=0 :
+                    self ._step ("part","error")
+                    self ._jsc ("pyErrorPaso",self ._t ("err-parted-failed",dev =dev ))
+                    self ._limpiar_montajes ();return
 
-            if uefi :
-                rc ,_ =self ._run_cmd (["mkfs.fat","-F32",dev_efi ])
+                try :
+                    subprocess .run (["udevadm","settle","--timeout=5"],check =False )
+                except Exception :
+                    time .sleep (2 )
+                self ._step ("part","done",
+                "GPT: EFI (512MB) + root"if uefi else "MBR: root (100%)")
+                avanzar ()
+
+                if self ._abortado :self ._limpiar_montajes ();return
+
+                self ._step ("format","active")
+                self ._status (self ._t ("status-formatting"))
+                self ._log (self ._t ("log-section-formatting"),"step")
+
+                if uefi :
+                    rc ,_ =self ._run_cmd (["mkfs.fat","-F32",dev_efi ])
+                    if rc !=0 :
+                        self ._step ("format","error")
+                        self ._jsc ("pyErrorPaso",self ._t ("err-mkfs-fat-failed",dev_efi =dev_efi ))
+                        self ._limpiar_montajes ();return
+
+                if self ._modo_usb :
+                    rc ,_ =self ._run_cmd (["mkfs.ext4","-O","^has_journal","-F",dev_root ])
+                else :
+                    rc ,_ =self ._run_cmd (["mkfs.btrfs","-f","-L","AvalOS",dev_root ])
+
                 if rc !=0 :
                     self ._step ("format","error")
-                    self ._jsc ("pyErrorPaso",self ._t ("err-mkfs-fat-failed",dev_efi =dev_efi ))
+                    self ._jsc ("pyErrorPaso",self ._t ("err-mkfs-failed",dev_root =dev_root ))
                     self ._limpiar_montajes ();return
 
-            if self ._modo_usb :
-                rc ,_ =self ._run_cmd (["mkfs.ext4","-O","^has_journal","-F",dev_root ])
-            else :
-                rc ,_ =self ._run_cmd (["mkfs.btrfs","-f","-L","AvalOS",dev_root ])
+                if not self ._modo_usb :
+                    _btrfs_tmp ="/tmp/btrfs_setup"
+                    rc_mnt ,_ =self ._run_cmd (["mount",dev_root ,_btrfs_tmp ,"-o","compress=zstd"],
+                    pre_mkdir =_btrfs_tmp )
+                    if rc_mnt !=0 :
+                        self ._step ("format","error")
+                        self ._jsc ("pyErrorPaso",self ._t ("err-btrfs-mount-failed"))
+                        self ._limpiar_montajes ();return
 
-            if rc !=0 :
-                self ._step ("format","error")
-                self ._jsc ("pyErrorPaso",self ._t ("err-mkfs-failed",dev_root =dev_root ))
-                self ._limpiar_montajes ();return
+                    _subvols =["@","@home","@snapshots","@log","@cache","@tmp"]
+                    for sv in _subvols :
+                        rc_sv ,_ =self ._run_cmd (["btrfs","subvolume","create",
+                        f"{_btrfs_tmp }/{sv }"])
+                        if rc_sv !=0 :
+                            self ._log (self ._t ("log-subvol-create-fail",sv =sv ),"warn")
 
-            if not self ._modo_usb :
-                _btrfs_tmp ="/tmp/btrfs_setup"
-                rc_mnt ,_ =self ._run_cmd (["mount",dev_root ,_btrfs_tmp ,"-o","compress=zstd"],
-                pre_mkdir =_btrfs_tmp )
-                if rc_mnt !=0 :
-                    self ._step ("format","error")
-                    self ._jsc ("pyErrorPaso",self ._t ("err-btrfs-mount-failed"))
-                    self ._limpiar_montajes ();return
+                    self ._run_cmd (["umount",_btrfs_tmp ])
+                    self ._log (self ._t ("log-subvols-created",subvols =", ".join (_subvols )),"ok")
 
-                _subvols =["@","@home","@snapshots","@log","@cache","@tmp"]
-                for sv in _subvols :
-                    rc_sv ,_ =self ._run_cmd (["btrfs","subvolume","create",
-                    f"{_btrfs_tmp }/{sv }"])
-                    if rc_sv !=0 :
-                        self ._log (self ._t ("log-subvol-create-fail",sv =sv ),"warn")
+                if uefi and self ._modo_usb :
+                    _fmt_label ="FAT32 + "+self ._t ("step-fmt-ext4-nojournal")
+                elif uefi :
+                    _fmt_label ="FAT32 + Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
+                else :
+                    _fmt_label =self ._t ("step-fmt-ext4-nojournal")if self ._modo_usb else "Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
+                self ._step ("format","done",_fmt_label )
 
-                self ._run_cmd (["umount",_btrfs_tmp ])
-                self ._log (self ._t ("log-subvols-created",subvols =", ".join (_subvols )),"ok")
-
-            if uefi and self ._modo_usb :
-                _fmt_label ="FAT32 + "+self ._t ("step-fmt-ext4-nojournal")
-            elif uefi :
-                _fmt_label ="FAT32 + Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
-            else :
-                _fmt_label =self ._t ("step-fmt-ext4-nojournal")if self ._modo_usb else "Btrfs (@, @home, @snapshots, @log, @cache, @tmp)"
-            self ._step ("format","done",_fmt_label )
-
-            try :
-                subprocess .run (["udevadm","settle","--timeout=5"],check =False )
-            except Exception :
-                time .sleep (1 )
-            avanzar ()
+                try :
+                    subprocess .run (["udevadm","settle","--timeout=5"],check =False )
+                except Exception :
+                    time .sleep (1 )
+                avanzar ()
 
             if self ._abortado :self ._limpiar_montajes ();return
 
