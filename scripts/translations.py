@@ -362,6 +362,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "step-refind-installed-label": "rEFInd installed ({kernel_name})",
         "step-sdboot-installed-label": "systemd-boot installed",
         "step-user-created-label": "User {usuario} created",
+        "badge-snap-yes": "✦ Snapshots",
+        "badge-snap-no": "⚠ No boot-time snapshots",
+        "tag-destino": "TARGET",
+        "tag-disco-actual-live": "CURRENT DISK · LIVE",
+        "tag-montado": "Mounted",
     },
 
     # ── Español ───────────────────────────────────────────────────────────────
@@ -711,6 +716,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "step-refind-installed-label": "rEFInd instalado ({kernel_name})",
         "step-sdboot-installed-label": "systemd-boot instalado",
         "step-user-created-label": "Usuario {usuario} creado",
+        "badge-snap-yes": "✦ Snapshots",
+        "badge-snap-no": "⚠ Sin snapshots en boot",
+        "tag-destino": "DESTINO",
+        "tag-disco-actual-live": "DISCO ACTUAL · LIVE",
+        "tag-montado": "Montado",
     },
 
     # ── 中文简体 ──────────────────────────────────────────────────────────────
@@ -1059,6 +1069,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "step-refind-installed-label": "rEFInd 已安装（{kernel_name}）",
         "step-sdboot-installed-label": "systemd-boot 已安装",
         "step-user-created-label": "用户 {usuario} 已创建",
+        "badge-snap-yes": "✦ 快照",
+        "badge-snap-no": "⚠ 启动时无快照",
+        "tag-destino": "目标",
+        "tag-disco-actual-live": "当前磁盘 · LIVE",
+        "tag-montado": "已挂载",
     },
 
     # ── 日本語 ───────────────────────────────────────────────────────────────
@@ -1416,6 +1431,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "step-refind-installed-label": "rEFInd をインストールしました（{kernel_name}）",
         "step-sdboot-installed-label": "systemd-boot をインストールしました",
         "step-user-created-label": "ユーザー {usuario} を作成しました",
+        "badge-snap-yes": "✦ スナップショット",
+        "badge-snap-no": "⚠ 起動時のスナップショットなし",
+        "tag-destino": "インストール先",
+        "tag-disco-actual-live": "現在のディスク · LIVE",
+        "tag-montado": "マウント済み",
     },
 }
 

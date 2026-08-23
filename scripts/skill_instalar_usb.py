@@ -1275,15 +1275,15 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
           <label data-i18n="lbl-bootloader">Bootloader</label>
           <div class="opts-row">
             <button class="opt-btn sel" id="opt-bl-grub" onclick="selBootloader('grub')">
-              <span class="opt-title">GRUB <span class="badge-snap">✦ Snapshots</span></span>
+              <span class="opt-title">GRUB <span class="badge-snap" data-i18n="badge-snap-yes">✦ Snapshots</span></span>
               <span class="opt-desc" data-i18n="opt-grub-desc">Universal. BIOS + UEFI, dual-boot. Menú de snapshots Btrfs en el arranque.</span>
             </button>
             <button class="opt-btn" id="opt-bl-sd" onclick="selBootloader('sd-boot')">
-              <span class="opt-title">systemd-boot <span class="badge-warn">⚠ Sin snapshots en boot</span></span>
+              <span class="opt-title">systemd-boot <span class="badge-warn" data-i18n="badge-snap-no">⚠ Sin snapshots en boot</span></span>
               <span class="opt-desc" data-i18n="opt-sdboot-desc">Solo UEFI, rápido. Snapshots disponibles vía terminal, sin menú visual en el arranque.</span>
             </button>
             <button class="opt-btn" id="opt-bl-refind" onclick="selBootloader('refind')">
-              <span class="opt-title">rEFInd <span class="badge-warn">⚠ Sin snapshots en boot</span></span>
+              <span class="opt-title">rEFInd <span class="badge-warn" data-i18n="badge-snap-no">⚠ Sin snapshots en boot</span></span>
               <span class="opt-desc" data-i18n="opt-refind-desc">Solo UEFI. Detecta kernels automáticamente. Snapshots requieren configuración manual.</span>
             </button>
             <button class="opt-btn" id="opt-bl-none" onclick="selBootloader('none')">
@@ -1718,11 +1718,11 @@ function pyRenderDiscos(discosJson) {
       <div class="disk-name">
         /dev/${d.name}
         <span class="dtag dtag-${tipo}">${d.tipo}</span>
-        ${esBoot ? '<span class="dtag dtag-boot">DISCO ACTUAL · LIVE</span>' : ''}
+        ${esBoot ? `<span class="dtag dtag-boot">${t('tag-disco-actual-live')}</span>` : ''}
       </div>
       <div class="disk-meta">
         <span class="disk-size">${d.size_human}</span> · ${d.model} · ${d.tran}
-        ${d.montajes.length ? ' · <span style="color:var(--tn-orange)">Montado</span>' : ''}
+        ${d.montajes.length ? ` · <span style="color:var(--tn-orange)">${t('tag-montado')}</span>` : ''}
       </div>
       ${esBoot ? '<div class="disk-warn" style="color:var(--tn-dim);font-style:italic;">No disponible: es el disco donde corre este live ISO</div>' : ''}
       ${bajo && !esBoot ? `<div class="disk-warn">⚠ Solo ${sizeGb} GB — se recomiendan ≥30 GB</div>` : ''}
@@ -1763,7 +1763,8 @@ function selectDisk(name) {
     let tag = c.querySelector('.dtag-sel');
     if (isSel && !tag) {
       tag = document.createElement('span');
-      tag.className = 'dtag dtag-sel'; tag.textContent = 'DESTINO';
+      tag.className = 'dtag dtag-sel'; tag.setAttribute('data-i18n', 'tag-destino');
+      tag.textContent = t('tag-destino');
       c.querySelector('.disk-name').appendChild(tag);
     } else if (!isSel && tag) {
       tag.remove();
@@ -3230,7 +3231,7 @@ WantedBy=multi-user.target
             self ._status (self ._t ("status-partitioning",dev =dev ))
             self ._log (self ._t ("log-section-partitioning",dev =dev ),"step")
 
-            if not self ._v ._modo_manual :
+            if not self ._modo_manual :
                 self ._jsc ("pyIniciarCountdown",dev ,disco ["model"],disco ["size_human"])
                 for i in range (10 ,0 ,-1 ):
                     if self ._abortado :
@@ -3269,7 +3270,7 @@ WantedBy=multi-user.target
                 return
             self ._log (self ._t ("log-disk-not-mounted",dev =dev ),"ok")
 
-            if self ._v ._modo_manual :
+            if self ._modo_manual :
                 # ── MODO MANUAL ──────────────────────────────────────────
                 # El usuario ya particionó (y puede que ya haya formateado)
                 # el disco a mano en una terminal real. dev_efi/dev_root
@@ -3277,8 +3278,8 @@ WantedBy=multi-user.target
                 # confirmar_root_manual() (InstaladorAPI), que ya los
                 # validó contra detectar_particiones_manual() — no se
                 # vuelve a tocar el esquema de particiones acá.
-                dev_efi =self ._v ._modo_manual_efi
-                dev_root =self ._v ._modo_manual_root
+                dev_efi =self ._modo_manual_efi
+                dev_root =self ._modo_manual_root
 
                 if not dev_root :
                     self ._step ("part","error")
@@ -3327,7 +3328,7 @@ WantedBy=multi-user.target
                 _fstype_actual =_fstype_actual .strip ()if _rc_fs ==0 else ""
 
                 if not _fstype_actual :
-                    if self ._v ._modo_usb :
+                    if self ._modo_usb :
                         rc ,_ =self ._run_cmd (["mkfs.ext4","-O","^has_journal","-F",dev_root ])
                     else :
                         rc ,_ =self ._run_cmd (["mkfs.btrfs","-f","-L","AvalOS",dev_root ])
@@ -3335,11 +3336,11 @@ WantedBy=multi-user.target
                         self ._step ("format","error")
                         self ._jsc ("pyErrorPaso",self ._t ("err-mkfs-failed",dev_root =dev_root ))
                         self ._limpiar_montajes ();return
-                    _fstype_actual ="ext4"if self ._v ._modo_usb else "btrfs"
+                    _fstype_actual ="ext4"if self ._modo_usb else "btrfs"
                 else :
                     self ._log (self ._t ("log-manual-fs-detected",dev_root =dev_root ,fstype =_fstype_actual ),"ok")
 
-                if _fstype_actual =="btrfs"and not self ._v ._modo_usb :
+                if _fstype_actual =="btrfs"and not self ._modo_usb :
                     _btrfs_tmp ="/tmp/btrfs_setup"
                     rc_mnt ,_ =self ._run_cmd (["mount",dev_root ,_btrfs_tmp ,"-o","compress=zstd"],
                     pre_mkdir =_btrfs_tmp )
@@ -3350,7 +3351,7 @@ WantedBy=multi-user.target
 
                     # Según lo acordado: crear solo los subvolúmenes que
                     # falten, sin pisar los que el usuario ya armó a mano.
-                    _existentes =set (self ._v ._modo_manual_subvols_existentes )
+                    _existentes =set (self ._modo_manual_subvols_existentes )
                     _subvols =["@","@home","@snapshots","@log","@cache","@tmp"]
                     _creados =[]
                     for sv in _subvols :
@@ -4381,7 +4382,7 @@ if __name__ =="__main__":
     win .events .loaded +=_on_loaded
 
     try :
-        webview .start (debug =True )
+        webview .start (debug =os .environ .get ("AVALOS_DEBUG")=="1")
     except Exception as e :
         print (f"ERROR al iniciar pywebview: {e }")
         print ("Asegúrate de que webkit2gtk-4.1 esté instalado:")
