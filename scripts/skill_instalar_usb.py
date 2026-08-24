@@ -346,7 +346,7 @@ def _bytes_a_human (b :int )->str :
 # tamaño u orden.
 _GUID_EFI_SYSTEM_PARTITION ="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 
-def detectar_particiones_manual (dev :str )->dict :
+def detectar_particiones_manual (dev :str ,uefi :bool )->dict :
     """Modo manual: analiza lo que el usuario dejó particionado a mano en
     'dev' (ej. /dev/nvme0n1) y separa la partición EFI/boot de las
     candidatas a root.
@@ -361,6 +361,20 @@ def detectar_particiones_manual (dev :str )->dict :
     de este instalador). sfdisk detecta solo internamente si el disco es
     GPT y avisa por stderr en vez de fallar, así que no hace falta
     detectar la tabla nosotros mismos antes de llamarlo.
+
+    'uefi' (booleano, viene de es_uefi() del sistema en vivo) decide qué
+    SIGNIFICA el flag bootable en MBR: en BIOS Legacy no existe el
+    concepto de partición EFI — el flag bootable marca directamente la
+    partición que contiene /boot (con frecuencia la única partición del
+    disco), así que en ese caso nunca se descarta como "EFI", siempre
+    queda como candidata a root. Solo si el firmware es UEFI pero el
+    disco resultó estar en MBR (caso inusual, p.ej. "UEFI CSM/legacy
+    boot") se sigue tratando el flag bootable como equivalente al GUID
+    GPT de ESP, porque en ese caso sí puede haber una partición separada
+    pensada para el firmware. Confirmado con ArchWiki/foros: en BIOS/MBR
+    "lo que quieres bootable es tu directorio raíz, o /boot si está
+    separado" — nunca una partición EFI real, ese concepto no existe sin
+    UEFI.
 
     Devuelve {"efi": "/dev/X" | "", "candidatas_root": [ {"name","size_b",
     "size_human","fstype"} , ... ], "es_gpt": bool}. No decide sola cuál
@@ -392,8 +406,13 @@ def detectar_particiones_manual (dev :str )->dict :
 
     _efi =""
     _boot_flags :set [str ]=set ()
-    if not _es_gpt :
-        # MBR: preguntarle a sfdisk qué partición tiene el flag bootable.
+    if not _es_gpt and uefi :
+        # MBR + firmware UEFI (caso inusual: UEFI en modo legacy/CSM):
+        # preguntarle a sfdisk qué partición tiene el flag bootable, igual
+        # que hace el modo automático de este instalador para marcar la
+        # partición equivalente a ESP. En BIOS puro (uefi=False) esta
+        # llamada no hace falta — el flag bootable jamás se interpreta
+        # como EFI en ese caso, así que no vale la pena el subprocess.
         # 'sfdisk -A dev' sin número de partición = modo listado (confirmado
         # en sfdisk(8)). No falla si el disco resulta ser GPT — solo avisa
         # por stderr y entra en modo PMBR, así que es seguro llamarlo aunque
@@ -419,7 +438,7 @@ def detectar_particiones_manual (dev :str )->dict :
 
         _es_esta_efi =(
         (_es_gpt and _parttype ==_GUID_EFI_SYSTEM_PARTITION )
-        or (not _es_gpt and _name in _boot_flags )
+        or (not _es_gpt and uefi and _name in _boot_flags )
         )
         if _es_esta_efi and not _efi :
             _efi ="/dev/"+_name
@@ -1157,7 +1176,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
         background:rgba(247,118,142,.08); border-bottom:1px solid rgba(247,118,142,.25);
         color:var(--tn-red); line-height:1.5; flex-shrink:0;
         display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <span data-i18n="warn-auto-partition">⚠ El particionado automático borra <strong>todo</strong> el disco elegido sin posibilidad de deshacer. Si preferís controlarlo vos mismo, usá el modo manual.</span>
+        <span data-i18n="warn-auto-partition">⚠ El particionado automático borra <strong>todo</strong> el disco elegido sin posibilidad de deshacer. Si prefieres controlarlo tú mismo, usa el modo manual.</span>
         <button id="btn-manual-mode" onclick="abrirModoManual()" data-i18n="btn-manual-mode"
           style="flex-shrink:0;padding:6px 12px;font-size:10px;background:#24283b;color:#c0caf5;
                  border:1px solid var(--tn-red);border-radius:6px;cursor:pointer;white-space:nowrap;">
@@ -1554,6 +1573,14 @@ function applyLang(code) {
   document.title = t('title');
   const llc = document.getElementById('log-lines-count');
   if (llc) llc.textContent = t('log-lines-count', { n: logLines });
+  // BUG-i18n FIX: las tarjetas de disco (pyRenderDiscos) se arman con
+  // innerHTML compuesto por t() en el momento de creación, no con
+  // data-i18n — mismo problema estructural que PASOS arriba, mismo tipo
+  // de solución: si ya se listaron discos, volver a renderizarlos con el
+  // idioma nuevo. pyRenderDiscos() ya preserva cuál estaba seleccionado.
+  if (_ultimoDiscosJson) {
+    pyRenderDiscos(_ultimoDiscosJson);
+  }
 }
 
 function chooseLang(code) {
@@ -1690,7 +1717,22 @@ try {
 }
 
 // ── Disk selection ────────────────────────────────────────────────
+// BUG-i18n: pyRenderDiscos() se invoca UNA sola vez desde Python al
+// listar discos (InstaladorAPI.iniciar_instalacion / init), así que las
+// tarjetas de disco (incluyendo tag-disco-actual-live y tag-montado, que
+// se inyectan vía t() en el momento de creación) quedaban congeladas en
+// el idioma que estaba activo en ese instante. Si el usuario cambiaba de
+// idioma DESPUÉS de que la lista ya cargó, las tarjetas nunca se
+// actualizaban porque no tienen data-i18n (son innerHTML compuesto, no
+// un solo nodo de texto) y applyLang() nunca volvía a llamar a
+// pyRenderDiscos(). Fix: cachear el último JSON recibido para poder
+// re-renderizar la lista completa desde applyLang() sin pedirle los
+// datos de nuevo a Python.
+let _ultimoDiscosJson = null;
+
 function pyRenderDiscos(discosJson) {
+  _ultimoDiscosJson = discosJson;
+  const _seleccionPrevia = _selDisco;
   const discos = JSON.parse(discosJson);
   const cont = document.getElementById('disk-list');
   cont.innerHTML = '';
@@ -1730,7 +1772,15 @@ function pyRenderDiscos(discosJson) {
     if (!esBoot) div.onclick = () => selectDisk(d.name);
     cont.appendChild(div);
   });
-  if (autoSel) selectDisk(autoSel);
+  // Preservar la selección del usuario si ya había una y sigue existiendo
+  // en la nueva lista (ej. re-render por cambio de idioma) — solo caer a
+  // auto-selección la primera vez que se lista, cuando no había nada elegido.
+  const _sigueExistiendo = _seleccionPrevia && discos.some(d => d.name === _seleccionPrevia);
+  if (_sigueExistiendo) {
+    selectDisk(_seleccionPrevia);
+  } else if (autoSel) {
+    selectDisk(autoSel);
+  }
   // Show banner only if there's a boot disk in the list
   const hasBoot = discos.some(d => d.es_arranque);
   const banner = document.getElementById('live-disk-banner');
@@ -2321,7 +2371,7 @@ class InstaladorAPI :
         lista completa para que el wizard se la ofrezca al usuario en un
         dropdown; la decisión final llega después por
         confirmar_root_manual()."""
-        _info =detectar_particiones_manual (disco )
+        _info =detectar_particiones_manual (disco ,es_uefi ())
         _candidatas =_info ["candidatas_root"]
 
         if not _candidatas :
@@ -2516,6 +2566,21 @@ class VentanaInstalador :
                 except Exception :
                     pass
             return -3 ,""
+
+    @staticmethod
+    def _salida_indica_error_gpg (salida :str )->bool :
+        """Detecta si la salida de pacman apunta a un problema de confianza/firma GPG
+        (clave no confiable, firma inválida, keyring corrupto) en vez de un simple
+        problema de conectividad."""
+        if not salida :
+            return False
+        _s =salida .lower ()
+        _marcadores =(
+        "unknown trust","signature from","invalid or corrupted",
+        "keyring is not writable","key could not be looked up",
+        "pgp signature",
+        )
+        return any (m in _s for m in _marcadores )
 
     def _run_chroot (self ,cmd :list [str ],timeout :int =300 )->tuple [int ,str ]:
         return self ._run_cmd (["arch-chroot",str (MOUNT_ROOT )]+cmd ,timeout =timeout )
@@ -2826,7 +2891,7 @@ DISTRIB_DESCRIPTION="AvalOS"
             to_append =""
             if "[avalos]"not in existing :
 
-                _fp ="310A08970CFBDC61"
+                _fp ="60FD7887C1DA5B080281B9B8F548844B24E0379D"
                 _tmp =MOUNT_ROOT /"tmp"/"avalos.gpg"
                 _rc ,_ =self ._run_cmd ([
                 "bash","-c",
@@ -3221,7 +3286,12 @@ WantedBy=multi-user.target
                 self ._t ("log-missing-tools",faltantes =", ".join (faltantes ),paquetes =", ".join (_paquetes_faltantes )),
                 "warn"
                 )
-                self ._run_cmd (["pacman","-Sy","--noconfirm","--needed"]+_paquetes_faltantes ,timeout =120 )
+                _rc_tools ,_out_tools =self ._run_cmd (["pacman","-Sy","--noconfirm","--needed"]+_paquetes_faltantes ,timeout =120 )
+                if _rc_tools !=0 :
+                    if self ._salida_indica_error_gpg (_out_tools ):
+                        self ._log (self ._t ("log-pacman-gpg-signature-issue"),"err")
+                    else :
+                        self ._log (self ._t ("log-pacman-sync-failed",rc =_rc_tools ),"warn")
             self ._step ("tools","done")
             avanzar ()
 
@@ -3584,17 +3654,24 @@ WantedBy=multi-user.target
             self ._step ("mirrors","active")
             self ._status (self ._t ("status-optimizing-mirrors"))
             self ._log (self ._t ("log-section-mirrors"),"step")
-            self ._run_cmd (["pacman","-Sy","--noconfirm","--needed","reflector"],timeout =120 )
-            rc ,_ =self ._run_cmd ([
-            "reflector","--country","SV,US,MX,GT,JP",
-            "--latest","10","--sort","rate",
-            "--protocol","https","--save","/etc/pacman.d/mirrorlist",
-            ],timeout =120 )
-            if rc ==0 :
-                self ._step ("mirrors","done",self ._t ("step-mirrors-optimized"))
-            else :
+            _rc_refl_install ,_out_refl_install =self ._run_cmd (["pacman","-Sy","--noconfirm","--needed","reflector"],timeout =120 )
+            if _rc_refl_install !=0 :
                 self ._step ("mirrors","skip",self ._t ("step-mirrors-default"))
-                self ._log (self ._t ("log-reflector-fail"),"warn")
+                if self ._salida_indica_error_gpg (_out_refl_install ):
+                    self ._log (self ._t ("log-pacman-gpg-signature-issue"),"err")
+                else :
+                    self ._log (self ._t ("log-reflector-install-fail"),"warn")
+            else :
+                rc ,_ =self ._run_cmd ([
+                "reflector","--country","SV,US,MX,GT,JP",
+                "--latest","10","--sort","rate",
+                "--protocol","https","--save","/etc/pacman.d/mirrorlist",
+                ],timeout =120 )
+                if rc ==0 :
+                    self ._step ("mirrors","done",self ._t ("step-mirrors-optimized"))
+                else :
+                    self ._step ("mirrors","skip",self ._t ("step-mirrors-default"))
+                    self ._log (self ._t ("log-reflector-fail"),"warn")
             avanzar ()
 
             if self ._abortado :self ._limpiar_montajes ();return
@@ -3642,9 +3719,10 @@ WantedBy=multi-user.target
                 _target_headers ="linux-avalos-compat-headers"
 
             def _pacman_disponible (pkg ,intentos =4 ,espera =6 ):
+                _ultima_salida =""
                 for i in range (intentos ):
                     _cmd =["pacman","-Syi"if i ==0 else "-Syyi","--noconfirm",pkg ]
-                    _rc ,_ =self ._run_cmd (_cmd ,timeout =25 ,log_cls ="info")
+                    _rc ,_ultima_salida =self ._run_cmd (_cmd ,timeout =25 ,log_cls ="info")
                     if _rc ==0 :
                         return True
                     if i <intentos -1 :
@@ -3653,6 +3731,8 @@ WantedBy=multi-user.target
                         "warn"
                         )
                         time .sleep (espera )
+                if self ._salida_indica_error_gpg (_ultima_salida ):
+                    self ._log (self ._t ("log-pacman-gpg-signature-issue"),"err")
                 return False
 
             _kernel_pkg =None
