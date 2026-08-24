@@ -24,7 +24,7 @@ env:
   MARCH: x86-64-v3
   MARCH_COMPAT: x86-64-v2
   PKGBUILD_DIR: pkgs/linux-avalos
-  FALLBACK_KERNEL_VER: "7.1.8"
+  FALLBACK_KERNEL_VER: "7.1.9"
 
 jobs:
   check-version:
