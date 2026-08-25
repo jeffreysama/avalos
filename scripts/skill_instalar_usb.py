@@ -128,8 +128,8 @@ TIMEZONES =[
 
 BASE_PKGS =[
 
-"base","base-devel","linux-firmware",
-"grub","efibootmgr","os-prober","networkmanager","nm-connection-editor",
+"base","base-devel","linux-firmware","sof-firmware",
+"grub","efibootmgr","os-prober","ntfs-3g","networkmanager","nm-connection-editor",
 "sudo","bash","bash-completion","nano","vim","git","curl","wget","htop",
 "python","python-pip","man-db","man-pages","less","openssh",
 "zip","unzip","p7zip","zram-generator",
@@ -148,14 +148,14 @@ BTRFS_PKGS =[
 
 DRIVER_PKGS_AMD =[
 "mesa","mesa-utils","vulkan-radeon","vulkan-icd-loader","vulkan-tools",
-"libva-mesa-driver","libva-utils","radeontop","gstreamer-vaapi",
+"libva-mesa-driver","libva-utils","radeontop","gst-plugin-va",
 "libva","lib32-mesa","lib32-vulkan-radeon",
 ]
 
 DRIVER_PKGS_INTEL =[
 "mesa","mesa-utils","vulkan-intel","vulkan-icd-loader","vulkan-tools",
 "intel-media-driver","libva-intel-driver","libva-utils","libva",
-"gstreamer-vaapi","lib32-mesa","lib32-vulkan-intel",
+"gst-plugin-va","lib32-mesa","lib32-vulkan-intel",
 ]
 
 HYPRLAND_PKGS =[
@@ -193,12 +193,10 @@ GAMING_PKGS =[
 "lib32-gnutls","lib32-libpulse","lib32-alsa-plugins",
 "lib32-libx11","lib32-libxext","lib32-libxcomposite",
 "lib32-libxrandr","lib32-libxinerama","lib32-libxi",
-"lib32-sdl2","lib32-freetype2",
-"lib32-gst-plugins-base","lib32-gst-plugins-good",
+"lib32-sdl2-compat","lib32-freetype2",
+"lib32-gst-plugins-base-libs","lib32-gst-plugins-good",
 
 "vkd3d",
-
-"dxvk",
 
 "gamemode","lib32-gamemode",
 
@@ -208,7 +206,7 @@ GAMING_PKGS =[
 
 "flatpak",
 
-"lib32-pipewire","lib32-wireplumber",
+"lib32-pipewire",
 
 "gst-plugins-bad","gst-plugins-ugly","gst-libav",
 ]
