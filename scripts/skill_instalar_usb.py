@@ -3667,6 +3667,16 @@ WantedBy=multi-user.target
                 ],timeout =120 )
                 if rc ==0 :
                     self ._step ("mirrors","done",self ._t ("step-mirrors-optimized"))
+                    try :
+                        with open ("/etc/pacman.d/mirrorlist","a")as _mlf :
+                            _mlf .write (
+                            "\n# Fallback agregado por el instalador: mirror grande y "
+                            "siempre completo (incluye multilib), por si los mirrors "
+                            "regionales de reflector tienen multilib incompleto/viejo\n"
+                            "Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch\n"
+                            )
+                    except Exception as _e_ml :
+                        self ._log (f"[WARN] No se pudo agregar mirror de respaldo: {_e_ml }","warn")
                 else :
                     self ._step ("mirrors","skip",self ._t ("step-mirrors-default"))
                     self ._log (self ._t ("log-reflector-fail"),"warn")
@@ -3732,6 +3742,20 @@ WantedBy=multi-user.target
                 if self ._salida_indica_error_gpg (_ultima_salida ):
                     self ._log (self ._t ("log-pacman-gpg-signature-issue"),"err")
                 return False
+
+            # Canario de multilib: lib32-glibc es el paquete mas fundamental
+            # de multilib (dependencia de TODO lo demas en lib32-*, existe
+            # desde siempre). Si esto no resuelve tras reintentos, multilib
+            # esta roto/desincronizado en el mirror actual — mejor cortar
+            # aca con un error claro que dejar que pacstrap truene 10 minutos
+            # despues con una lista larga de "target not found" en paquetes
+            # lib32 que en realidad SI existen (visto en producción: mirrors
+            # regionales a veces traen core/extra al dia pero multilib viejo
+            # o incompleto, y "pacman -Sy" no marca eso como error fatal).
+            self ._log (self ._t ("log-checking-multilib"),"info")
+            if not _pacman_disponible ("lib32-glibc"):
+                self ._jsc ("pyErrorFatal",self ._t ("err-multilib-unreachable"))
+                return
 
             _kernel_pkg =None
             _headers_pkg =None
