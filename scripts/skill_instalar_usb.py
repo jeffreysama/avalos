@@ -194,7 +194,7 @@ GAMING_PKGS =[
 "lib32-libx11","lib32-libxext","lib32-libxcomposite",
 "lib32-libxrandr","lib32-libxinerama","lib32-libxi",
 "lib32-sdl2-compat","lib32-freetype2",
-"lib32-gst-plugins-base-libs","lib32-gst-plugins-good",
+"lib32-gst-plugins-base-libs",
 
 "vkd3d",
 
