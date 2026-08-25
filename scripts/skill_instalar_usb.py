@@ -3743,20 +3743,6 @@ WantedBy=multi-user.target
                     self ._log (self ._t ("log-pacman-gpg-signature-issue"),"err")
                 return False
 
-            # Canario de multilib: lib32-glibc es el paquete mas fundamental
-            # de multilib (dependencia de TODO lo demas en lib32-*, existe
-            # desde siempre). Si esto no resuelve tras reintentos, multilib
-            # esta roto/desincronizado en el mirror actual — mejor cortar
-            # aca con un error claro que dejar que pacstrap truene 10 minutos
-            # despues con una lista larga de "target not found" en paquetes
-            # lib32 que en realidad SI existen (visto en producción: mirrors
-            # regionales a veces traen core/extra al dia pero multilib viejo
-            # o incompleto, y "pacman -Sy" no marca eso como error fatal).
-            self ._log (self ._t ("log-checking-multilib"),"info")
-            if not _pacman_disponible ("lib32-glibc"):
-                self ._jsc ("pyErrorFatal",self ._t ("err-multilib-unreachable"))
-                return
-
             _kernel_pkg =None
             _headers_pkg =None
 
@@ -3796,6 +3782,27 @@ WantedBy=multi-user.target
                 self ._log (self ._t ("log-gaming-skipped"),"info")
             self ._log (self ._t ("log-gpu-detected",gpu_vendor =gpu_info ["vendor"].upper (),drivers =", ".join (gpu_info ["pkgs"][:3 ])),"info")
             self ._log (self ._t ("log-total-packages",total =len (pkgs ),preview =", ".join (pkgs [:8 ]),extra =max (0 ,len (pkgs )-8 )),"info")
+
+            self ._log (self ._t ("log-checking-multilib"),"info")
+            _pf_ok =False
+            _pf_out =""
+            for _pf_intento in range (3 ):
+                _pf_cmd =["pacman","-Sp"if _pf_intento ==0 else "-Syyp","--noconfirm"]+pkgs
+                _pf_rc ,_pf_out =self ._run_cmd (_pf_cmd ,timeout =60 ,log_cls ="info")
+                if _pf_rc ==0 :
+                    _pf_ok =True
+                    break
+                if _pf_intento <2 :
+                    self ._log (
+                    self ._t ("log-kernel-retry",pkg ="multilib",intento =_pf_intento +2 ,total =3 ),
+                    "warn"
+                    )
+                    time .sleep (6 )
+            if not _pf_ok :
+                _pf_faltantes =sorted (set (re .findall (r"target not found:\s*(\S+)",_pf_out )))
+                _pf_detalle =", ".join (_pf_faltantes )if _pf_faltantes else _pf_out .strip ()[-300 :]
+                self ._jsc ("pyErrorFatal",self ._t ("err-multilib-unreachable",detalle =_pf_detalle ))
+                return
 
             rc ,_ =self ._run_cmd (
             ["pacstrap","-c",str (MOUNT_ROOT )]+pkgs ,
