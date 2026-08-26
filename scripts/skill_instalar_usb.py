@@ -128,7 +128,11 @@ TIMEZONES =[
 
 BASE_PKGS =[
 
-"base","base-devel","linux-firmware","sof-firmware",
+"base","base-devel",
+"linux-firmware-amdgpu","linux-firmware-radeon","linux-firmware-intel",
+"linux-firmware-realtek","linux-firmware-atheros","linux-firmware-broadcom",
+"linux-firmware-cirrus","linux-firmware-mediatek","linux-firmware-other",
+"sof-firmware",
 "grub","efibootmgr","os-prober","ntfs-3g","networkmanager","nm-connection-editor",
 "sudo","bash","bash-completion","nano","vim","git","curl","wget","htop",
 "python","python-pip","man-db","man-pages","less","openssh",
@@ -3136,8 +3140,7 @@ Exec=Hyprland
 Type=Application
 """)
 
-        for gtk_ver in ("gtk-3.0","gtk-4.0"):
-            self ._escribir (f"{home }/.config/{gtk_ver }/settings.ini","""\
+        _gtk_fallback ="""\
 [Settings]
 gtk-theme-name = Adwaita-dark
 gtk-icon-theme-name = Papirus-Dark
@@ -3145,7 +3148,14 @@ gtk-font-name = JetBrainsMono Nerd Font 11
 gtk-cursor-theme-name = capitaine-cursors-dark
 gtk-cursor-theme-size = 24
 gtk-application-prefer-dark-theme = true
-""")
+"""
+        for gtk_ver in ("gtk-3.0","gtk-4.0"):
+            # Prioriza configs/gtk/settings.ini del repo (mismo patron que
+            # hyprland/waybar/mako/etc mas arriba); si no existe todavia en
+            # /usr/share/avalos/configs/gtk/, usa el default de siempre --
+            # asi no se rompe nada aunque configs/gtk/ aun no este conectado.
+            _gtk_contenido =_leer_config ("gtk/settings.ini")or _gtk_fallback
+            self ._escribir (f"{home }/.config/{gtk_ver }/settings.ini",_gtk_contenido )
 
         bashrc_extra ="""\
 
@@ -3713,6 +3723,25 @@ WantedBy=multi-user.target
             avanzar ()
 
             if self ._abortado :self ._limpiar_montajes ();return
+
+            # Sincronizacion de hora ANTES de cualquier operacion de red: si
+            # el reloj del sistema esta mal (bateria CMOS muerta, o NTP que
+            # no alcanzo a sincronizar en el boot), la validacion de
+            # certificado TLS puede fallar igual contra CUALQUIER mirror --
+            # no es un problema de "este mirror en particular", es la hora
+            # local. Forzamos esto antes de tocar reflector/pacman.
+            self ._log (self ._t ("log-timesync-start"),"info")
+            self ._run_cmd (["timedatectl","set-ntp","true"],timeout =10 )
+            for _ts_intento in range (10 ):
+                _ts_rc ,_ts_out =self ._run_cmd (
+                ["timedatectl","show","-p","NTPSynchronized","--value"],timeout =5
+                )
+                if _ts_rc ==0 and "yes"in _ts_out .strip ().lower ():
+                    self ._log (self ._t ("log-timesync-ok"),"ok")
+                    break
+                time .sleep (1 )
+            else :
+                self ._log (self ._t ("log-timesync-timeout"),"warn")
 
             self ._step ("mirrors","active")
             self ._status (self ._t ("status-optimizing-mirrors"))
