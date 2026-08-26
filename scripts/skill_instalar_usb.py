@@ -985,6 +985,35 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 #cd-hint    { color: var(--ph-dim); font-size: 10.5px; margin-top: 8px; }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   OVERLAY: ELEGIR MIRROR
+══════════════════════════════════════════════════════════════════════════ */
+#ov-mirror .box {
+  background: var(--tn-surface); border: 1px solid var(--tn-yellow);
+  border-radius: 8px; padding: 28px 36px; max-width: 520px; text-align: center;
+  box-shadow: 0 0 40px rgba(224,175,104,.2); font-family: var(--font-ui);
+}
+#mirror-title   { color: var(--tn-yellow); font-size: 16px; font-weight: 700; letter-spacing: 1px; margin-bottom: 12px; }
+#mirror-body    { color: var(--tn-text); font-size: 12px; line-height: 1.7; margin-bottom: 10px; }
+#mirror-detalle { color: var(--tn-dim); font-size: 10.5px; font-family: var(--font-mono); line-height: 1.6; margin-bottom: 18px; word-break: break-word; }
+.mirror-btns    { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.mirror-btns button {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .5px;
+  border-radius: 6px; padding: 10px 14px; cursor: pointer; transition: .15s;
+}
+#btn-mirror-aceptar {
+  background: rgba(158,206,106,.1); border: 1px solid var(--tn-green); color: var(--tn-green);
+}
+#btn-mirror-aceptar:hover { background: rgba(158,206,106,.2); }
+#btn-mirror-rechazar {
+  background: rgba(122,162,247,.1); border: 1px solid var(--tn-blue); color: var(--tn-blue);
+}
+#btn-mirror-rechazar:hover { background: rgba(122,162,247,.2); }
+#btn-mirror-reintentar {
+  background: rgba(224,175,104,.1); border: 1px solid var(--tn-yellow); color: var(--tn-yellow);
+}
+#btn-mirror-reintentar:hover { background: rgba(224,175,104,.2); }
+
+/* ══════════════════════════════════════════════════════════════════════════
    OVERLAY: ERROR FATAL
 ══════════════════════════════════════════════════════════════════════════ */
 #ov-error .box {
@@ -1432,6 +1461,22 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     <span data-i18n="cd-data-permanent">Todos los datos serán eliminados permanentemente.</span></div>
     <div id="cd-num">10</div>
     <div id="cd-hint"><span data-i18n="cd-press">Pulsa</span> <kbd data-i18n="btn-abort" style="color:var(--ph-cyan);">⛔ Abortar</kbd> <span data-i18n="cd-to-cancel">para cancelar</span></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     OVERLAY: ELEGIR MIRROR (preflight de paquetes fallo tras reintentos)
+═══════════════════════════════════════════════════════════════════ -->
+<div id="ov-mirror" class="overlay">
+  <div class="box">
+    <div id="mirror-title" data-i18n="mirror-title">⚠ Problema con el mirror de paquetes</div>
+    <div id="mirror-body" data-i18n="mirror-body">Algunos paquetes no se pudieron resolver tras varios intentos — probablemente el mirror actual está atrasado o incompleto, no que el paquete no exista.</div>
+    <div id="mirror-detalle"></div>
+    <div class="mirror-btns">
+      <button id="btn-mirror-aceptar" onclick="elegirMirror('aceptar')" data-i18n="btn-mirror-aceptar">Cambiar de mirror</button>
+      <button id="btn-mirror-rechazar" onclick="elegirMirror('rechazar')" data-i18n="btn-mirror-rechazar">Lo hago yo</button>
+      <button id="btn-mirror-reintentar" onclick="elegirMirror('reintentar')" data-i18n="btn-mirror-reintentar">Reintentar igual</button>
+    </div>
   </div>
 </div>
 
@@ -2237,6 +2282,16 @@ function pyInstalacionCompleta(info) {
   document.getElementById('ov-done').classList.add('show');
 }
 
+function pyMirrorDialog(detalle) {
+  document.getElementById('mirror-detalle').textContent = detalle || '';
+  document.getElementById('ov-mirror').classList.add('show');
+}
+
+function elegirMirror(choice) {
+  document.getElementById('ov-mirror').classList.remove('show');
+  window.pywebview.api.elegir_mirror(choice);
+}
+
 function pyErrorFatal(msg) {
   stopTimer();
   document.getElementById('btn-abort').disabled = true;
@@ -2427,6 +2482,14 @@ class InstaladorAPI :
         t .start ()
         return True
 
+    def elegir_mirror (self ,choice ):
+        # Recibe el clic de uno de los 3 botones del dialog ov-mirror y
+        # libera el Event que el hilo de instalación está esperando
+        # (bloqueado en _mirror_choice_event.wait() dentro de _run_instalacion).
+        self ._v ._mirror_choice =choice
+        self ._v ._mirror_choice_event .set ()
+        return True
+
     def reiniciar_equipo (self ):
         try :
             subprocess .Popen (["systemctl","reboot"])
@@ -2470,6 +2533,8 @@ class VentanaInstalador :
         self ._modo_manual_candidatas :list [dict ]=[]
         self ._modo_manual_subvols_existentes :list [str ]=[]
         self ._config_lista =threading .Event ()
+        self ._mirror_choice_event =threading .Event ()
+        self ._mirror_choice :str |None =None
         self ._lock =threading .Lock ()
 
     def _js (self ,code :str ):
@@ -3784,25 +3849,80 @@ WantedBy=multi-user.target
             self ._log (self ._t ("log-total-packages",total =len (pkgs ),preview =", ".join (pkgs [:8 ]),extra =max (0 ,len (pkgs )-8 )),"info")
 
             self ._log (self ._t ("log-checking-multilib"),"info")
-            _pf_ok =False
-            _pf_out =""
-            for _pf_intento in range (3 ):
-                _pf_cmd =["pacman","-Sp"if _pf_intento ==0 else "-Syyp","--noconfirm"]+pkgs
-                _pf_rc ,_pf_out =self ._run_cmd (_pf_cmd ,timeout =60 ,log_cls ="info")
-                if _pf_rc ==0 :
-                    _pf_ok =True
+            _pkgs_omitidos =[]
+            while True :
+                _pf_ok =False
+                _pf_out =""
+                for _pf_intento in range (3 ):
+                    _pf_cmd =["pacman","-Sp"if _pf_intento ==0 else "-Syyp","--noconfirm"]+pkgs
+                    _pf_rc ,_pf_out =self ._run_cmd (_pf_cmd ,timeout =60 ,log_cls ="info")
+                    if _pf_rc ==0 :
+                        _pf_ok =True
+                        break
+                    if _pf_intento <2 :
+                        self ._log (
+                        self ._t ("log-kernel-retry",pkg ="multilib",intento =_pf_intento +2 ,total =3 ),
+                        "warn"
+                        )
+                        time .sleep (6 )
+                if _pf_ok :
                     break
-                if _pf_intento <2 :
+
+                _pf_faltantes =sorted (set (re .findall (r"target not found:\s*(\S+)",_pf_out )))
+                if _pf_faltantes and all (p in pkgs for p in _pf_faltantes ):
+                    # Se puede recortar: son paquetes explícitos de NUESTRA
+                    # lista (no dependencias transitivas de otra cosa), así
+                    # que sacarlos es seguro y no deja nada a medias. Visto
+                    # en producción (hilo de CachyOS, abr-may 2026, CVE en
+                    # el stack multimedia lib32): Arch a veces retira
+                    # paquetes lib32-gst-*/lib32-sdl2* de multilib entero
+                    # por semanas mientras responde a un CVE — pasa en
+                    # TODOS los mirrors por igual, así que ni reintentar ni
+                    # cambiar de mirror lo arregla. Mejor seguir sin ellos
+                    # que bloquear toda la instalación por un extra de
+                    # compatibilidad.
+                    for _p in _pf_faltantes :
+                        pkgs .remove (_p )
+                    _pkgs_omitidos +=_pf_faltantes
                     self ._log (
-                    self ._t ("log-kernel-retry",pkg ="multilib",intento =_pf_intento +2 ,total =3 ),
+                    self ._t ("log-multilib-pkg-dropped",pkgs =", ".join (_pf_faltantes )),
                     "warn"
                     )
-                    time .sleep (6 )
-            if not _pf_ok :
-                _pf_faltantes =sorted (set (re .findall (r"target not found:\s*(\S+)",_pf_out )))
+                    continue
+
+                # Ya no hay más que recortar y sigue fallando — esto no es
+                # "un par de extras caídos", puede ser el mirror/red. Aquí
+                # sí conviene que decida el usuario.
                 _pf_detalle =", ".join (_pf_faltantes )if _pf_faltantes else _pf_out .strip ()[-300 :]
-                self ._jsc ("pyErrorFatal",self ._t ("err-multilib-unreachable",detalle =_pf_detalle ))
-                return
+                self ._jsc ("pyMirrorDialog",_pf_detalle )
+                while not self ._mirror_choice_event .wait (timeout =1.0 ):
+                    if self ._abortado :
+                        self ._limpiar_montajes ();return
+                self ._mirror_choice_event .clear ()
+                _choice =self ._mirror_choice
+                self ._mirror_choice =None
+                if self ._abortado :
+                    self ._limpiar_montajes ();return
+                if _choice =="aceptar":
+                    self ._log (self ._t ("log-mirror-broadening"),"info")
+                    self ._run_cmd (
+                    ["reflector","--latest","15","--sort","rate","--protocol","https",
+                    "--save","/etc/pacman.d/mirrorlist"],timeout =120
+                    )
+                elif _choice !="reintentar":
+                    # "rechazar" (o cierre inesperado del diálogo): el
+                    # usuario prefiere resolverlo por su cuenta — cortamos
+                    # con el mismo error claro de siempre y lo dejamos usar
+                    # el botón "Reintentar" global cuando esté listo.
+                    self ._jsc ("pyErrorFatal",self ._t ("err-multilib-unreachable",detalle =_pf_detalle ))
+                    return
+                # "reintentar": vuelve a probar tal cual, con los mismos mirrors
+
+            if _pkgs_omitidos :
+                self ._log (
+                self ._t ("log-multilib-pkgs-omitidos",pkgs =", ".join (sorted (set (_pkgs_omitidos )))),
+                "warn"
+                )
 
             rc ,_ =self ._run_cmd (
             ["pacstrap","-c",str (MOUNT_ROOT )]+pkgs ,
