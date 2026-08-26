@@ -3986,6 +3986,18 @@ WantedBy=multi-user.target
                     return opts
                 fstab_out =re .sub (r'(defaults[^\s]*)',_add_noatime ,fstab_out )
 
+            # subvolid=NNN (que genfstab -U inserta solo en lineas Btrfs) es
+            # una referencia ABSOLUTA al subvolumen -- tiene prioridad sobre
+            # subvol=@nombre y por eso ROMPE grub-btrfs: al arrancar una
+            # snapshot desde el menu de GRUB, el kernel monta la snapshot
+            # via cmdline, pero systemd despues remonta root segun fstab, y
+            # con subvolid= fijo siempre vuelve al @ original sin importar
+            # que snapshot se eligio. Se saca en las dos posiciones posibles
+            # (antes o al final de la lista de opciones) para dejar solo
+            # subvol=@... funcionando como se espera.
+            fstab_out =re .sub (r'subvolid=\d+,','',fstab_out )
+            fstab_out =re .sub (r',subvolid=\d+','',fstab_out )
+
             try :
                 (MOUNT_ROOT /"etc"/"fstab").write_text (fstab_out +"\n")
             except OSError as e :
@@ -4115,6 +4127,22 @@ WantedBy=multi-user.target
                     if GRUB_UEFI_REMOVABLE or self ._modo_usb :
                         grub_cmd .append ("--removable")
                     rc ,_ =self ._run_chroot (grub_cmd )
+
+                    # Respaldo: en instalacion normal (con entrada NVRAM),
+                    # instalar TAMBIEN en la ruta fija /EFI/BOOT/BOOTX64.EFI.
+                    # Protege contra NVRAM corrupta/reseteada/no soportada
+                    # que dejaria el disco sin forma de arrancar aunque
+                    # grub-install haya funcionado bien en su momento. No
+                    # bloquea la instalacion si este paso extra falla.
+                    if rc ==0 and not (GRUB_UEFI_REMOVABLE or self ._modo_usb ):
+                        _rc_rem ,_ =self ._run_chroot ([
+                        "grub-install","--target=x86_64-efi",
+                        "--efi-directory=/boot/efi","--removable"
+                        ])
+                        self ._log (
+                        self ._t ("log-grub-removable-ok"if _rc_rem ==0 else "log-grub-removable-fail"),
+                        "ok"if _rc_rem ==0 else "warn"
+                        )
                 else :
                     rc ,_ =self ._run_chroot (["grub-install","--target=i386-pc",dev ])
 
