@@ -4188,6 +4188,13 @@ WantedBy=multi-user.target
                 rc_uuid ,uuid_out ,_ =_ejecutar (["blkid","-s","UUID","-o","value",dev_root ])
                 root_uuid =uuid_out .strip ()if rc_uuid ==0 and uuid_out .strip ()else ""
                 root_opts =(f"root=UUID={root_uuid }"if root_uuid else f"root={dev_root }")
+                if not self ._modo_usb :
+                    # Btrfs: sin esto el kernel monta el volumen top-level
+                    # (subvolid 5) en vez del subvolumen @ real -- no
+                    # arranca, cae a emergency shell. GRUB lo resuelve solo
+                    # via grub-mkconfig; rEFInd/sd-boot necesitan que se lo
+                    # pasemos a mano en el cmdline.
+                    root_opts +=" rootflags=subvol=@"
 
                 vmlinuz_files =glob .glob (str (MOUNT_ROOT /"boot"/"vmlinuz-*"))
                 kernel_name =Path (vmlinuz_files [0 ]).name .replace ("vmlinuz-","")if vmlinuz_files else "linux"
@@ -4277,6 +4284,8 @@ WantedBy=multi-user.target
                 entries_dir =loader_dir /"entries"
                 entries_dir .mkdir (parents =True ,exist_ok =True )
                 root_opts =(f"root=UUID={root_uuid }"if root_uuid else f"root={dev_root }")
+                if not self ._modo_usb :
+                    root_opts +=" rootflags=subvol=@"
                 _ucode_initrd_line =(
                 f"initrd  /AvalOS/{_ucode_name }\n"if _ucode_copied else ""
                 )
