@@ -3953,11 +3953,40 @@ WantedBy=multi-user.target
                 "warn"
                 )
 
-            rc ,_ =self ._run_cmd (
-            ["pacstrap","-c",str (MOUNT_ROOT )]+pkgs ,
-            timeout =3600 ,log_cls ="info"
-            )
-            if rc !=0 :
+            _pacstrap_ok =False
+            _pacstrap_out =""
+            for _pd_val in (None ,2 ,1 ):
+                if self ._abortado :self ._limpiar_montajes ();return
+                if _pd_val is not None :
+                    # Solo llegamos aca si el intento anterior fallo con
+                    # "failed retrieving file" para TODOS/casi todos los
+                    # paquetes -- eso, con el preflight de resolucion ya
+                    # habiendo pasado antes, es la firma tipica de una
+                    # conexion que no aguanta N descargas grandes en
+                    # paralelo (ParallelDownloads=5 por defecto). Bajar el
+                    # paralelismo no arregla un mirror caido, pero si
+                    # arregla esto -- que es lo que se vio en pruebas reales
+                    # (los .db, chicos, entraban bien; firefox/wine/firmware,
+                    # grandes, fallaban todos).
+                    self ._run_cmd (
+                    ["sed","-i",f"s/^ParallelDownloads.*/ParallelDownloads = {_pd_val }/","/etc/pacman.conf"],
+                    timeout =10
+                    )
+                    self ._log (self ._t ("log-pacstrap-retry-slower",n =_pd_val ),"warn")
+                rc ,_pacstrap_out =self ._run_cmd (
+                ["pacstrap","-c",str (MOUNT_ROOT )]+pkgs ,
+                timeout =3600 ,log_cls ="info"
+                )
+                if rc ==0 :
+                    _pacstrap_ok =True
+                    break
+                if "failed retrieving file"not in _pacstrap_out :
+                    # Otro tipo de fallo (disco lleno, permisos, etc) --
+                    # bajar el paralelismo no va a arreglar nada, no vale
+                    # la pena seguir reintentando.
+                    break
+
+            if not _pacstrap_ok :
                 self ._step ("pacstrap","error")
                 self ._jsc ("pyErrorPaso",self ._t ("err-pacstrap-failed"))
                 self ._limpiar_montajes ();return
