@@ -3746,34 +3746,59 @@ WantedBy=multi-user.target
             self ._step ("mirrors","active")
             self ._status (self ._t ("status-optimizing-mirrors"))
             self ._log (self ._t ("log-section-mirrors"),"step")
-            _rc_refl_install ,_out_refl_install =self ._run_cmd (["pacman","-Sy","--noconfirm","--needed","reflector"],timeout =120 )
-            if _rc_refl_install !=0 :
-                self ._step ("mirrors","skip",self ._t ("step-mirrors-default"))
-                if self ._salida_indica_error_gpg (_out_refl_install ):
-                    self ._log (self ._t ("log-pacman-gpg-signature-issue"),"err")
-                else :
-                    self ._log (self ._t ("log-reflector-install-fail"),"warn")
-            else :
-                rc ,_ =self ._run_cmd ([
-                "reflector","--country","SV,US,MX,GT,JP",
-                "--latest","10","--sort","rate",
-                "--protocol","https","--save","/etc/pacman.d/mirrorlist",
-                ],timeout =120 )
-                if rc ==0 :
+
+            _rc_rm_install ,_ =self ._run_cmd (["pacman","-Sy","--noconfirm","--needed","rate-mirrors"],timeout =120 )
+            _mirrors_ok =False
+            if _rc_rm_install ==0 :
+                _rc_rm ,_ =self ._run_cmd ([
+                "rate-mirrors","arch","--allow-root","--save","/etc/pacman.d/mirrorlist",
+                ],timeout =90 )
+                if _rc_rm ==0 :
+                    _mirrors_ok =True
                     self ._step ("mirrors","done",self ._t ("step-mirrors-optimized"))
-                    try :
-                        with open ("/etc/pacman.d/mirrorlist","a")as _mlf :
-                            _mlf .write (
-                            "\n# Fallback agregado por el instalador: mirror grande y "
-                            "siempre completo (incluye multilib), por si los mirrors "
-                            "regionales de reflector tienen multilib incompleto/viejo\n"
-                            "Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch\n"
-                            )
-                    except Exception as _e_ml :
-                        self ._log (f"[WARN] No se pudo agregar mirror de respaldo: {_e_ml }","warn")
-                else :
+                    self ._log (self ._t ("log-ratemirrors-ok"),"ok")
+
+            if _mirrors_ok :
+                try :
+                    with open ("/etc/pacman.d/mirrorlist","a")as _mlf :
+                        _mlf .write (
+                        "\n# Fallback agregado por el instalador: mirror grande y "
+                        "siempre completo (incluye multilib), por si el mirror "
+                        "elegido igual tiene algun hueco\n"
+                        "Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch\n"
+                        )
+                except Exception as _e_ml :
+                    self ._log (f"[WARN] No se pudo agregar mirror de respaldo: {_e_ml }","warn")
+            else :
+                self ._log (self ._t ("log-ratemirrors-fallback"),"warn")
+                _rc_refl_install ,_out_refl_install =self ._run_cmd (["pacman","-Sy","--noconfirm","--needed","reflector"],timeout =120 )
+                if _rc_refl_install !=0 :
                     self ._step ("mirrors","skip",self ._t ("step-mirrors-default"))
-                    self ._log (self ._t ("log-reflector-fail"),"warn")
+                    if self ._salida_indica_error_gpg (_out_refl_install ):
+                        self ._log (self ._t ("log-pacman-gpg-signature-issue"),"err")
+                    else :
+                        self ._log (self ._t ("log-reflector-install-fail"),"warn")
+                else :
+                    rc ,_ =self ._run_cmd ([
+                    "reflector","--country","SV,US,MX,GT,JP",
+                    "--latest","10","--sort","rate",
+                    "--protocol","https","--save","/etc/pacman.d/mirrorlist",
+                    ],timeout =120 )
+                    if rc ==0 :
+                        self ._step ("mirrors","done",self ._t ("step-mirrors-optimized"))
+                        try :
+                            with open ("/etc/pacman.d/mirrorlist","a")as _mlf :
+                                _mlf .write (
+                                "\n# Fallback agregado por el instalador: mirror grande y "
+                                "siempre completo (incluye multilib), por si los mirrors "
+                                "regionales de reflector tienen multilib incompleto/viejo\n"
+                                "Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch\n"
+                                )
+                        except Exception as _e_ml :
+                            self ._log (f"[WARN] No se pudo agregar mirror de respaldo: {_e_ml }","warn")
+                    else :
+                        self ._step ("mirrors","skip",self ._t ("step-mirrors-default"))
+                        self ._log (self ._t ("log-reflector-fail"),"warn")
             avanzar ()
 
             if self ._abortado :self ._limpiar_montajes ();return
@@ -3974,7 +3999,7 @@ WantedBy=multi-user.target
                     )
                     self ._log (self ._t ("log-pacstrap-retry-slower",n =_pd_val ),"warn")
                 rc ,_pacstrap_out =self ._run_cmd (
-                ["pacstrap","-c",str (MOUNT_ROOT )]+pkgs ,
+                ["pacstrap","-c","--needed",str (MOUNT_ROOT )]+pkgs ,
                 timeout =3600 ,log_cls ="info"
                 )
                 if rc ==0 :
