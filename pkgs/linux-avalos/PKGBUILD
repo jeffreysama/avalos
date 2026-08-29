@@ -1,323 +1,45 @@
-pkgbase=linux-avalos
-pkgname=(linux-avalos linux-avalos-headers)
-pkgver=7.1.9
+pkgname=linux-avalos-firmware
+pkgver=1
 pkgrel=1
-pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
-arch=(x86_64)
+pkgdesc="Firmware bundle de AvalOS — todos los vendors oficiales de Arch, EXCEPTO NVIDIA (AMD/Intel only)"
+arch=(any)
 url="https://github.com/jeffreysama/avalos"
-license=(GPL-2.0-only)
-makedepends=(bc bison flex python clang llvm lld pahole cpio perl tar xz zstd git libelf)
-install=linux-avalos.install
-options=(!strip)
+license=('custom')
 
-_majorver=${pkgver%%.*}
+# NVIDIA en AvalOS es "por su cuenta": el driver propietario y su firmware
+# quedan totalmente fuera de este repo, a criterio del usuario. Por eso
+# aqui se depende de cada linux-firmware-<vendor> POR SEPARADO y nunca del
+# metapaquete 'linux-firmware' de Arch — ese metapaquete trae
+# linux-firmware-nvidia como dependencia obligatoria (verificado en
+# archlinux.org/packages: linux-firmware-nvidia -> "Required By:
+# linux-firmware"), asi que instalarlo colaria NVIDIA de vuelta aunque
+# nadie lo haya pedido. 'provides'+'conflicts' contra 'linux-firmware'
+# evitan que alguien lo instale encima despues (a mano, o como dependencia
+# de otro paquete) y reintroduzca NVIDIA por la puerta trasera.
+provides=('linux-firmware')
+conflicts=('linux-firmware')
 
-source=(
-    "https://cdn.kernel.org/pub/linux/kernel/v${_majorver}.x/linux-${pkgver}.tar.xz"
-    "config"
+depends=(
+    'linux-firmware-whence'
+    'linux-firmware-amdgpu'
+    'linux-firmware-radeon'
+    'linux-firmware-intel'
+    'linux-firmware-atheros'
+    'linux-firmware-broadcom'
+    'linux-firmware-realtek'
+    'linux-firmware-mediatek'
+    'linux-firmware-cirrus'
+    'linux-firmware-marvell'
+    'linux-firmware-mellanox'
+    'linux-firmware-qcom'
+    'linux-firmware-qlogic'
+    'linux-firmware-nfp'
+    'linux-firmware-liquidio'
+    'linux-firmware-other'
+    'amd-ucode'
+    'intel-ucode'
 )
-sha256sums=(
-    'SKIP'
-    'SKIP'
-)
 
-prepare() {
-    cd "linux-${pkgver}"
-
-    if [[ -f ../bore-scheduler.patch ]]; then
-        echo "  → Aplicando parche BORE scheduler..."
-        patch -Np1 -i ../bore-scheduler.patch
-    fi
-
-    echo "  → Aplicando config base..."
-    # FIX-CONFIG-VACIO: antes solo se chequeaba el marcador AVALOS_FALLBACK_DEFCONFIG.
-    # Si ../config queda vacío por otra razón (ej. gen-config.sh se corta a mitad de
-    # camino), ese grep no matchea, cae al else, y se copia un .config vacío sin que
-    # nadie se entere — olddefconfig rellena TODO con defaults desnudos del kernel
-    # (nada de overlay/dm_snapshot/crypto_lz4, y probablemente le falten más cosas).
-    # Ahora se valida tamaño real, no solo el marcador.
-    local _cfg_lines=0
-    [[ -f ../config ]] && _cfg_lines=$(wc -l < ../config)
-    if grep -q 'AVALOS_FALLBACK_DEFCONFIG' ../config 2>/dev/null || (( _cfg_lines < 500 )); then
-        echo "  → ../config ausente/incompleto (${_cfg_lines} líneas, se esperan miles) — generando base con defconfig..."
-        make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld defconfig
-    else
-        echo "  → Usando ../config (${_cfg_lines} líneas)"
-        cp ../config .config
-    fi
-
-    local _expected_lv="-${pkgbase#linux-}"
-    scripts/config --set-str CONFIG_LOCALVERSION "${_expected_lv}"
-
-    scripts/config \
-        -e CONFIG_X86_FEATURE_NAMES \
-        -e CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE \
-        -d CONFIG_CC_OPTIMIZE_FOR_SIZE
-
-    scripts/config \
-        -e CONFIG_HZ_1000 \
-        --set-val CONFIG_HZ 1000 \
-        -d CONFIG_HZ_250 \
-        -e CONFIG_PREEMPT_DYNAMIC
-
-    scripts/config \
-        -e CONFIG_LTO_CLANG_THIN \
-        -d CONFIG_LTO_NONE \
-        -e CONFIG_FORTIFY_SOURCE \
-        -e CONFIG_EFI_STUB \
-        -e CONFIG_EFI_MIXED
-
-    scripts/config \
-        -e CONFIG_DRM_AMDGPU \
-        -e CONFIG_DRM_AMDGPU_SI \
-        -e CONFIG_DRM_AMDGPU_CIK \
-        -e CONFIG_DRM_AMDGPU_USERPTR \
-        -e CONFIG_DRM_AMD_DC \
-        -e CONFIG_DRM_AMD_DC_HDCP \
-        -e CONFIG_DRM_AMD_DC_DCN \
-        -d CONFIG_DRM_AMDGPU_GART_DEBUGFS
-
-    scripts/config \
-        -e CONFIG_DRM_I915 \
-        -e CONFIG_DRM_XE
-
-    scripts/config \
-        -d CONFIG_DRM_NOUVEAU
-
-    scripts/config \
-        -e CONFIG_X86_AMD_PSTATE
-
-    scripts/config \
-        -e CONFIG_X86_INTEL_PSTATE
-
-    scripts/config \
-        -e CONFIG_TCP_CONG_BBR \
-        -e CONFIG_NET_SCH_FQ \
-        -m CONFIG_TCP_CONG_CUBIC \
-        --set-str CONFIG_DEFAULT_TCP_CONG bbr
-
-    scripts/config \
-        -e CONFIG_MQ_IOSCHED_KYBER \
-        -e CONFIG_IOSCHED_BFQ \
-        -e CONFIG_BLK_CGROUP_IOLATENCY \
-        -e CONFIG_BLK_CGROUP_FC_APPID
-
-    scripts/config \
-        -m CONFIG_ZRAM \
-        -e CONFIG_ZRAM_WRITEBACK \
-        -e CONFIG_ZSMALLOC \
-        -e CONFIG_ZSWAP \
-        -e CONFIG_CRYPTO_ZSTD
-
-    scripts/config \
-        -d CONFIG_KASAN \
-        -d CONFIG_UBSAN \
-        -d CONFIG_DEBUG_KERNEL \
-        -d CONFIG_SLUB_DEBUG_ON \
-        -d CONFIG_MODULE_SIG_FORCE \
-        -d CONFIG_MODULE_SIG_ALL
-
-    # FIX: overlay/dm_snapshot/crypto_lz4 dependen 100% del .config base que
-    # arma gen-config.sh — si esa descarga falla en CI (red, mirror caido,
-    # etc.) gen-config.sh cae a su fallback minimo y 'make olddefconfig'
-    # sobre eso genera un kernel sin estos modulos. A diferencia de los
-    # drivers de GPU/red de arriba (forzados explicitamente con -e/-m), estos
-    # 3 nunca se forzaban, y su ausencia solo se manifiesta como bug en vivo
-    # (mkinitcpio "module not found: crypto_lz4", boot roto en live/rescate)
-    # — exactamente lo que paso el 15-ago con 7.1.8 en hardware real. Se
-    # fuerzan aqui como modulos para no depender de que el .config base los
-    # traiga bien.
-    scripts/config \
-        -m CONFIG_OVERLAY_FS \
-        -m CONFIG_DM_SNAPSHOT \
-        -m CONFIG_CRYPTO_LZ4 \
-        -m CONFIG_CRYPTO_LZ4HC
-
-    # FIX (16-ago): mismo criterio que el bloque de arriba — wifi (Atheros
-    # AR9565, chip PCI, driver ath9k; no necesita firmware externo) y el
-    # touchpad de la laptop de David tampoco se forzaban explicitamente,
-    # dependian 100% de que gen-config.sh trajera un .config completo — que
-    # es justo lo que fallo el 15-ago. Se fuerzan aqui como defensa adicional
-    # a la validacion ya arreglada en gen-config.sh, no como reemplazo de
-    # ella. Se cubre tanto el touchpad PS/2 clasico (Synaptics/ALPS/Elantech
-    # — lo mas probable en un ASUS X556UAK de esta generacion) como I2C-HID
-    # por si el hardware real resulta ser ese otro camino.
-    scripts/config \
-        -m CONFIG_ATH9K \
-        -m CONFIG_MOUSE_PS2 \
-        -e CONFIG_MOUSE_PS2_SYNAPTICS \
-        -e CONFIG_MOUSE_PS2_ALPS \
-        -e CONFIG_MOUSE_PS2_ELANTECH \
-        -m CONFIG_HID_MULTITOUCH \
-        -m CONFIG_I2C_HID_ACPI
-
-    # FIX (17-ago): bug conocido, viejo y recurrente de upstream — con
-    # Clang+ThinLTO, ciertas funciones gigantes de drivers/gpu/drm/amd/display
-    # (las dml*_ModeSupportAndSystemConfigurationFull de dcn30/dcn31/dcn314,
-    # y variantes similares en otras dcnXX segun la version del kernel)
-    # superan el limite de 2048 bytes de stack frame que el kernel chequea
-    # por defecto (CONFIG_FRAME_WARN). Con GCC no pasa (genera frames mas
-    # chicos para el mismo codigo); con ThinLTO especificamente el chequeo se
-    # hace en el LINKER (ld.lld) sobre el codigo YA optimizado por LTO, como
-    # error duro — no como warning descartable. El propio kernel ya sube este
-    # limite para builds con KASAN/KCSAN via CFLAGS por archivo (ver commits
-    # 6740ec97bcdb y 5b750b22530f de drm/amd/display), pero no cubre todas
-    # las variantes dcnXX ni todas las configs — cada version nueva de AMD
-    # display puede volver a disparar esto con un archivo dcnXX distinto. En
-    # vez de parchear codigo fuente (fragil entre bumps de version de
-    # kernel.org), se sube el limite globalmente via config: no se toca
-    # ningun .c, y cubre variantes dcnXX futuras sin mantenimiento.
-    scripts/config --set-val CONFIG_FRAME_WARN 4096
-
-    make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld olddefconfig
-
-    # Verificacion post-olddefconfig: 'make olddefconfig' puede degradar un
-    # simbolo forzado arriba si detecta una dependencia Kconfig no satisfecha
-    # (pasa en silencio, sin error visible). Si alguno de estos 3 termina
-    # deshabilitado, abortar el build ahora — en CI, con log claro — en vez
-    # de descubrirlo despues en un mkinitcpio roto en la maquina de un cliente.
-    # Se agregan CONFIG_ATH9K y CONFIG_MOUSE_PS2 al mismo chequeo — no se
-    # incluyen HID_MULTITOUCH/I2C_HID_ACPI aqui a proposito: son cobertura
-    # defensiva por si el hardware real usa ese camino en vez de PS/2, y no
-    # queremos abortar el build entero por un driver que puede no aplicar a
-    # este hardware especifico.
-    for _sym in CONFIG_OVERLAY_FS CONFIG_DM_SNAPSHOT CONFIG_CRYPTO_LZ4 CONFIG_ATH9K CONFIG_MOUSE_PS2; do
-        if ! grep -qE "^${_sym}=[ym]$" .config; then
-            echo "[ERROR] ${_sym} no quedo habilitado en .config tras olddefconfig"
-            echo "        Esto puede romper el boot live/rescate (overlay/dm_snapshot/crypto_lz4)"
-            echo "        o dejar sin wifi/touchpad el hardware real (ath9k/mouse_ps2)."
-            grep -E "^# ${_sym} is not set|^${_sym}=" .config || echo "        (${_sym} ausente del .config)"
-            exit 1
-        fi
-    done
-
-    # NOTA: el kernel mainline no tiene un símbolo Kconfig para x86-64-v2/v3/v4
-    # (verificado contra arch/x86/Kconfig.cpu — no existe, ni siquiera vía el
-    # parche de terceros que usábamos de referencia, que CachyOS ya no aplica
-    # en sus kernel-patches para esta rama). La optimización real de CPU pasa
-    # por KCFLAGS (arch/x86/Makefile: KBUILD_CFLAGS += $(KCFLAGS), como una de
-    # las últimas asignaciones — por eso pisa el "-march=x86-64 -mtune=generic"
-    # por defecto). Lo que hay que validar es que KCFLAGS traiga el march
-    # correcto, no un símbolo Kconfig que no existe.
-    if [[ ! "${KCFLAGS:-}" =~ -march=x86-64-v[234] ]]; then
-        echo "[ERROR] KCFLAGS no contiene un -march=x86-64-vN válido — revisa el workflow"
-        echo "        KCFLAGS actual: '${KCFLAGS:-<vacío>}'"
-        echo "        Sin esto el kernel compila con el march genérico por defecto, sin optimización real."
-        exit 1
-    fi
-
-    if ! grep -q "^CONFIG_LOCALVERSION=\"${_expected_lv}\"$" .config; then
-        echo "[ERROR] CONFIG_LOCALVERSION no es \"${_expected_lv}\" en .config tras olddefconfig"
-        echo "        _kver no contendrá el sufijo correcto y linux-avalos.install fallará al detectarlo."
-        grep -E '^CONFIG_LOCALVERSION=' .config || echo "        (CONFIG_LOCALVERSION no presente en .config)"
-        exit 1
-    fi
-}
-
-build() {
-    cd "linux-${pkgver}"
-    make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld all
-
-    if [[ ! -f Module.symvers ]]; then
-        echo "  → Module.symvers no encontrado tras make all — forzando generación..."
-        make LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld modules
-    fi
-}
-
-package_linux-avalos() {
-    pkgdesc="AvalOS Linux Kernel — x86-64-v3, AMD+Intel, EEVDF, Clang/LLVM, ThinLTO"
-    depends=(coreutils kmod initramfs)
-    optdepends=(
-        'wireless-regdb: configuración de canales WiFi por país'
-        'linux-firmware: firmware para hardware adicional'
-    )
-    provides=("linux=${pkgver}")
-    conflicts=("linux-avalos-compat" "linux-avalos-compat-headers" "linux-avalos-bore" "linux-avalos-bore-headers")
-
-    cd "linux-${pkgver}"
-
-    local _kver
-    _kver="$(make LLVM=1 -s kernelrelease)"
-    local modulesdir="${pkgdir}/usr/lib/modules/${_kver}"
-    mkdir -p "${modulesdir}"
-
-    echo "  → Instalando módulos…"
-    make LLVM=1 INSTALL_MOD_PATH="${pkgdir}/usr" INSTALL_MOD_STRIP=1 modules_install
-
-    # FIX: 'make modules_install' crea automaticamente un symlink 'build'
-    # (y a veces 'source') en usr/lib/modules/${_kver}/ apuntando al arbol
-    # de fuentes del kernel. package_linux-avalos-headers() tambien instala
-    # su PROPIO directorio real en esa misma ruta ${_kver}/build — con las
-    # dos cosas presentes, pacman rechaza la instalacion por conflicto de
-    # archivo entre linux-avalos y linux-avalos-headers. El symlink debe
-    # pertenecer solo al paquete de headers, asi que se borra aqui.
-    rm -f "${modulesdir}/build" "${modulesdir}/source"
-
-    local image_name
-    image_name="$(make LLVM=1 -s image_name)"
-
-    install -Dm644 "${image_name}" "${modulesdir}/vmlinuz"
-    install -Dm644 "${image_name}" "${pkgdir}/boot/vmlinuz-${pkgbase}"
-
-    echo "${pkgbase}" | install -Dm644 /dev/stdin "${modulesdir}/pkgbase"
-    install -Dm644 System.map "${modulesdir}/System.map"
-
-    mkdir -p "${pkgdir}/etc/mkinitcpio.d"
-    cat > "${pkgdir}/etc/mkinitcpio.d/${pkgbase}.preset" << EOF
-ALL_config='/etc/mkinitcpio.conf'
-ALL_kver="/usr/lib/modules/${_kver}/vmlinuz"
-PRESETS=('default' 'fallback')
-default_image="/boot/initramfs-${pkgbase}.img"
-fallback_image="/boot/initramfs-${pkgbase}-fallback.img"
-fallback_options='-S autodetect'
-EOF
-}
-
-package_linux-avalos-headers() {
-    pkgdesc="Headers del AvalOS Linux Kernel"
-    depends=("${pkgbase}")
-    provides=("linux-headers=${pkgver}")
-
-    cd "linux-${pkgver}"
-
-    local _kver
-    _kver="$(make LLVM=1 -s kernelrelease)"
-    local builddir="${pkgdir}/usr/lib/modules/${_kver}/build"
-
-    echo "  → Instalando headers en ${builddir}…"
-
-    install -Dt "${builddir}" -m644 .config Makefile System.map vmlinux
-
-    if [[ -f Module.symvers ]]; then
-        install -Dt "${builddir}" -m644 Module.symvers
-    else
-        error "Module.symvers ausente — ThinLTO no generó tabla de símbolos."
-        error "Revisar el log de 'make all' para errores de ld.lld o LTO."
-        exit 1
-    fi
-
-    install -Dt "${builddir}/kernel" -m644 kernel/Makefile
-    install -Dt "${builddir}/arch/x86" -m644 arch/x86/Makefile
-    cp -t "${builddir}" -a scripts
-
-    if [[ -f tools/objtool/objtool ]]; then
-        install -Dt "${builddir}/tools/objtool" -m755 tools/objtool/objtool
-    else
-        echo "  ⚠ tools/objtool/objtool no encontrado — omitiendo (puede afectar algunos módulos DKMS)"
-    fi
-
-    cp -a include "${builddir}/"
-    cp -a arch/x86/include "${builddir}/arch/x86/"
-
-    find . -name 'Kconfig*' -exec install -Dm644 {} "${builddir}/{}" \;
-
-    # FIX (16-ago): esto reemplazaba la ruta absoluta de build en CI
-    # (${srcdir}, algo como /home/builder/.../src/linux-7.1.8) por "/usr/src"
-    # a secas — pero los headers NO se instalan en /usr/src, se instalan en
-    # "${builddir}" (= /usr/lib/modules/${_kver}/build una vez en el sistema
-    # real). Si esta sustitucion llegaba a encontrar coincidencias, dejaba
-    # una referencia absoluta apuntando a un directorio que no existe en la
-    # maquina del cliente, en vez de a donde realmente quedan los headers —
-    # relevante para builds externos de modulos (DKMS y similares).
-    sed -i "s|${srcdir}|${builddir}|g" "${builddir}/Makefile"
+package() {
+    :
 }
