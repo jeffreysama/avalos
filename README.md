@@ -15,6 +15,7 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 - **Philosophy**: Minimalism, performance, and ease of use
 - **Target Users**: Gamers, developers, and power users who want something clean and fast
 - **Custom Kernel**: `linux-avalos` (optimized for desktop/gaming) + `linux-avalos-bore` and `linux-avalos-compat` variants
+ - `linux-avalos-bore` uses the **BORE** scheduler (Burst-Oriented Response Enhancer) by [firelzrd](https://github.com/firelzrd/bore-scheduler), with adaptations from [CachyOS](https://github.com/CachyOS/kernel-patches)
 - **Filesystem**: Btrfs with Snapper snapshots by default
 - **Pre-configured Rice**: Beautiful and functional Hyprland + Waybar + Kitty + Rofi setup included
 - **Extras**: ZRAM, BBR congestion control, carefully selected firmware (AMD/Intel only)
