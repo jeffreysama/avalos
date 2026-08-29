@@ -28,7 +28,7 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 
 ![Desktop Overview](assets/screenshot1.png)
 ![Hyprland + Opened apps](assets/screenshot2.png)
-![AvalOS Settings opened](assets/screnshot3.png)
+![AvalOS Settings opened](assets/screenshot3.png)
 ![Wallpaper selector opened](assets/screenshot4.png)
 
 ---
