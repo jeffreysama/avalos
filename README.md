@@ -26,8 +26,8 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 
 ## 📸 Screenshots
 
-![Desktop Overview](assets/screenshot1lol.png)
-![Hyprland + Opened apps](assets/screenshot2xd.png)
+![Desktop Overview](assets/screenshot1.png)
+![Hyprland + Opened apps](assets/screenshot2.png)
 
 ---
 
