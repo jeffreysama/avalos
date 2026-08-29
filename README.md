@@ -79,4 +79,4 @@ Issues, pull requests, and feedback are fully welcome!.
 
 ## License
 
-**[AvalOS License](LICENSE)**
+**[License](LICENSE)**
