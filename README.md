@@ -55,7 +55,7 @@ The manual guide produces an installation that is functionally identical to what
 AvalOS is under active development.
 
 - ISOs work correctly for **manual installation**
-- Automatic installer is temporarily disabled while it is being fixed
+- Automatic installer is not working currently while it is being fixed
 - Only AMD and Intel GPUs are supported at this time
 
 ---
