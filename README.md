@@ -35,7 +35,7 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 
 AvalOS ISOs are fully functional and ready for use.
 
-> **Important**: The automatic graphical installer is currently not working.  
+> **Important**: The automatic installer is currently not working.  
 > Please use the **manual installation** method.
 
 ### Quick steps
