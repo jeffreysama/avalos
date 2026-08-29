@@ -14,54 +14,69 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 - **Desktop Environment**: Hyprland (Wayland)
 - **Philosophy**: Minimalism, performance, and ease of use
 - **Target Users**: Gamers, developers, and power users who want something clean and fast
-- **Custom Kernel**: `linux-avalos` (optimized for desktop and gaming)
-- **Pre-configured Rice**: Beautiful and functional Hyprland setup included
+- **Custom Kernel**: `linux-avalos` (optimized for desktop/gaming) + `linux-avalos-bore` and `linux-avalos-compat` variants
+- **Filesystem**: Btrfs with Snapper snapshots by default
+- **Pre-configured Rice**: Beautiful and functional Hyprland + Waybar + Kitty + Rofi setup included
+- **Extras**: ZRAM, BBR congestion control, carefully selected firmware (AMD/Intel only)
+
+> **Note**: AvalOS currently supports **AMD and Intel** hardware only. NVIDIA is not supported, but could be possible (If you know how to install NVIDIA packages and all).
+
+---
+
+## 📸 Screenshots
+
+![Desktop Overview](assets/screenshot1lol.png)
+![Hyprland + Opened apps](assets/screenshot2xd.png)
 
 ---
 
 ## 📥 Installation
 
-AvalOS ISOs are fully functional and ready for installation.
+AvalOS ISOs are fully functional and ready for use.
 
-> **Note**: The automatic installer is currently not working.  
-> Please follow the **manual installation** guide below.
+> **Important**: The automatic graphical installer is currently not working.  
+> Please use the **manual installation** method.
 
-### Manual Installation
+### Quick steps
 
 1. Download the latest ISO from the [Releases](https://github.com/jeffreysama/avalos/releases) page.
-2. Flash it to a USB drive (use the included USB maker scripts if you prefer, or any tool like `dd`, Rufus, Ventoy, etc.).
+2. Flash it to a USB drive (Ventoy, Rufus, `dd`, or the included USB maker scripts).
 3. Boot from the USB.
-4. Follow the [Manual Installation Guide](docs/INSTALL.md) (or the steps in the next section of this README).
+4. Follow the complete guide:
 
----
+**→ [Manual Installation Guide](docs/INSTALL.md)**
 
-## 🛠️ Manual Installation Guide (Quick Version)
-
-> Full detailed guide coming soon in `INSTALL.md`.  
-> This is a condensed overview of the recommended steps.
-
-1. Boot the AvalOS live ISO.
-2. Connect to the internet (`iwctl` or `nmtui`).
-3. Partition your disk (`cfdisk` / `fdisk` / `parted`).
-4. Format and mount partitions.
-5. Install the base system + AvalOS packages.
-6. Configure the system (locale, hostname, users, bootloader, etc.).
-7. Install and enable the pre-configured Hyprland rice.
-8. Reboot into your new AvalOS system.
-
-*(Detailed commands and explanations will be added in the full guide.)*
+The manual guide produces an installation that is functionally identical to what the automatic installer would create (Btrfs + Snapper layout, same package set, same configs, same kernel line, etc.).
 
 ---
 
 ## ⚠️ Current Status
 
-AvalOS is under active development.  
-The ISOs work correctly for manual installation.  
-The automatic installer is temporarily disabled while it is being fixed.
+AvalOS is under active development.
+
+- ISOs work correctly for **manual installation**
+- Automatic installer is temporarily disabled while it is being fixed
+- Only AMD and Intel GPUs are supported at this time
+
+---
+
+## 🛠️ System Highlights
+
+- Custom optimized kernel line (`linux-avalos`)
+- Btrfs with a clean 6-subvolume layout + Snapper + grub-btrfs
+- ZRAM by default
+- BBR + modern sysctl tuning
+- Full Hyprland rice pre-configured (Hyprland, Waybar, Kitty, Rofi, Mako, SDDM theme, etc.)
+- Ready for gaming (Steam, Wine, Proton-GE, Lutris, MangoHud, GameMode…)
 
 ---
 
 ## 🤝 Contributing
 
-Feel free to open issues or pull requests.  
-Feedback from gamers and power users is especially welcome.
+Issues, pull requests, and feedback are fully welcome!.
+
+---
+
+## License
+
+LICENSE
