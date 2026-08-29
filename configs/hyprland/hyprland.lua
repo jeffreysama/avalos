@@ -145,6 +145,14 @@ hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("microsoft-edge-stable"))
 hl.bind(mod .. " + V",
         hl.dsp.exec_cmd("cliphist list | rofi -dmenu | cliphist decode | wl-copy"))
 
+-- Utilidades AvalOS
+-- NOTA: no tengo una version anterior de este archivo para confirmar que
+-- tecla usaban antes -- si te acordas cual era, decime y la dejo exacta.
+-- Por ahora elegi W (Wallpaper) e I (settings/ajustes), libres en todo
+-- el esquema actual y sin chocar con nada.
+hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
+hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+
 -- Gaming
 hl.bind(mod .. " + S",        hl.dsp.exec_cmd("steam"))
 hl.bind(mod .. " + P",        hl.dsp.exec_cmd("flatpak run com.heroicgameslauncher.hgl"))
@@ -263,6 +271,13 @@ hl.window_rule({ match = { class = "pavucontrol" },         float = true })
 hl.window_rule({ match = { class = "nm-connection-editor" }, float = true })
 hl.window_rule({
     match  = { class = "avalos-wallpaper" },
+    float  = true,
+    center = true,
+    size   = { 1000, 700 },
+})
+
+hl.window_rule({
+    match  = { class = "avalos-settings" },
     float  = true,
     center = true,
     size   = { 1000, 700 },
