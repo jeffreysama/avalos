@@ -1,5 +1,5 @@
 pkgname=linux-avalos-firmware
-pkgver=1
+pkgver=7.1.11
 pkgrel=1
 pkgdesc="Firmware bundle de AvalOS — todos los vendors oficiales de Arch, EXCEPTO NVIDIA (AMD/Intel only)"
 arch=(any)
