@@ -3999,7 +3999,7 @@ WantedBy=multi-user.target
                     )
                     self ._log (self ._t ("log-pacstrap-retry-slower",n =_pd_val ),"warn")
                 rc ,_pacstrap_out =self ._run_cmd (
-                ["pacstrap","-c","--needed",str (MOUNT_ROOT )]+pkgs ,
+                ["pacstrap","-c",str (MOUNT_ROOT )]+pkgs ,
                 timeout =3600 ,log_cls ="info"
                 )
                 if rc ==0 :
