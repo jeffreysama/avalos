@@ -1,0 +1,45 @@
+pkgname=linux-avalos-firmware
+pkgver=1
+pkgrel=1
+pkgdesc="Firmware bundle de AvalOS — todos los vendors oficiales de Arch, EXCEPTO NVIDIA (AMD/Intel only)"
+arch=(any)
+url="https://github.com/jeffreysama/avalos"
+license=('custom')
+
+# NVIDIA en AvalOS es "por su cuenta": el driver propietario y su firmware
+# quedan totalmente fuera de este repo, a criterio del usuario. Por eso
+# aqui se depende de cada linux-firmware-<vendor> POR SEPARADO y nunca del
+# metapaquete 'linux-firmware' de Arch — ese metapaquete trae
+# linux-firmware-nvidia como dependencia obligatoria (verificado en
+# archlinux.org/packages: linux-firmware-nvidia -> "Required By:
+# linux-firmware"), asi que instalarlo colaria NVIDIA de vuelta aunque
+# nadie lo haya pedido. 'provides'+'conflicts' contra 'linux-firmware'
+# evitan que alguien lo instale encima despues (a mano, o como dependencia
+# de otro paquete) y reintroduzca NVIDIA por la puerta trasera.
+provides=('linux-firmware')
+conflicts=('linux-firmware')
+
+depends=(
+    'linux-firmware-whence'
+    'linux-firmware-amdgpu'
+    'linux-firmware-radeon'
+    'linux-firmware-intel'
+    'linux-firmware-atheros'
+    'linux-firmware-broadcom'
+    'linux-firmware-realtek'
+    'linux-firmware-mediatek'
+    'linux-firmware-cirrus'
+    'linux-firmware-marvell'
+    'linux-firmware-mellanox'
+    'linux-firmware-qcom'
+    'linux-firmware-qlogic'
+    'linux-firmware-nfp'
+    'linux-firmware-liquidio'
+    'linux-firmware-other'
+    'amd-ucode'
+    'intel-ucode'
+)
+
+package() {
+    :
+}
