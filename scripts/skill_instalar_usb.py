@@ -129,9 +129,16 @@ TIMEZONES =[
 BASE_PKGS =[
 
 "base","base-devel",
-"linux-firmware-amdgpu","linux-firmware-radeon","linux-firmware-intel",
-"linux-firmware-realtek","linux-firmware-atheros","linux-firmware-broadcom",
-"linux-firmware-cirrus","linux-firmware-mediatek","linux-firmware-other",
+# El desglose por vendor de linux-firmware (AMD/Intel/red/bluetooth, sin
+# NVIDIA) vive centralizado en el PKGBUILD de linux-avalos-firmware (repo
+# [avalos], pkgs/linux-avalos-firmware/PKGBUILD) en vez de duplicado aca
+# paquete por paquete -- evita que esta lista y ese PKGBUILD diverjan con
+# el tiempo (ya paso: esta lista no traia marvell/mellanox/qcom/qlogic/
+# nfp/liquidio que si estan en el PKGBUILD) y adopta automaticamente
+# cualquier ajuste futuro de Arch al desglose de vendors sin tener que
+# tocar el instalador. 'linux-avalos-firmware' provides+conflicts contra
+# el 'linux-firmware' oficial de Arch, asi que nunca coexisten ambos.
+"linux-avalos-firmware",
 "sof-firmware",
 "grub","efibootmgr","os-prober","ntfs-3g","networkmanager","nm-connection-editor",
 "sudo","bash","bash-completion","nano","vim","git","curl","wget","htop",
@@ -3923,23 +3930,32 @@ WantedBy=multi-user.target
                     break
 
                 _pf_faltantes =sorted (set (re .findall (r"target not found:\s*(\S+)",_pf_out )))
-                if _pf_faltantes and all (p in pkgs for p in _pf_faltantes ):
-                    # Se puede recortar: son paquetes explícitos de NUESTRA
-                    # lista (no dependencias transitivas de otra cosa), así
-                    # que sacarlos es seguro y no deja nada a medias. Visto
-                    # en producción (hilo de CachyOS, abr-may 2026, CVE en
-                    # el stack multimedia lib32): Arch a veces retira
-                    # paquetes lib32-gst-*/lib32-sdl2* de multilib entero
-                    # por semanas mientras responde a un CVE — pasa en
-                    # TODOS los mirrors por igual, así que ni reintentar ni
-                    # cambiar de mirror lo arregla. Mejor seguir sin ellos
-                    # que bloquear toda la instalación por un extra de
-                    # compatibilidad.
-                    for _p in _pf_faltantes :
+                _pf_recortables =[p for p in _pf_faltantes if p .startswith ("lib32-")]
+                if _pf_recortables and all (p in pkgs for p in _pf_recortables ):
+                    # Se puede recortar: son paquetes lib32- explícitos de
+                    # NUESTRA lista (no dependencias transitivas de otra
+                    # cosa), así que sacarlos es seguro y no deja nada a
+                    # medias. Visto en producción (hilo de CachyOS, abr-may
+                    # 2026, CVE en el stack multimedia lib32): Arch a veces
+                    # retira paquetes lib32-gst-*/lib32-sdl2* de multilib
+                    # entero por semanas mientras responde a un CVE — pasa
+                    # en TODOS los mirrors por igual, así que ni reintentar
+                    # ni cambiar de mirror lo arregla. Mejor seguir sin
+                    # ellos que bloquear toda la instalación por un extra
+                    # de compatibilidad.
+                    #
+                    # El recorte queda LIMITADO a lib32- a propósito: un
+                    # 'target not found' en linux-avalos-firmware, un
+                    # kernel, o cualquier otro paquete no-lib32 NUNCA se
+                    # auto-recorta en silencio — cae al diálogo de mirror
+                    # de abajo, porque faltar ahí sí deja un sistema roto
+                    # (sin firmware de hardware, sin kernel, etc), a
+                    # diferencia de un extra de compatibilidad multilib.
+                    for _p in _pf_recortables :
                         pkgs .remove (_p )
-                    _pkgs_omitidos +=_pf_faltantes
+                    _pkgs_omitidos +=_pf_recortables
                     self ._log (
-                    self ._t ("log-multilib-pkg-dropped",pkgs =", ".join (_pf_faltantes )),
+                    self ._t ("log-multilib-pkg-dropped",pkgs =", ".join (_pf_recortables )),
                     "warn"
                     )
                     continue

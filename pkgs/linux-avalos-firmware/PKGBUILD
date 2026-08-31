@@ -19,6 +19,15 @@ license=('custom')
 provides=('linux-firmware')
 conflicts=('linux-firmware')
 
+# amd-ucode/intel-ucode NO van en depends a proposito: son por-vendor de
+# CPU (uno u otro, nunca ambos), y el instalador ya detecta la CPU real
+# con detectar_microcode() e instala solo el que corresponde (skill_
+# instalar_usb.py, BASE_PKGS + [ucode] condicional). Ponerlos aca como
+# dependencia fija instalaria SIEMPRE los dos sin importar la CPU real —
+# ademas de que, al ser este paquete provides=linux-firmware, cualquier
+# resolucion de esa dependencia arrastraria microcode de ambas arquitecturas
+# como efecto colateral. El ucode se resuelve en el instalador, no aca.
+
 depends=(
     'linux-firmware-whence'
     'linux-firmware-amdgpu'
@@ -36,8 +45,6 @@ depends=(
     'linux-firmware-nfp'
     'linux-firmware-liquidio'
     'linux-firmware-other'
-    'amd-ucode'
-    'intel-ucode'
 )
 
 package() {

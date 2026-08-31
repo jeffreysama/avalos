@@ -24,6 +24,7 @@ env:
   MARCH: x86-64-v3
   MARCH_COMPAT: x86-64-v2
   PKGBUILD_DIR: pkgs/linux-avalos
+  FW_PKGBUILD_DIR: pkgs/linux-avalos-firmware
   FALLBACK_KERNEL_VER: "7.1.9"
 
 jobs:
@@ -588,6 +589,77 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  build-firmware:
+    name: Empaquetar linux-avalos-firmware
+    # No depende de 'prepare' (ese job solo bumpea version/config de LOS
+    # KERNELS via gen-config.sh, algo que linux-avalos-firmware ni usa —
+    # es un metapaquete puro, pkgver=1 fijo, sin fuente que compilar).
+    # Solo necesita 'check-version' para arrancar en paralelo con el resto
+    # apenas se confirma que corresponde buildear en este run.
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    # Igual que build-bore: un fallo aca (tipico caso — Arch retira
+    # temporalmente un sub-paquete linux-firmware-<vendor> del repo
+    # mientras responde a un CVE, visto ya con el stack lib32 multilib en
+    # el instalador) NUNCA debe bloquear la publicacion de los 3 kernels,
+    # que es lo critico de este pipeline. 'publish' solo exige exito de
+    # build-standard + build-compat (ver su 'if:' mas abajo).
+    continue-on-error: true
+    steps:
+      - name: Instalar dependencias de build
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel git github-cli
+
+      - name: Checkout del repo
+        uses: actions/checkout@v7
+
+      - name: Crear usuario builder
+        run: |
+          useradd -m -G wheel builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder "${{ env.FW_PKGBUILD_DIR }}"
+
+      - name: Empaquetar linux-avalos-firmware
+        # 'package() { :}' -- no hay nada que compilar, este PKGBUILD solo
+        # declara 'depends' sobre los linux-firmware-<vendor> reales de
+        # Arch (AMD/Intel/red/bluetooth — nunca linux-firmware-nvidia, ver
+        # comentario del propio PKGBUILD) y 'provides'+'conflicts' contra
+        # el metapaquete oficial 'linux-firmware' para que no cuele NVIDIA
+        # de vuelta como dependencia transitiva.
+        #
+        # 'makepkg -s' SI resuelve e instala esas 18 dependencias reales
+        # aunque el paquete resultante este vacio -- es intencional: valida
+        # en build-time que ninguna se haya renombrado/retirado en Arch,
+        # en vez de que el usuario final lo descubra recien en pacstrap
+        # (que es exactamente el error 'failed retrieving
+        # linux-firmware-<vendor>' que motivo este cambio).
+        run: |
+          chown -R builder:builder "${{ env.FW_PKGBUILD_DIR }}"
+          sudo -u builder bash -c '
+            set -euo pipefail
+            cd "${{ env.FW_PKGBUILD_DIR }}"
+            makepkg -s --noconfirm --needed --skippgpcheck
+          '
+
+      - name: Subir paquete empaquetado
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: packages-firmware
+          path: |
+            ${{ env.FW_PKGBUILD_DIR }}/*.pkg.tar.zst
+            ${{ env.FW_PKGBUILD_DIR }}/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
   publish:
     name: Publicar
     # FIX-JOBS (18-ago): exige exito de build-standard Y build-compat (igual
@@ -598,7 +670,7 @@ jobs:
     # 'always()' es necesario en el if para que este job pueda evaluarse
     # incluso si build-bore fallo (sin el, un job upstream fallido hace que
     # GitHub salte automaticamente los jobs dependientes).
-    needs: [check-version, build-standard, build-bore, build-compat]
+    needs: [check-version, build-standard, build-bore, build-compat, build-firmware]
     if: always() && needs.build-standard.result == 'success' && needs.build-compat.result == 'success'
     runs-on: ubuntu-latest
     permissions:
