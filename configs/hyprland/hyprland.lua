@@ -171,7 +171,7 @@ hl.bind(mod .. " + SHIFT + L",
 
 -- Powermenu (con fallback a poweroff si el script no existe)
 hl.bind(mod .. " + SHIFT + E",
-    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
+    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh"))
 
 -- Foco — flechas y HJKL
 -- FIX: hl.dsp.focus.move(...) no existe en la API real — 'focus' es una

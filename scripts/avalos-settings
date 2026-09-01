@@ -3,10 +3,27 @@
 # ║  avalos-settings — Centro de Control AvalOS                         ║
 # ║  Hub de configuración del sistema instalado.                         ║
 # ║  Estilo coherente con powermenu.sh: rofi + Nerd Font icons.          ║
-# ║  Soporta: English · Español · 中文简体                               ║
+# ║  Soporta: English · Español · 中文简体 · 日本語                      ║
 # ╚═══════════════════════════════════════════════════════════════════════╝
 
-LANG_CODE="${LANG%%_*}"
+# Idioma real de UI (en/es/zh/ja), fuente de verdad: /etc/avalos-lang,
+# escrito por el instalador al elegir idioma (chooseLang -> set_language
+# -> self._lang, ver skill_instalar_usb.py). NO usar LANG a secas: LANG es
+# el LOCALE REGIONAL (es_MX.UTF-8, es_AR.UTF-8, pt_BR.UTF-8...), elegido de
+# una lista de 24 opciones en el instalador, sin relación con el idioma de
+# traducción de la UI — mismo bug que tenía avalos-wallpaper (ver ese
+# script para el caso reportado: instalar en japonés con locale es_SV
+# terminaba mostrando todo en inglés, porque "es" no es "ja" ni "zh").
+if [[ -r /etc/avalos-lang ]]; then
+    LANG_CODE="$(</etc/avalos-lang)"
+    LANG_CODE="${LANG_CODE//[$'\t\r\n ']/}"
+else
+    LANG_CODE="${LANG%%_*}"
+fi
+case "$LANG_CODE" in
+  en|es|zh|ja) ;;
+  *) LANG_CODE="${LANG%%_*}" ;;  # archivo con contenido inválido: fallback
+esac
 
 # ── Traducciones ──────────────────────────────────────────────────────────
 case "$LANG_CODE" in
@@ -37,6 +54,20 @@ case "$LANG_CODE" in
     T_SNAPSHOTS=" 快照  系统快照管理"
     T_ABOUT="  关于  系统信息"
     T_NO_APP="❌ 未安装该应用程序"
+    ;;
+  ja)
+    T_TITLE="  AvalOS 設定"
+    T_APPEARANCE=" 外観  GTK・アイコン・カーソル・フォント"
+    T_DISPLAY=" ディスプレイ  解像度・レイアウト"
+    T_AUDIO=" オーディオ  音量・サウンドデバイス"
+    T_NETWORK=" ネットワーク  接続・Wi-Fi・VPN"
+    T_BLUETOOTH=" Bluetooth  ワイヤレスデバイス"
+    T_WALLPAPER=" 壁紙  背景を変更"
+    T_FILES=" ファイル  ファイルマネージャー"
+    T_USERS="  ユーザー  パスワード・プロフィール"
+    T_SNAPSHOTS=" スナップショット  システムのスナップショット"
+    T_ABOUT="  情報  システム情報"
+    T_NO_APP="❌ アプリケーションがインストールされていません"
     ;;
   *)  # English (default)
     T_TITLE="  AvalOS Settings"
@@ -114,8 +145,11 @@ elif [[ "$chosen" == "$T_FILES" ]]; then
     _run thunar
 
 elif [[ "$chosen" == "$T_USERS" ]]; then
-    kitty --title "AvalOS — Usuario / User" -- bash -c '
-        LANG_CODE="${LANG%%_*}"
+    # LANG_CODE ya resuelto arriba (desde /etc/avalos-lang) se exporta al
+    # sub-shell del heredoc en vez de que este vuelva a derivarlo de LANG
+    # por su cuenta — era una segunda instancia del mismo bug.
+    AVALOS_LANG_CODE="$LANG_CODE" kitty --title "AvalOS — Usuario / User" -- bash -c '
+        LANG_CODE="$AVALOS_LANG_CODE"
         case "$LANG_CODE" in
           es)
             echo ""
@@ -153,6 +187,25 @@ elif [[ "$chosen" == "$T_USERS" ]]; then
             echo "  [2] 退出"
             echo ""
             read -rp "  选择：" opt
+            case "$opt" in 1) passwd ;; esac
+            ;;
+          ja)
+            echo ""
+            echo "  ╔════════════════════════════════════════╗"
+            echo "  ║   AvalOS — ユーザー管理               ║"
+            echo "  ╚════════════════════════════════════════╝"
+            echo ""
+            echo "  現在のユーザー : $(whoami)"
+            echo "  シェル         : $SHELL"
+            echo "  ホーム         : $HOME"
+            echo "  UID            : $(id -u)"
+            echo "  グループ       : $(groups)"
+            echo ""
+            echo "  ─────────────────────────────────────────"
+            echo "  [1] パスワードを変更"
+            echo "  [2] 終了"
+            echo ""
+            read -rp "  選択: " opt
             case "$opt" in 1) passwd ;; esac
             ;;
           *)

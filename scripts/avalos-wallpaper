@@ -46,8 +46,31 @@ MAX_DEPTH = 4
 FIT_MODES = ("cover", "contain", "fill", "tile")
 
 # ── i18n — autocontenido, mismo patrón que avalos-about/avalos-settings ────
-_lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
-LANG = _lang_raw if _lang_raw in ("es", "zh") else "en"
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+
+
+def _detectar_idioma() -> str:
+    # Fuente de verdad: el idioma real que el usuario eligió en la UI del
+    # instalador (chooseLang() -> set_language() -> self._lang), persistido
+    # a /etc/avalos-lang durante la instalación. Esto es lo que corresponde
+    # leer acá — NO el locale regional (LANG=es_MX.UTF-8 etc), que es un
+    # valor de fecha/moneda/formato, ajeno al idioma de traducción de la UI.
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    # Fallback solo para cuando /etc/avalos-lang no existe (ej. corriendo
+    # este script fuera de un AvalOS instalado). Heurística vieja, con "ja"
+    # agregado — antes faltaba por completo y ningún LANG=ja_JP.UTF-8 caía
+    # nunca en japonés.
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
 
 STRINGS = {
     "en": {
@@ -100,6 +123,23 @@ STRINGS = {
         "err-write": "无法写入 hyprpaper.conf",
         "err-restart": "无法重启 hyprpaper",
         "current-badge": "当前",
+    },
+    "ja": {
+        "title": "AvalOS — 壁紙",
+        "found_one": "{n} 件の壁紙が見つかりました",
+        "found_many": "{n} 件の壁紙が見つかりました",
+        "fit-cover": "カバー", "fit-cover-d": "画面いっぱいに表示（端は切れます）",
+        "fit-contain": "全体表示", "fit-contain-d": "画像全体を表示（余白が出る場合あり）",
+        "fit-fill": "引き伸ばし", "fit-fill-d": "画面に合わせて伸縮（歪む場合あり）",
+        "fit-tile": "タイル", "fit-tile-d": "画像を繰り返し表示",
+        "empty-title": "壁紙が見つかりません",
+        "empty-body": "~/Pictures/Wallpapers に画像を追加してから、もう一度開いてください。",
+        "applying": "適用中…",
+        "applied": "壁紙を適用しました",
+        "err-notfound": "ファイルが見つかりません",
+        "err-write": "hyprpaper.conf を書き込めませんでした",
+        "err-restart": "hyprpaper を再起動できませんでした",
+        "current-badge": "現在の壁紙",
     },
 }
 T = STRINGS[LANG]

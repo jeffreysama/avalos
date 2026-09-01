@@ -2787,6 +2787,17 @@ class VentanaInstalador :
         encoding ="utf-8"
         )
 
+        # Idioma real de UI (en/es/zh/ja) elegido en el instalador, para que
+        # apps del sistema (avalos-wallpaper, avalos-settings, futuras apps)
+        # lo lean directo sin tener que adivinarlo mal desde LANG (que es el
+        # locale REGIONAL — es_MX/es_AR/pt_BR/etc, un valor totalmente
+        # distinto al idioma de traducción de la UI, y ni siquiera cubre
+        # los 4 idiomas soportados: pt_BR o fr_FR no tienen equivalente acá).
+        (MOUNT_ROOT /"etc"/"avalos-lang").write_text (
+        self ._lang +"\n",
+        encoding ="utf-8"
+        )
+
         zram_path =MOUNT_ROOT /"etc"/"systemd"/"zram-generator.conf"
         zram_path .parent .mkdir (parents =True ,exist_ok =True )
         zram_path .write_text (

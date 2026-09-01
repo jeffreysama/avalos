@@ -1,8 +1,20 @@
 #!/bin/bash
-# AvalOS Power Menu — detección automática de idioma vía $LANG
-# Soporta: English · Español · 中文简体
+# AvalOS Power Menu
+# Idioma real de UI (en/es/zh/ja): fuente de verdad /etc/avalos-lang, ver
+# avalos-wallpaper/avalos-settings para el detalle completo de por qué NO
+# se usa LANG directo (locale regional, ajeno al idioma de traducción).
+# Soporta: English · Español · 中文简体 · 日本語
 
-LANG_CODE="${LANG%%_*}"   # "es_SV.UTF-8" → "es"
+if [[ -r /etc/avalos-lang ]]; then
+    LANG_CODE="$(</etc/avalos-lang)"
+    LANG_CODE="${LANG_CODE//[$'\t\r\n ']/}"
+else
+    LANG_CODE="${LANG%%_*}"
+fi
+case "$LANG_CODE" in
+  en|es|zh|ja) ;;
+  *) LANG_CODE="${LANG%%_*}" ;;
+esac
 
 # SUGERENCIA (revisión externa, aplicada): cargar el tema explícito en
 # vez de depender de que config.rasi sea el default activo del usuario.
@@ -28,6 +40,14 @@ case "$LANG_CODE" in
     T_LOGOUT="󰍃  注销"
     T_LOCK="  锁屏"
     T_TITLE="  电源"
+    ;;
+  ja)
+    T_OFF="  シャットダウン"
+    T_REBOOT="  再起動"
+    T_SUSPEND="  スリープ"
+    T_LOGOUT="󰍃  ログアウト"
+    T_LOCK="  ロック"
+    T_TITLE="  電源メニュー"
     ;;
   *)  # English (default)
     T_OFF="  Power Off"
@@ -66,6 +86,7 @@ _confirm() {
   case "$LANG_CODE" in
     es) local yes="  Sí" no="  No" ;;
     zh) local yes="  是" no="  否" ;;
+    ja) local yes="  はい" no="  いいえ" ;;
     *)  local yes="  Yes" no="  No" ;;
   esac
   local result
@@ -79,12 +100,14 @@ if [[ "$chosen" == "$T_OFF" ]]; then
   case "$LANG_CODE" in
     es) _confirm "¿Apagar el equipo?" && systemctl poweroff ;;
     zh) _confirm "确定关机？" && systemctl poweroff ;;
+    ja) _confirm "シャットダウンしますか？" && systemctl poweroff ;;
     *)  _confirm "Power off?" && systemctl poweroff ;;
   esac
 elif [[ "$chosen" == "$T_REBOOT" ]]; then
   case "$LANG_CODE" in
     es) _confirm "¿Reiniciar el equipo?" && systemctl reboot ;;
     zh) _confirm "确定重启？" && systemctl reboot ;;
+    ja) _confirm "再起動しますか？" && systemctl reboot ;;
     *)  _confirm "Reboot?" && systemctl reboot ;;
   esac
 elif [[ "$chosen" == "$T_SUSPEND" ]]; then

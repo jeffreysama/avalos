@@ -3,10 +3,10 @@
   "logo": {
     "source": "/etc/fastfetch/avalos.txt",
     "color": {
-      "1": "38;2;122;162;247",
+      "1": "38;2;158;206;106",
       "2": "38;2;125;207;255",
       "3": "38;2;187;154;247",
-      "4": "38;2;158;206;106"
+      "4": "38;2;122;162;247"
     },
     "padding": { "top": 1, "right": 2 }
   },
@@ -22,7 +22,7 @@
     { "type": "title",    "format": "{user-name}@{host-name}" },
     "separator",
 
-    { "type": "os",       "key": " OS",            "format": "AvalOS ({distro-id})" },
+    { "type": "os",       "key": " OS",            "format": "AvalOS ({id})" },
     { "type": "host",     "key": "\uf0e4 Host" },
     { "type": "kernel",   "key": " Kernel" },
     { "type": "uptime",   "key": "\uf55f Uptime" },
