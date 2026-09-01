@@ -46,7 +46,8 @@ configuration {
 
 window {
   background-color: @background;
-  border:           2px solid @border-color;
+  border:           2px solid;
+  border-color:     @border-color;
   border-radius:    10px;
   width:            480px;
   /* SUGERENCIA (revisión externa, verificada): sin esto la ventana usa
