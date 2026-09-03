@@ -3,8 +3,8 @@
   "logo": {
     "source": "/etc/fastfetch/avalos.txt",
     "color": {
-      "1": "38;2;165;225;90",
-      "2": "38;2;75;165;255",
+      "1": "38;2;122;162;247",
+      "2": "38;2;158;206;106",
       "3": "38;2;187;154;247",
       "4": "38;2;122;162;247"
     },
@@ -55,6 +55,13 @@
     // BUG-4 FIX: módulo "colors" con paddingLeft pero sin "symbol".
     // Sin "symbol": "circle" fastfetch usa el símbolo por defecto que
     // en algunas fuentes es un cuadro roto (□) en lugar del círculo (●).
-    { "type": "colors", "paddingLeft": 2, "symbol": "circle" }
+    { "type": "colors", "paddingLeft": 2, "symbol": "circle" },
+    "separator",
+
+    // Créditos del proyecto — módulo "custom" sin key, solo texto plano.
+    // Se muestra en ambas rutas de "About" (avalos-about y el fallback
+    // directo a fastfetch en avalos-settings), porque ambas leen este
+    // mismo config.jsonc.
+    { "type": "custom", "format": "  AvalOS — Created, Developed & Supported by Jefferson Stanley Avalos Avalos" }
   ]
 }

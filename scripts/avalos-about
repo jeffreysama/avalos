@@ -54,6 +54,7 @@ kitty --title "AvalOS — About / Acerca de" -- bash -c '
 
     echo ""
     echo "  GitHub  : https://github.com/jeffreysama/avalos"
+    echo "  Autor   : Jefferson Stanley Avalos Avalos"
     echo ""
     echo "  ──────────────────────────────────────────────────────────"
     echo "  Pulsa Enter para cerrar / Press Enter to close."

@@ -131,7 +131,10 @@ hl.bind(mod .. " + Return", hl.dsp.exec_cmd("kitty"))
 hl.bind(mod .. " + Space",  hl.dsp.exec_cmd("rofi -show drun"))
 hl.bind(mod .. " + E",        hl.dsp.exec_cmd("thunar"))
 hl.bind(mod .. " + B",        hl.dsp.exec_cmd("firefox"))
-hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("firefox"))
+-- BUG FIX: estaba duplicado apuntando a firefox otra vez en vez de Edge
+-- (el mismo bug existía en microsoft-edge-stable.template y en el live,
+-- que sí lo tenía bien). SHIFT+B = Edge, B solo = Firefox.
+hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("microsoft-edge-stable"))
 hl.bind(mod .. " + SHIFT + S",
     hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy'))
 hl.bind(mod .. " + V",
@@ -230,3 +233,13 @@ hl.window_rule({
     center = true,
     size   = { 1000, 700 },
 })
+hl.window_rule({
+    match  = { class = "avalos-settings" },
+    float  = true,
+    center = true,
+    size   = { 1000, 700 },
+})
+
+-- Atajos para abrir las apps de AvalOS directo, sin pasar por rofi
+hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
+hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))

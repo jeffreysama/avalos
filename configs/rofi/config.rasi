@@ -161,3 +161,13 @@ element-icon {
    * Mismo problema que element-text — el ícono aparece descentrado. */
   vertical-align:   0.5;
 }
+
+/* Sin zebra-striping: mismo fondo transparente para todos los items,
+   sean pares o impares. */
+element normal.normal {
+  background-color: transparent;
+}
+
+element alternate.normal {
+  background-color: transparent;
+}
