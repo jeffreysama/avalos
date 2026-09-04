@@ -1,0 +1,33 @@
+diff --git a/.github/workflows/build-iso.yml b/.github/workflows/build-iso.yml
+index d5a9978..a9152f6 100644
+--- a/.github/workflows/build-iso.yml
++++ b/.github/workflows/build-iso.yml
+@@ -143,6 +143,28 @@ jobs:
+           mkdir -p "$AIROOTFS/usr/share/avalos/configs"
+           cp -r configs/. "$AIROOTFS/usr/share/avalos/configs/"
+ 
++          # BUG FIX: skill_instalar_usb.py (_leer_config) busca avalos-settings,
++          # avalos-wallpaper y avalos-about en usr/share/avalos/configs/scripts/,
++          # pero ese directorio nunca se poblaba — "cp -r configs/." de arriba
++          # solo trae configs/, y scripts/ vive en la raíz del repo, aparte.
++          # Sin este paso, el instalador loguea "script missing" para los 3 y
++          # ninguno queda en /usr/local/bin del sistema instalado.
++          mkdir -p "$AIROOTFS/usr/share/avalos/configs/scripts"
++          for _s in avalos-settings avalos-wallpaper avalos-about; do
++            if [[ -f "scripts/$_s" ]]; then
++              cp "scripts/$_s" "$AIROOTFS/usr/share/avalos/configs/scripts/$_s"
++            else
++              echo "::warning::scripts/$_s no encontrado en el repo — no se incluirá en el ISO"
++            fi
++          done
++          # Mismo problema: avalos-settings.desktop vive en configs/ (ya copiado
++          # arriba a usr/share/avalos/configs/avalos-settings.desktop), pero
++          # _leer_config("scripts/avalos-settings.desktop") lo busca dentro de
++          # scripts/ — se deja también ahí para que lo encuentre.
++          if [[ -f "configs/avalos-settings.desktop" ]]; then
++            cp "configs/avalos-settings.desktop" "$AIROOTFS/usr/share/avalos/configs/scripts/avalos-settings.desktop"
++          fi
++
+           printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkEgPSBzeXMuYXJndlsxXQoKZGVmIHcocGF0aCwgY29udGVudCwgZXhlY3V0YWJsZT1GYWxzZSk6CiAgICBvcy5tYWtlZGlycyhvcy5wYXRoLmRpcm5hbWUocGF0aCksIGV4aXN0X29rPVRydWUpCiAgICB3aXRoIG9wZW4ocGF0aCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodGV4dHdyYXAuZGVkZW50KGNvbnRlbnQpLmxzdHJpcCgnXG4nKSkKICAgIGlmIGV4ZWN1dGFibGU6CiAgICAgICAgb3MuY2htb2QocGF0aCwgMG83NTUpCgojIOKUgOKUgCBzeXNjdGwgQkJSIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAp3KGYie0F9L2V0Yy9zeXNjdGwuZC84MC1hdmFsb3MtYmJyLmNvbmYiLCAiIiIKICAgIG5ldC5jb3JlLmRlZmF1bHRfcWRpc2MgPSBmcQogICAgbmV0LmlwdjQudGNwX2Nvbmdlc3Rpb25fY29udHJvbCA9IGJicgogICAgIiIiKQoKIyDilIDilIAgU0RETTogcmVtb3ZpZG8gZGVsIGxpdmUgKHZlciBwYWNrYWdlcy54ODZfNjQpIOKAlCB5YSBubyBzZSBlc2NyaWJlCiMgYXV0b2xvZ2luLmNvbmYgZGUgU0RETSBhY8OhLiBFbCBhdXRvbG9naW4gYWhvcmEgZXMgYSBuaXZlbCBkZSBjb25zb2xhCiMgKGFnZXR0eSBlbiB0dHkxKSArIEh5cHJsYW5kIGFycmFuY2FuZG8gZGVzZGUgZWwgc2hlbGwgcHJvZmlsZSBkZSByb290LAojIGFtYm9zIGNvbmZpZ3VyYWRvcyBlbiBjdXN0b21pemVfYWlyb290ZnMuc2guCgojIOKUgOKUgCBncHUtZW52LmNvbmY6IGVsaW1pbmFkbyDigJQgaHlwcmxhbmQubHVhIG5vIGxvIGNhcmdhIChMdWEgbm8gdXNhIHNvdXJjZSkg4pSA4pSA4pSA4pSA4pSACm9zLm1ha2VkaXJzKGYie0F9L3Jvb3QvLmNvbmZpZy9oeXByIiwgZXhpc3Rfb2s9VHJ1ZSkKIyBncHUtZW52LmNvbmYgZWxpbWluYWRvIOKAlCB5YSBubyBzZSBuZWNlc2l0YSAoaHlwcmxhbmQubHVhIG5vIGxvIGNhcmdhKQoKIyBGSVgtQ09ORkxJQ1RPLVBBQ01BTjogZWwgcHJlc2V0IGRlIG1raW5pdGNwaW8gKGxpbnV4LWF2YWxvcy1jb21wYXQucHJlc2V0ICsKIyBhcmNoaXNvLmNvbmYpIHkgdXNyL3NoYXJlL3dheWxhbmQtc2Vzc2lvbnMvaHlwcmxhbmQuZGVza3RvcCBTRSBNT1ZJRVJPTiBhCiMgY3VzdG9taXplX2Fpcm9vdGZzLnNoLiBNb3Rpdm86IGVzdGUgb3ZlcmxheSAoYWlyb290ZnMvKSBzZSBjb3BpYSBhCiMgcGFjc3RyYXBfZGlyIEFOVEVTIGRlIGluc3RhbGFyIHBhY2thZ2VzLng4Nl82NCAobWthcmNoaXNvIGNvcnJlCiMgX21ha2VfY3VzdG9tX2Fpcm9vdGZzIGFudGVzIHF1ZSBfbWFrZV9wYWNrYWdlcyDigJQgY29uZmlybWFkbyBlbiBlbCBjb2RpZ28KIyBmdWVudGUgcmVhbCBkZSBhcmNoaXNvKS4gbGludXgtYXZhbG9zLWNvbXBhdCB5IGh5cHJsYW5kIFRBTUJJRU4gdHJhZW4gc3VzCiMgcHJvcGlvcyBhcmNoaXZvcyBlbiBlc2FzIG1pc21hcyBydXRhcywgYXNpIHF1ZSBzaSB5YSBleGlzdGVuIGFxdWksIHBhY21hbgojIGFib3J0YSBUT0RBIGxhIHRyYW5zYWNjaW9uIGNvbiAiZmFpbGVkIHRvIGNvbW1pdCB0cmFuc2FjdGlvbiAoY29uZmxpY3RpbmcKIyBmaWxlcykiLiBjdXN0b21pemVfYWlyb290ZnMuc2ggY29ycmUgREVTUFVFUyBkZSBwYWNzdHJhcCAoZGVudHJvIGRlbAojIGNocm9vdCksIGFzaSBxdWUgYWhpIGVzY3JpYmlybG9zIGVzIHVuIHNpbXBsZSBvdmVyd3JpdGUgZGUgZmlsZXN5c3RlbSwgc2luCiMgdHJhbnNhY2Npb24gZGUgcGFjbWFuIGRlIHBvciBtZWRpbyAtPiBzaW4gY29uZmxpY3RvLgoKcHJpbnQoIkNvbmZpZ3MgYmFzZSBPSyIpCg==" | base64 -d > /tmp/pycfgpyeof.py
+           python3 /tmp/pycfgpyeof.py "$AIROOTFS"
+ 
