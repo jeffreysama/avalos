@@ -8,12 +8,13 @@
   min-height: 0;
   /* NOTA (comentario corregido): box-sizing NO está en la lista oficial de
    * propiedades CSS soportadas por GTK (docs.gtk.org/gtk3/css-properties.html
-   * — sección "Box properties" solo lista min-width/min-height/margin-*/padding-*).
-   * GTK ignora esta línea silenciosamente (las propiedades desconocidas no
-   * rompen el resto del CSS), así que no causa daño, pero tampoco previene
-   * el desborde de módulos con padding como se afirmaba — eso se controla
-   * con min-height/padding ajustados directamente en cada módulo. Se deja
-   * la línea por si una versión futura de GTK la soporta. */
+   * — sección "Box properties" solo lista min-width, min-height, margin
+   * (cada lado) y padding (cada lado)). GTK ignora esta línea silenciosamente
+   * (las propiedades desconocidas no rompen el resto del CSS), así que no
+   * causa daño, pero tampoco previene el desborde de módulos con padding
+   * como se afirmaba — eso se controla con min-height/padding ajustados
+   * directamente en cada módulo. Se deja la línea por si una versión futura
+   * de GTK la soporta. */
   box-sizing: border-box;
 }
 

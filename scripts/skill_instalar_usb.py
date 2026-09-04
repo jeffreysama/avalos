@@ -4127,6 +4127,16 @@ WantedBy=multi-user.target
             self ._run_chroot (["locale-gen"])
             (MOUNT_ROOT /"etc"/"locale.conf").write_text (f"LANG={_loc }\n")
             (MOUNT_ROOT /"etc"/"vconsole.conf").write_text (f"KEYMAP={_keymap }\n")
+            _xkb_layout =_VCONSOLE_TO_XKB .get (_keymap ,_keymap )
+            _xorg_kbd_dir =MOUNT_ROOT /"etc"/"X11"/"xorg.conf.d"
+            _xorg_kbd_dir .mkdir (parents =True ,exist_ok =True )
+            (_xorg_kbd_dir /"00-keyboard.conf").write_text (
+            "Section \"InputClass\"\n"
+            "    Identifier \"system-keyboard\"\n"
+            "    MatchIsKeyboard \"yes\"\n"
+            f"    Option \"XkbLayout\" \"{_xkb_layout }\"\n"
+            "EndSection\n"
+            )
             self ._log (self ._t ("log-locale-keymap",loc =_loc ,keymap =_keymap ),"ok")
             (MOUNT_ROOT /"etc"/"hostname").write_text (hostname +"\n")
             (MOUNT_ROOT /"etc"/"hosts").write_text (

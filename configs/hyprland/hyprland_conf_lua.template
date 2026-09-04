@@ -160,7 +160,7 @@ hl.bind(mod .. " + CTRL + down",  hl.dsp.window.resize({ x =   0, y =  30, relat
 -- entorno. Se unifica en SUPER+SHIFT+E con el mismo guard que el live;
 -- se quita el bind de "exit" crudo para no salir sin pasar por el menú.
 hl.bind(mod .. " + SHIFT + E",
-    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
+    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh"))
 
 -- Foco — flechas y HJKL
 hl.bind(mod .. " + left",  hl.dsp.focus({ direction = "left" }))
