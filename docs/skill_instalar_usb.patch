@@ -1,0 +1,78 @@
+--- a/skill_instalar_usb.py
++++ b/skill_instalar_usb.py
+@@ -3826,6 +3826,26 @@
+             self ._label (self ._t ("label-installing-base"))
+             self ._log ("\n── pacstrap ──\n","step")
+ 
++            # El /etc/pacman.conf del live trae 'IgnorePkg = linux-avalos ...'
++            # (proteccion contra 'pacman -S linux-avalos' accidental DENTRO
++            # del live -- ver build-iso.yml). pacstrap reusa /etc/pacman.conf
++            # por defecto si no se le pasa -C, asi que sin esta copia limpia
++            # ese IgnorePkg queda activo tambien al pacstrapear MOUNT_ROOT (un
++            # root distinto, sin ese riesgo) y linux-avalos deja de contar
++            # como proveedor valido de la dependencia virtual 'linux' --
++            # pacman cae de vuelta al 'linux' generico de [core] para
++            # satisfacerla. Copia SOLO para el pacstrap del target; el
++            # /etc/pacman.conf real del live no se toca.
++            _pacman_conf_target ="/tmp/avalos_pacman_target.conf"
++            try :
++                with open ("/etc/pacman.conf")as _f_conf :
++                    _conf_lines =[l for l in _f_conf if not l .lstrip ().startswith ("IgnorePkg")]
++                with open (_pacman_conf_target ,"w")as _f_conf :
++                    _f_conf .writelines (_conf_lines )
++            except Exception as _e_conf :
++                self ._log (self ._t ("log-pacman-conf-target-error",e =_e_conf ),"warn")
++                _pacman_conf_target ="/etc/pacman.conf"
++
+             pkgs =list (BASE_PKGS )
+ 
+             if not self ._modo_usb :
+@@ -3926,7 +3946,7 @@
+                 _pf_ok =False
+                 _pf_out =""
+                 for _pf_intento in range (3 ):
+-                    _pf_cmd =["pacman","-Sp"if _pf_intento ==0 else "-Syyp","--noconfirm"]+pkgs
++                    _pf_cmd =["pacman","-Sp"if _pf_intento ==0 else "-Syyp","--config",_pacman_conf_target ,"--noconfirm"]+pkgs
+                     _pf_rc ,_pf_out =self ._run_cmd (_pf_cmd ,timeout =60 ,log_cls ="info")
+                     if _pf_rc ==0 :
+                         _pf_ok =True
+@@ -4005,6 +4025,24 @@
+                 "warn"
+                 )
+ 
++            # Guardia: 'linux'/'linux-headers' genericos NUNCA deben aparecer
++            # resueltos para pacstrap -- si aparecen es que algo (una
++            # dependencia sin 'provides' correcto en el PKGBUILD del kernel
++            # avalos objetivo, un IgnorePkg mal alcanzando este pacman.conf,
++            # etc) hizo que pacman los use para satisfacer 'linux' en vez de
++            # _kernel_pkg. Cortar aca evita gastar minutos bajando un kernel
++            # de ~150MB que no queremos y que ademas suele fallar por mirror.
++            _pf_kernel_intruso =sorted (set (re .findall (
++            r"/(linux(?:-headers)?-\d[^/\s]*)-(?:x86_64|any)\.pkg\.tar",_pf_out
++            )))
++            if _pf_kernel_intruso :
++                self ._log (
++                self ._t ("log-generic-kernel-detected",pkgs =", ".join (_pf_kernel_intruso ),target =_kernel_pkg ),
++                "err"
++                )
++                self ._jsc ("pyErrorFatal",self ._t ("err-generic-kernel-in-transaction",pkgs =", ".join (_pf_kernel_intruso )))
++                self ._limpiar_montajes ();return
++
+             _pacstrap_ok =False
+             _pacstrap_out =""
+             for _pd_val in (None ,2 ,1 ):
+@@ -4021,12 +4059,12 @@
+                     # (los .db, chicos, entraban bien; firefox/wine/firmware,
+                     # grandes, fallaban todos).
+                     self ._run_cmd (
+-                    ["sed","-i",f"s/^ParallelDownloads.*/ParallelDownloads = {_pd_val }/","/etc/pacman.conf"],
++                    ["sed","-i",f"s/^ParallelDownloads.*/ParallelDownloads = {_pd_val }/",_pacman_conf_target ],
+                     timeout =10
+                     )
+                     self ._log (self ._t ("log-pacstrap-retry-slower",n =_pd_val ),"warn")
+                 rc ,_pacstrap_out =self ._run_cmd (
+-                ["pacstrap","-c",str (MOUNT_ROOT )]+pkgs ,
++                ["pacstrap","-C",_pacman_conf_target ,"-c",str (MOUNT_ROOT )]+pkgs ,
+                 timeout =3600 ,log_cls ="info"
+                 )
+                 if rc ==0 :
