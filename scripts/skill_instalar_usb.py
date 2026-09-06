@@ -3840,6 +3840,24 @@ WantedBy=multi-user.target
             try :
                 with open ("/etc/pacman.conf")as _f_conf :
                     _conf_lines =[l for l in _f_conf if not l .lstrip ().startswith ("IgnorePkg")]
+                # 'failed retrieving file' aislado (paquetes grandes tipo
+                # noto-fonts-cjk, linux-firmware-*) suele ser UN intento que
+                # se corta -- no necesariamente el mirror entero esta mal.
+                # pacman por si solo no reintenta la MISMA descarga, solo
+                # pasa al siguiente mirror. XferCommand delega la descarga a
+                # curl, que si reintenta la misma URL antes de rendirse.
+                # Costo: pacman deja de paralelizar descargas (ParallelDownloads
+                # se ignora con XferCommand activo) -- aceptable aca, porque el
+                # retry de mas abajo YA asume que menos paralelismo ayuda en
+                # conexiones inestables.
+                for _i_opt ,_l_opt in enumerate (_conf_lines ):
+                    if _l_opt .strip ()=="[options]":
+                        _conf_lines .insert (
+                        _i_opt +1 ,
+                        "XferCommand = /usr/bin/curl -L -C - -f --retry 3 --retry-delay 3 "
+                        "--connect-timeout 10 -o %o %u\n"
+                        )
+                        break
                 with open (_pacman_conf_target ,"w")as _f_conf :
                     _f_conf .writelines (_conf_lines )
             except Exception as _e_conf :
@@ -3960,7 +3978,16 @@ WantedBy=multi-user.target
                 if _pf_ok :
                     break
 
-                _pf_faltantes =sorted (set (re .findall (r"target not found:\s*(\S+)",_pf_out )))
+                # Dos frases distintas de pacman para "esto no existe": 'target
+                # not found: X' (tipico cuando X esta directo en nuestra lista)
+                # y 'cannot resolve "X"' (visto en foros reales -- CachyOS tuvo
+                # este mismo lib32-gst-plugins-base-libs asi en abr-may 2026).
+                # Se capturan las dos para que el recorte de abajo no dependa
+                # de cual de las dos decida usar pacman.
+                _pf_faltantes =sorted (set (
+                re .findall (r"target not found:\s*(\S+)",_pf_out )
+                +re .findall (r'cannot resolve\s*"([^"]+)"',_pf_out )
+                ))
                 _pf_recortables =[p for p in _pf_faltantes if p .startswith ("lib32-")]
                 if _pf_recortables and all (p in pkgs for p in _pf_recortables ):
                     # Se puede recortar: son paquetes lib32- explícitos de
