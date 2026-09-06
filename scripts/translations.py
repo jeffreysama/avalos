@@ -227,7 +227,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "label-done": "Done",
         "label-installing-base": "Installing base system…",
 
-        "log-aur-partial-fail": "AUR: some packages failed (yay exit {rc})",
+        "log-aur-partial-fail": "AUR: some packages failed (yay exit {rc}): {out}",
         "log-bootloader-skipped": "Bootloader installation skipped",
         "log-bore-not-supported": "BORE scheduler not supported on {cpu_arch} — standard EEVDF will be used",
         "log-checking-kernel-repo": "Checking AvalOS kernel repository…",
@@ -360,7 +360,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-waybar-style-missing": "waybar style.css not found — skipping",
         "log-wipefs-retry": "Retry {intento}/2 after transient failure on {dev}…",
         "log-written": "Written: {ruta}",
-        "log-yay-not-installed": "yay not installed — AUR packages skipped",
+        "log-yay-not-installed": "yay not installed — AUR packages skipped: {out}",
+        "log-yay-retry": "yay build failed (network hiccup?) — retrying once…",
         "log-zram-ok": "zram swap configured",
 
         "status-applying-optimizations": "Applying system optimizations…",
@@ -612,7 +613,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "label-done": "Completado",
         "label-installing-base": "Instalando sistema base…",
 
-        "log-aur-partial-fail": "AUR: algunos paquetes fallaron (yay salió con código {rc})",
+        "log-aur-partial-fail": "AUR: algunos paquetes fallaron (yay salió con código {rc}): {out}",
         "log-bootloader-skipped": "Instalación del gestor de arranque omitida",
         "log-bore-not-supported": "El planificador BORE no es compatible con {cpu_arch} — se usará EEVDF estándar",
         "log-checking-kernel-repo": "Verificando repositorio de kernel AvalOS…",
@@ -745,7 +746,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-waybar-style-missing": "style.css de waybar no encontrado — omitiendo",
         "log-wipefs-retry": "Reintento {intento}/2 tras fallo transitorio en {dev}…",
         "log-written": "Escrito: {ruta}",
-        "log-yay-not-installed": "yay no instalado — paquetes AUR omitidos",
+        "log-yay-not-installed": "yay no instalado — paquetes AUR omitidos: {out}",
+        "log-yay-retry": "Falló el build de yay (¿corte de red?) — reintentando una vez…",
         "log-zram-ok": "Swap zram configurado",
 
         "status-applying-optimizations": "Aplicando optimizaciones del sistema…",
@@ -996,7 +998,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "label-done": "完成",
         "label-installing-base": "正在安装基础系统…",
 
-        "log-aur-partial-fail": "AUR：部分软件包安装失败（yay 退出码 {rc}）",
+        "log-aur-partial-fail": "AUR：部分软件包安装失败（yay 退出码 {rc}）：{out}",
         "log-bootloader-skipped": "已跳过引导加载程序安装",
         "log-bore-not-supported": "BORE 调度器不支持 {cpu_arch} — 将使用标准 EEVDF",
         "log-checking-kernel-repo": "正在检查 AvalOS 内核仓库…",
@@ -1129,7 +1131,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-waybar-style-missing": "未找到 waybar style.css — 已跳过",
         "log-wipefs-retry": "重试 {intento}/2 — {dev} 出现临时错误…",
         "log-written": "已写入：{ruta}",
-        "log-yay-not-installed": "yay 未安装 — AUR 软件包已跳过",
+        "log-yay-not-installed": "yay 未安装 — AUR 软件包已跳过：{out}",
+        "log-yay-retry": "yay 构建失败（网络波动？）— 正在重试一次…",
         "log-zram-ok": "zram 交换空间已配置",
 
         "status-applying-optimizations": "正在应用系统优化…",
@@ -1389,7 +1392,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "label-done": "完了",
         "label-installing-base": "ベースシステムをインストール中…",
 
-        "log-aur-partial-fail": "AUR：一部のパッケージが失敗しました（yay 終了コード {rc}）",
+        "log-aur-partial-fail": "AUR：一部のパッケージが失敗しました（yay 終了コード {rc}）：{out}",
         "log-bootloader-skipped": "ブートローダーのインストールをスキップしました",
         "log-bore-not-supported": "{cpu_arch} では BORE スケジューラーがサポートされていません — 標準の EEVDF を使用します",
         "log-checking-kernel-repo": "AvalOS カーネルリポジトリを確認中…",
@@ -1522,7 +1525,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-waybar-style-missing": "waybar の style.css が見つかりません — スキップします",
         "log-wipefs-retry": "再試行 {intento}/2 — {dev} で一時的なエラーが発生しました…",
         "log-written": "書き込み完了：{ruta}",
-        "log-yay-not-installed": "yay がインストールされていません — AUR パッケージをスキップしました",
+        "log-yay-not-installed": "yay がインストールされていません — AUR パッケージをスキップしました：{out}",
+        "log-yay-retry": "yay のビルドに失敗しました（回線の一時的な不調?）— もう一度再試行します…",
         "log-zram-ok": "zram スワップを設定しました",
 
         "status-applying-optimizations": "システムの最適化を適用中…",

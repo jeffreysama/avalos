@@ -4656,6 +4656,7 @@ WantedBy=multi-user.target
             sudoers_tmp =MOUNT_ROOT /"etc"/"sudoers.d"/"99-aur-build"
             try :
                 sudoers_tmp .write_text (f"{usuario } ALL=(ALL:ALL) NOPASSWD: ALL\n")
+                sudoers_tmp .chmod (0o440 )
             except OSError :
                 sudoers_tmp =None
 
@@ -4667,22 +4668,34 @@ WantedBy=multi-user.target
             "makepkg -si --noconfirm --needed && "
             "rm -rf \"$TMPD\""
             )
-            rc ,_ =self ._run_chroot (
-            ["sudo","-H","-u",usuario ,"bash","-c",yay_script ],timeout =600
-            )
+            # Sin captura de output ni reintento, un solo corte de red durante
+            # el 'git clone' o durante la descarga de 'go' (makedepend de yay)
+            # tira todo el bootstrap sin dejar rastro de POR QUE -- rc se veía
+            # pero el output se descartaba (== "_"). Con todo lo que ya vimos
+            # de mirrors/red inestables en esta build, vale un reintento igual
+            # que el resto de la instalación.
+            rc ,out_yay ="",""
+            for _intento_yay in range (2 ):
+                rc ,out_yay =self ._run_chroot (
+                ["sudo","-H","-u",usuario ,"bash","-c",yay_script ],timeout =600
+                )
+                if rc ==0 :
+                    break
+                if _intento_yay ==0 :
+                    self ._log (self ._t ("log-yay-retry"),"warn")
             if rc !=0 :
-                self ._log (self ._t ("log-yay-not-installed"),"warn")
+                self ._log (self ._t ("log-yay-not-installed",out =out_yay .strip ()[-500 :]),"warn")
                 self ._step ("aur","skip",self ._t ("step-yay-failed-label"))
             else :
                 all_aur =HYPRLAND_AUR_PKGS +(GAMING_AUR_PKGS if self ._install_gaming else [])
                 if all_aur :
-                    rc_aur ,_ =self ._run_chroot (
+                    rc_aur ,out_aur =self ._run_chroot (
                     ["sudo","-H","-u",usuario ,"yay","-S","--noconfirm","--needed"]
                     +all_aur ,timeout =1800
                     )
                     if rc_aur !=0 :
                         self ._log (
-                        self ._t ("log-aur-partial-fail",rc =rc_aur ),
+                        self ._t ("log-aur-partial-fail",rc =rc_aur ,out =out_aur .strip ()[-500 :]),
                         "warn"
                         )
                         self ._step ("aur","done",self ._t ("step-aur-count-warn",n =len (all_aur )))
