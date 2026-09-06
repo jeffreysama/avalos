@@ -3742,6 +3742,24 @@ WantedBy=multi-user.target
 
             if self ._abortado :self ._limpiar_montajes ();return
 
+            # Chequeo de espacio ANTES de gastar minutos en mirrors/pacstrap.
+            # Con "-c" fuera del pacstrap (fix anterior: cache ahora vive en
+            # MOUNT_ROOT, no en el host), mejor fallar aca en segundos con
+            # mensaje claro que a mitad de pacstrap con curl reintentando
+            # contra un disco lleno. 20 GiB es conservador para
+            # base+Hyprland+drivers+firmware+fuentes CJK+gaming (Steam/Wine).
+            _MIN_ESPACIO_GB =20
+            try :
+                _libre_gb =shutil .disk_usage (MOUNT_ROOT ).free /(1024 **3 )
+            except Exception as _e_du :
+                _libre_gb =None
+                self ._log (self ._t ("log-diskcheck-error",e =_e_du ),"warn")
+            if _libre_gb is not None :
+                if _libre_gb <_MIN_ESPACIO_GB :
+                    self ._jsc ("pyErrorFatal",self ._t ("err-disk-space-low",libre =f"{_libre_gb :.1f}",minimo =_MIN_ESPACIO_GB ))
+                    self ._limpiar_montajes ();return
+                self ._log (self ._t ("log-diskcheck-ok",libre =f"{_libre_gb :.1f}"),"ok")
+
             # Sincronizacion de hora ANTES de cualquier operacion de red: si
             # el reloj del sistema esta mal (bateria CMOS muerta, o NTP que
             # no alcanzo a sincronizar en el boot), la validacion de
@@ -4091,7 +4109,7 @@ WantedBy=multi-user.target
                     )
                     self ._log (self ._t ("log-pacstrap-retry-slower",n =_pd_val ),"warn")
                 rc ,_pacstrap_out =self ._run_cmd (
-                ["pacstrap","-C",_pacman_conf_target ,"-c",str (MOUNT_ROOT )]+pkgs ,
+                ["pacstrap","-C",_pacman_conf_target ,str (MOUNT_ROOT )]+pkgs ,
                 timeout =3600 ,log_cls ="info"
                 )
                 if rc ==0 :
