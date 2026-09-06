@@ -170,7 +170,7 @@ DRIVER_PKGS_INTEL =[
 ]
 
 HYPRLAND_PKGS =[
-"hyprland","xdg-desktop-portal-hyprland","xdg-desktop-portal-gtk",
+"hyprland","uwsm","libnewt","xdg-desktop-portal-hyprland","xdg-desktop-portal-gtk",
 "xdg-user-dirs","kitty","waybar","rofi-wayland","mako",
 "hyprpaper","hyprlock","hypridle","hyprpicker",
 "grim","slurp","wl-clipboard","cliphist",
@@ -2712,10 +2712,25 @@ class VentanaInstalador :
         dest =MOUNT_ROOT /ruta_relativa .lstrip ("/")
         dest .parent .mkdir (parents =True ,exist_ok =True )
         dest .write_text (contenido ,encoding ="utf-8")
+        # Modo explicito: dest.write_text() hereda el umask del proceso (root,
+        # instalador). Si ese umask es mas restrictivo que 022 (022 -> 644,
+        # world-readable), el archivo queda sin bit de lectura para "other" Y
+        # el chown_r de mas abajo SOLO arregla dueño, nunca modo -- si por lo
+        # que sea ese chown no llega a cubrir este archivo a tiempo, el dueño
+        # real (root, todavia) + modo restrictivo = exactamente "Permission
+        # denied" para el usuario real al leer su propio hyprland.lua. Fijar
+        # 644 aca hace que la lectura no dependa de NINGUNA de las dos cosas.
+        dest .chmod (0o644 )
         self ._log (self ._t ("log-written",ruta =ruta_relativa ),"ok")
 
     def _chown_r (self ,ruta :str ,usuario :str ):
-        self ._run_chroot (["chown","-R",f"{usuario }:{usuario }",ruta ])
+        rc ,out =self ._run_chroot (["chown","-R",f"{usuario }:{usuario }",ruta ])
+        if rc !=0 :
+            # Antes esto fallaba en silencio -- sin rc ni log, no habia forma
+            # de notar (ni de diagnosticar) un home mal dueño hasta que el
+            # usuario ya estaba adentro con la sesion rota.
+            self ._log (self ._t ("log-chown-r-fail",ruta =ruta ,rc =rc ,out =out .strip ()[-300 :]),"warn")
+        return rc
 
     def _configurar_optimizaciones (self ,gpu_info :dict ,cpu_arch :str ,disco_tipo :str ):
         """Configura ZRAM+zstd, systemd-oomd, BBR, IO scheduler, sysctl y binarios de sistema."""
@@ -2942,25 +2957,6 @@ XDG_CURRENT_DESKTOP=Hyprland
 {_gpu_env }__GLX_VENDOR_LIBRARY_NAME=mesa
 """)
 
-        self ._escribir ("etc/os-release",f"""\
-NAME="AvalOS"
-PRETTY_NAME="AvalOS"
-ID=avalos
-ID_LIKE=arch
-BUILD_ID=rolling
-ANSI_COLOR="38;2;122;162;247"
-HOME_URL="https://github.com/{AVALOS_REPO }"
-DOCUMENTATION_URL="https://wiki.archlinux.org"
-LOGO=avalos-logo
-""")
-        self ._escribir ("etc/lsb-release","""\
-LSB_VERSION=1.4
-DISTRIB_ID=AvalOS
-DISTRIB_RELEASE=rolling
-DISTRIB_CODENAME=avalos
-DISTRIB_DESCRIPTION="AvalOS"
-""")
-
         _gpu_env_amd =('hl.env("AMD_VULKAN_ICD",    "RADV")\n'
         'hl.env("VDPAU_DRIVER",      "radeonsi")\n'
         'hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
@@ -3107,6 +3103,24 @@ RebootCommand=/usr/bin/systemctl reboot
 Name=Hyprland
 Comment=An intelligent dynamic tiling Wayland compositor
 Exec=Hyprland
+Type=Application
+""")
+
+        # Sesion administrada por uwsm (Universal Wayland Session Manager):
+        # sin esto, SDDM ejecuta el binario Hyprland pelado (arriba) y
+        # Hyprland tira el warning "started without start-hyprland" -- desde
+        # la 0.5x lo recomendado es siempre uwsm (session/env/autostart via
+        # systemd, apagado limpio). "--" separa flags de uwsm del target;
+        # "hyprland.desktop" (arriba) queda intacto como lo que uwsm resuelve
+        # para saber que binario correr -- confirmado contra log real de
+        # sddm (bbs.archlinux.org/viewtopic.php?id=307539): Session
+        # ".../hyprland-uwsm.desktop" selected, command: "uwsm start --
+        # hyprland.desktop".
+        self ._escribir ("usr/share/wayland-sessions/hyprland-uwsm.desktop","""\
+[Desktop Entry]
+Name=Hyprland (uwsm)
+Comment=An intelligent dynamic tiling Wayland compositor
+Exec=uwsm start -- hyprland.desktop
 Type=Application
 """)
 
@@ -4177,6 +4191,34 @@ WantedBy=multi-user.target
             (MOUNT_ROOT /"etc"/"hosts").write_text (
             f"127.0.0.1   localhost\n::1         localhost\n127.0.1.1   {hostname }.localdomain {hostname }\n"
             )
+
+            # os-release/lsb-release ANTES de grub (paso siguiente): el
+            # 10_linux de grub-mkconfig lee NAME/PRETTY_NAME de os-release UNA
+            # sola vez, al generar grub.cfg, y hornea ese texto en las
+            # entradas del menu. Antes esto se escribia recien en el paso
+            # 'hypr' (el ULTIMO paso, dentro de _configurar_hyprland) -- para
+            # ese momento grub-mkconfig ya habia corrido dos veces (bootloader
+            # + snapper/grub-btrfs) contra el os-release de fabrica de Arch,
+            # asi que el menu quedaba diciendo "Arch Linux" para siempre por
+            # mas que el archivo en si ya dijera AvalOS.
+            self ._escribir ("etc/os-release",f"""\
+NAME="AvalOS"
+PRETTY_NAME="AvalOS"
+ID=avalos
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;122;162;247"
+HOME_URL="https://github.com/{AVALOS_REPO }"
+DOCUMENTATION_URL="https://wiki.archlinux.org"
+LOGO=avalos-logo
+""")
+            self ._escribir ("etc/lsb-release","""\
+LSB_VERSION=1.4
+DISTRIB_ID=AvalOS
+DISTRIB_RELEASE=rolling
+DISTRIB_CODENAME=avalos
+DISTRIB_DESCRIPTION="AvalOS"
+""")
 
             rc_pw ,out_pw =self ._run_chroot_stdin (f"root:{passw }\n",["chpasswd"])
             if rc_pw !=0 :
