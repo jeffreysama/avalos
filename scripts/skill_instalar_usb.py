@@ -2961,54 +2961,6 @@ DISTRIB_CODENAME=avalos
 DISTRIB_DESCRIPTION="AvalOS"
 """)
 
-        avalos_repo =(
-        "\n[avalos]\n"
-
-        "SigLevel = Required DatabaseOptional\n"
-        f"Server = {AVALOS_REPO_URL }\n"
-        )
-
-        multilib_repo ="\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n"
-
-        pac_path =MOUNT_ROOT /"etc"/"pacman.conf"
-        try :
-            existing =pac_path .read_text (encoding ="utf-8")if pac_path .exists ()else ""
-            to_append =""
-            if "[avalos]"not in existing :
-
-                _fp ="60FD7887C1DA5B080281B9B8F548844B24E0379D"
-                _tmp =MOUNT_ROOT /"tmp"/"avalos.gpg"
-                _rc ,_ =self ._run_cmd ([
-                "bash","-c",
-                f"gpg --homedir /etc/pacman.d/gnupg --armor --export {_fp } > {_tmp } 2>/dev/null"
-                ])
-                if _rc ==0 and _tmp .stat ().st_size >0 :
-                    self ._run_chroot (["pacman-key","--init"])
-                    self ._run_chroot (["pacman-key","--add",f"/tmp/avalos.gpg"])
-                    self ._run_chroot (["pacman-key","--lsign-key",_fp ])
-                    self ._log (f"  clave GPG AvalOS ({_fp }) importada al keyring","ok")
-                else :
-                    self ._log ("  [WARN] no se pudo exportar la clave GPG de AvalOS desde el live ISO","warn")
-                _tmp .unlink (missing_ok =True )
-                to_append +=avalos_repo
-            if "[multilib]"not in existing :
-
-                existing_new =re .sub (
-                r'#\s*\[multilib\]\s*\n#\s*Include\s*=\s*/etc/pacman\.d/mirrorlist',
-                "[multilib]\nInclude = /etc/pacman.d/mirrorlist",
-                existing
-                )
-                if "[multilib]"not in existing_new :
-
-                    to_append +=multilib_repo
-                else :
-                    existing =existing_new
-            if to_append :
-                pac_path .write_text (existing +to_append ,encoding ="utf-8")
-            self ._log ("  repos [avalos] + [multilib] → pacman.conf","ok")
-        except OSError as e :
-            self ._log (f"[WARN] pacman.conf: {e }","warn")
-
         _gpu_env_amd =('hl.env("AMD_VULKAN_ICD",    "RADV")\n'
         'hl.env("VDPAU_DRIVER",      "radeonsi")\n'
         'hl.env("LIBVA_DRIVER_NAME", "radeonsi")')
@@ -4278,6 +4230,24 @@ WantedBy=multi-user.target
                         _grub_default .write_text (_grub_txt )
                         self ._log (self ._t ("log-grub-btrfs-configured"),"ok")
 
+            # mkinitcpio -P procesa TODOS los .preset que encuentre en
+            # mkinitcpio.d/, no solo el del kernel instalado. Si quedó un
+            # preset huérfano apuntando a un vmlinuz que no existe (ej.
+            # 'linux.preset' -> /boot/vmlinuz-linux, cuando lo único
+            # instalado es linux-avalos), falla con "must be readable" —
+            # no rompe la transacción de pacman, pero ensucia el log y no
+            # debería estar ahí. Se deja solo el preset del kernel real.
+            _presets_dir =MOUNT_ROOT /"etc"/"mkinitcpio.d"
+            if _presets_dir .is_dir ():
+                _preset_valido =f"{_kernel_pkg }.preset"
+                for _p in _presets_dir .glob ("*.preset"):
+                    if _p .name !=_preset_valido :
+                        try :
+                            _p .unlink ()
+                            self ._log (self ._t ("log-mkinitcpio-stray-preset-removed",preset =_p .name ),"warn")
+                        except OSError as _e_preset :
+                            self ._log (self ._t ("log-mkinitcpio-stray-preset-error",preset =_p .name ,e =_e_preset ),"warn")
+
             self ._run_chroot (["mkinitcpio","-P"])
             self ._step ("config","done","locale · timezone · hostname · initramfs · btrfs-hook"
             if not self ._modo_usb else "locale · timezone · hostname · initramfs")
@@ -4530,52 +4500,57 @@ WantedBy=multi-user.target
             if not self ._modo_usb :
                 self ._log (self ._t ("log-section-snapper"),"step")
 
-                rc_snap ,out_snap =self ._run_chroot (["snapper","-c","root","create-config","/"])
+                rc_snap ,out_snap =self ._run_chroot (["snapper","--no-dbus","-c","root","create-config","/"])
                 if rc_snap !=0 :
-                    self ._log (self ._t ("log-snapper-create-config-fail",rc =rc_snap ,out =out_snap ),"err")
-                    self ._step ("services","error")
-                    self ._abortado =True
-                    self ._limpiar_montajes ()
-                    return
-                self ._log (self ._t ("log-snapper-config-created"),"ok")
-
-                _snapper_cfg =MOUNT_ROOT /"etc"/"snapper"/"configs"/"root"
-                if _snapper_cfg .exists ():
-                    _cfg_txt =_snapper_cfg .read_text ()
-                    _snapper_replacements ={
-                    'TIMELINE_LIMIT_HOURLY="10"':'TIMELINE_LIMIT_HOURLY="5"',
-                    'TIMELINE_LIMIT_DAILY="10"':'TIMELINE_LIMIT_DAILY="7"',
-                    'TIMELINE_LIMIT_WEEKLY="0"':'TIMELINE_LIMIT_WEEKLY="4"',
-                    'TIMELINE_LIMIT_MONTHLY="10"':'TIMELINE_LIMIT_MONTHLY="3"',
-                    'TIMELINE_LIMIT_YEARLY="10"':'TIMELINE_LIMIT_YEARLY="0"',
-                    'NUMBER_LIMIT="50"':'NUMBER_LIMIT="10"',
-                    'NUMBER_LIMIT_IMPORTANT="50"':'NUMBER_LIMIT_IMPORTANT="10"',
-                    }
-                    for old ,new in _snapper_replacements .items ():
-                        _cfg_txt =_cfg_txt .replace (old ,new )
-                    _snapper_cfg .write_text (_cfg_txt )
-                    self ._log (self ._t ("log-snapper-retention-ok"),"ok")
-
-                for svc in ["snapper-timeline.timer","snapper-cleanup.timer"]:
-                    self ._run_chroot (["systemctl","enable",svc ])
-                self ._log (self ._t ("log-snapper-timers-ok"),"ok")
-
-                if self ._bootloader =="grub":
-                    self ._run_chroot (["systemctl","enable","grub-btrfsd"])
-
-                    self ._run_chroot (["grub-mkconfig","-o","/boot/grub/grub.cfg"])
-                    self ._log (self ._t ("log-grubbtrfs-ok"),"ok")
+                    # No fatal: Snapper es un extra (snapshots), no algo de lo
+                    # que dependa el sistema para arrancar o funcionar. Con
+                    # --no-dbus ya cubierto el motivo mas comun de fallo (no
+                    # hay D-Bus corriendo dentro de arch-chroot), pero si
+                    # falla por otra razon, mejor entregar un sistema completo
+                    # y booteable sin snapshots que tirar TODO el trabajo ya
+                    # hecho (kernel+bootloader+servicios) por este extra.
+                    self ._log (self ._t ("log-snapper-create-config-fail",rc =rc_snap ,out =out_snap ),"warn")
+                    self ._log (self ._t ("log-snapper-skipped-continuing"),"warn")
                 else :
-                    self ._log (self ._t ("log-grubbtrfs-skipped"),"warn")
-                    self ._log (self ._t ("log-snapshots-still-work"),"warn")
-                    self ._log (self ._t ("log-manual-rollback-hint"),"warn")
+                    self ._log (self ._t ("log-snapper-config-created"),"ok")
 
-                _snap_dir =MOUNT_ROOT /".snapshots"
-                if _snap_dir .exists ():
-                    self ._run_cmd (["chmod","750",str (_snap_dir )])
-                    self ._log (self ._t ("log-snapshots-perms-ok"),"ok")
+                    _snapper_cfg =MOUNT_ROOT /"etc"/"snapper"/"configs"/"root"
+                    if _snapper_cfg .exists ():
+                        _cfg_txt =_snapper_cfg .read_text ()
+                        _snapper_replacements ={
+                        'TIMELINE_LIMIT_HOURLY="10"':'TIMELINE_LIMIT_HOURLY="5"',
+                        'TIMELINE_LIMIT_DAILY="10"':'TIMELINE_LIMIT_DAILY="7"',
+                        'TIMELINE_LIMIT_WEEKLY="0"':'TIMELINE_LIMIT_WEEKLY="4"',
+                        'TIMELINE_LIMIT_MONTHLY="10"':'TIMELINE_LIMIT_MONTHLY="3"',
+                        'TIMELINE_LIMIT_YEARLY="10"':'TIMELINE_LIMIT_YEARLY="0"',
+                        'NUMBER_LIMIT="50"':'NUMBER_LIMIT="10"',
+                        'NUMBER_LIMIT_IMPORTANT="50"':'NUMBER_LIMIT_IMPORTANT="10"',
+                        }
+                        for old ,new in _snapper_replacements .items ():
+                            _cfg_txt =_cfg_txt .replace (old ,new )
+                        _snapper_cfg .write_text (_cfg_txt )
+                        self ._log (self ._t ("log-snapper-retention-ok"),"ok")
 
-                self ._log (self ._t ("log-snapshots-configured-ok"),"ok")
+                    for svc in ["snapper-timeline.timer","snapper-cleanup.timer"]:
+                        self ._run_chroot (["systemctl","enable",svc ])
+                    self ._log (self ._t ("log-snapper-timers-ok"),"ok")
+
+                    if self ._bootloader =="grub":
+                        self ._run_chroot (["systemctl","enable","grub-btrfsd"])
+
+                        self ._run_chroot (["grub-mkconfig","-o","/boot/grub/grub.cfg"])
+                        self ._log (self ._t ("log-grubbtrfs-ok"),"ok")
+                    else :
+                        self ._log (self ._t ("log-grubbtrfs-skipped"),"warn")
+                        self ._log (self ._t ("log-snapshots-still-work"),"warn")
+                        self ._log (self ._t ("log-manual-rollback-hint"),"warn")
+
+                    _snap_dir =MOUNT_ROOT /".snapshots"
+                    if _snap_dir .exists ():
+                        self ._run_cmd (["chmod","750",str (_snap_dir )])
+                        self ._log (self ._t ("log-snapshots-perms-ok"),"ok")
+
+                    self ._log (self ._t ("log-snapshots-configured-ok"),"ok")
 
             self ._step ("services","done","NetworkManager · bluetooth · sddm · pipewire · snapper"
             if not self ._modo_usb else "NetworkManager · bluetooth · sddm · pipewire · avalos-gpu-detect")
@@ -4617,6 +4592,62 @@ WantedBy=multi-user.target
             avanzar ()
 
             if self ._abortado :self ._limpiar_montajes ();return
+
+            # [avalos]/[multilib]+GPG tienen que estar en el pacman.conf del
+            # chroot ANTES de yay/AUR: pacstrap no copia pacman.conf al target
+            # (no se pasa -P), asi que hasta aca el chroot todavia tiene el
+            # pacman.conf de fabrica del paquete 'pacman' -- sin multilib. Si
+            # esto se hace despues (como estaba antes, adentro de
+            # _configurar_hyprland), 'yay -S proton-ge-custom-bin' resuelve
+            # sus dependencias lib32-* contra un pacman.conf que todavia no
+            # tiene [multilib], y falla.
+            self ._log (self ._t ("log-section-repo-setup"),"step")
+            _avalos_repo_txt =(
+            "\n[avalos]\n"
+
+            "SigLevel = Required DatabaseOptional\n"
+            f"Server = {AVALOS_REPO_URL }\n"
+            )
+            _multilib_repo_txt ="\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n"
+
+            _pac_path =MOUNT_ROOT /"etc"/"pacman.conf"
+            try :
+                _existing =_pac_path .read_text (encoding ="utf-8")if _pac_path .exists ()else ""
+                _to_append =""
+                if "[avalos]"not in _existing :
+
+                    _fp ="60FD7887C1DA5B080281B9B8F548844B24E0379D"
+                    _tmp =MOUNT_ROOT /"tmp"/"avalos.gpg"
+                    _rc ,_ =self ._run_cmd ([
+                    "bash","-c",
+                    f"gpg --homedir /etc/pacman.d/gnupg --armor --export {_fp } > {_tmp } 2>/dev/null"
+                    ])
+                    if _rc ==0 and _tmp .stat ().st_size >0 :
+                        self ._run_chroot (["pacman-key","--init"])
+                        self ._run_chroot (["pacman-key","--add",f"/tmp/avalos.gpg"])
+                        self ._run_chroot (["pacman-key","--lsign-key",_fp ])
+                        self ._log (f"  clave GPG AvalOS ({_fp }) importada al keyring","ok")
+                    else :
+                        self ._log ("  [WARN] no se pudo exportar la clave GPG de AvalOS desde el live ISO","warn")
+                    _tmp .unlink (missing_ok =True )
+                    _to_append +=_avalos_repo_txt
+                if "[multilib]"not in _existing :
+
+                    _existing_new =re .sub (
+                    r'#\s*\[multilib\]\s*\n#\s*Include\s*=\s*/etc/pacman\.d/mirrorlist',
+                    "[multilib]\nInclude = /etc/pacman.d/mirrorlist",
+                    _existing
+                    )
+                    if "[multilib]"not in _existing_new :
+
+                        _to_append +=_multilib_repo_txt
+                    else :
+                        _existing =_existing_new
+                if _to_append :
+                    _pac_path .write_text (_existing +_to_append ,encoding ="utf-8")
+                self ._log ("  repos [avalos] + [multilib] → pacman.conf","ok")
+            except OSError as e :
+                self ._log (f"[WARN] pacman.conf: {e }","warn")
 
             self ._step ("aur","active")
             self ._status (self ._t ("status-installing-aur"))
