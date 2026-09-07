@@ -2763,6 +2763,22 @@ class VentanaInstalador :
         "        # el usuario) — no reemplazar a ciegas, evitar corromper el archivo.\n"
         "        continue\n"
         "    fi\n"
+        "    # BUG-FIX (permission denied en hyprland.lua tras cada boot):\n"
+        "    # owner/modo se leian DESPUES del mv (ver git blame), o sea del\n"
+        "    # archivo temporal de mktemp (root:root, 0600 -- este script\n"
+        "    # corre como root via avalos-gpu-detect.service, Before=sddm),\n"
+        "    # no del hyprland.lua original del usuario. El chown de mas\n"
+        "    # abajo terminaba re-confirmando root:root en vez de restaurar\n"
+        "    # al usuario real, y el modo 0600 de mktemp quedaba puesto. Con\n"
+        "    # este servicio corriendo ANTES de sddm en cada arranque,\n"
+        "    # hyprland.lua del usuario quedaba root:root justo antes de que\n"
+        "    # el usuario pudiera loguearse -- exactamente 'Permission\n"
+        "    # denied' al abrir su propio config (y por eso Hyprland caia a\n"
+        "    # sus colores/tema por defecto: nunca llegaba a leer el archivo\n"
+        "    # con Tokyo Night). Fix: capturar owner Y modo ANTES de pisar\n"
+        "    # el archivo, restaurar los dos despues del mv.\n"
+        "    owner=\"$(stat -c '%U:%G' \"$hypr_conf\")\"\n"
+        "    mode=\"$(stat -c '%a' \"$hypr_conf\")\"\n"
         "    tmp=\"$(mktemp)\"\n"
         "    awk -v block=\"$GPU_BLOCK\" '\n"
         "        /-- AVALOS_GPU_ENV_START/ { print; print block; skip=1; next }\n"
@@ -2770,8 +2786,8 @@ class VentanaInstalador :
         "        skip { next }\n"
         "        { print }\n"
         "    ' \"$hypr_conf\" > \"$tmp\" && mv \"$tmp\" \"$hypr_conf\"\n"
-        "    owner=\"$(stat -c '%U:%G' \"$hypr_conf\")\"\n"
         "    chown \"$owner\" \"$hypr_conf\"\n"
+        "    chmod \"$mode\" \"$hypr_conf\"\n"
         "done\n"
         )
         _gpu_env_bin .chmod (0o755 )
@@ -4173,7 +4189,27 @@ WantedBy=multi-user.target
                 self ._log (self ._t ("log-localegen-missing"),"warn")
                 locale_gen .parent .mkdir (parents =True ,exist_ok =True )
                 locale_gen .write_text ("\n".join (_extra_locales )+"\n")
-            self ._run_chroot (["locale-gen"])
+            # Antes esto se llamaba sin capturar rc/output: si locale-gen
+            # fallaba (o generaba todo MENOS el locale pedido) quedaba en
+            # silencio total -- nada en el log, nada en pantalla -- y recien
+            # te enterabas con "setlocale: cannot change locale" ya en el
+            # sistema instalado y arrancado, sin ninguna pista de a que paso
+            # apuntar. El texto que arma _loc_gen/_extra_locales de arriba
+            # ya se verifico a mano contra un locale.gen real de Arch y
+            # contra locale-gen real (genera "es_SV.UTF-8... done" limpio),
+            # asi que si esto llega a fallar en un run concreto el problema
+            # esta en ESTE chroot puntual, no en la logica -- por eso vale
+            # la pena verificar explicitamente en vez de asumir.
+            _rc_locgen ,_out_locgen =self ._run_chroot (["locale-gen"])
+            if _rc_locgen !=0 :
+                self ._log (self ._t ("log-localegen-failed",loc =_loc ,rc =_rc_locgen ,out =_out_locgen .strip ()[-300 :]),"err")
+            else :
+                _rc_check ,_out_check =self ._run_chroot (["locale","-a"])
+                _loc_norm =_loc .replace ("-","").lower ()
+                if _loc_norm not in _out_check .replace ("-","").lower ():
+                    self ._log (self ._t ("log-localegen-verify-fail",loc =_loc ,out =_out_locgen .strip ()[-300 :]),"err")
+                else :
+                    self ._log (self ._t ("log-localegen-verify-ok",loc =_loc ),"ok")
             (MOUNT_ROOT /"etc"/"locale.conf").write_text (f"LANG={_loc }\n")
             (MOUNT_ROOT /"etc"/"vconsole.conf").write_text (f"KEYMAP={_keymap }\n")
             _xkb_layout =_VCONSOLE_TO_XKB .get (_keymap ,_keymap )
@@ -4219,6 +4255,35 @@ DISTRIB_RELEASE=rolling
 DISTRIB_CODENAME=avalos
 DISTRIB_DESCRIPTION="AvalOS"
 """)
+
+            # BUG-FIX (GRUB siempre decia "Arch Linux"): GRUB_DISTRIBUTOR en
+            # /etc/default/grub -- NO /etc/os-release -- es lo que el
+            # 10_linux de grub-mkconfig usa para armar el titulo de cada
+            # entrada del menu (literalmente "${GRUB_DISTRIBUTOR} Linux").
+            # De fabrica el paquete grub de Arch trae esa linea fija en
+            # "Arch" (o resuelta via `lsb_release`, binario que ni siquiera
+            # esta instalado aca, cayendo al fallback "Arch Linux"). Escribir
+            # os-release antes de grub-mkconfig (arriba) NUNCA iba a arreglar
+            # esto porque 10_linux ni lo lee para este proposito -- son dos
+            # mecanismos totalmente separados. Se pisa aca, antes de CUALQUIER
+            # grub-mkconfig, y sin condicionar a self._modo_usb: si hay GRUB
+            # tiene que decir AvalOS sea instalacion a disco o a USB.
+            _grub_default_early =MOUNT_ROOT /"etc"/"default"/"grub"
+            if _grub_default_early .exists ():
+                try :
+                    _gd_txt =_grub_default_early .read_text ()
+                    _gd_txt ,_n_distrib =re .subn (
+                    r'^GRUB_DISTRIBUTOR=.*$',
+                    'GRUB_DISTRIBUTOR="AvalOS"',
+                    _gd_txt ,
+                    flags =re .MULTILINE ,
+                    )
+                    if _n_distrib ==0 :
+                        _gd_txt +='\nGRUB_DISTRIBUTOR="AvalOS"\n'
+                    _grub_default_early .write_text (_gd_txt )
+                    self ._log (self ._t ("log-grub-distributor-set"),"ok")
+                except OSError as _e_gd :
+                    self ._log (self ._t ("log-grub-distributor-fail",e =_e_gd ),"warn")
 
             rc_pw ,out_pw =self ._run_chroot_stdin (f"root:{passw }\n",["chpasswd"])
             if rc_pw !=0 :
