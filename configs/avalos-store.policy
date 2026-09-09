@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+
+<!--
+  AvalOS — avalos-store
+  ───────────────────────────────────────────────────────────────
+  avalos-store (la GUI, corriendo SIN privilegios) invoca
+  directo "pkexec pacman -S ..." / "pkexec pacman -R ..." para
+  instalar/desinstalar paquetes oficiales y de AUR del catálogo
+  — no pasa por un helper propio como avalos-update-helper.
+  hyprpolkitagent ya corre en el sistema instalado (exec-once de
+  hyprland.lua) — no hace falta instalar ni configurar nada más
+  para que el diálogo gráfico de autenticación aparezca.
+
+  Dos acciones separadas (una por argv1: -S, -R) en vez de una
+  sola sobre pacman en general: org.freedesktop.policykit.exec.
+  argv1 acota CADA acción a esa operación exacta, así que
+  "pkexec pacman -Syu" o cualquier otra bandera fuera de -S/-R
+  NUNCA matchean ninguna de las dos — solo caen en la acción
+  genérica org.freedesktop.policykit.exec (sin memoria de sesión,
+  pide contraseña siempre). Sin este archivo, TODO uso de pkexec
+  contra pacman (incluyendo el de avalos-update-helper, que
+  también invoca pacman internamente) caería en esa misma acción
+  genérica.
+
+  IMPORTANTE — alcance real de esto, sin adornarlo: pkexec NO
+  valida los argumentos posteriores a argv1 (ver pkexec(1),
+  sección "REQUIRED AUTHORIZATIONS": "pkexec does no validation
+  of the ARGUMENTS passed to PROGRAM"). O sea que esta policy
+  autoriza "pkexec pacman -S <cualquier-paquete>", no solo los
+  que están en avalos-store-catalog.json — mismo alcance real que
+  ya tiene "apply-system" en avalos-update-helper (pacman -Syu
+  completo, sin acotar por paquete tampoco). No es una regresión
+  de seguridad frente a lo que ya existe, pero tampoco hay forma
+  de limitar polkit a "solo estos paquetes" sin mover esto a un
+  helper propio con su propia lista blanca — ver nota de
+  arquitectura en el resumen de la sesión si en algún momento se
+  quiere endurecer esto.
+
+  allow_active=auth_admin_keep: pide contraseña de admin la
+  primera vez y la recuerda un rato (como sudo), para no pedirla
+  de nuevo entre instalar/desinstalar varias apps seguidas en la
+  misma sesión de la Store.
+  allow_inactive/allow_any=no: nunca autoriza desde una sesión
+  inactiva o remota — solo con sesión gráfica activa al frente.
+-->
+<policyconfig>
+  <vendor>AvalOS</vendor>
+  <vendor_url>https://github.com/jeffreysama/avalos</vendor_url>
+  <icon_name>system-software-install</icon_name>
+
+  <action id="com.avalos.store.install">
+    <description>Instalar aplicaciones con AvalOS Store</description>
+    <description xml:lang="en">Install applications with AvalOS Store</description>
+    <description xml:lang="es">Instalar aplicaciones con AvalOS Store</description>
+    <description xml:lang="zh">使用 AvalOS Store 安装应用程序</description>
+    <description xml:lang="ja">AvalOS Store でアプリをインストール</description>
+
+    <message>Se requiere autenticación para instalar una aplicación</message>
+    <message xml:lang="en">Authentication is required to install an application</message>
+    <message xml:lang="es">Se requiere autenticación para instalar una aplicación</message>
+    <message xml:lang="zh">安装应用程序需要身份验证</message>
+    <message xml:lang="ja">アプリをインストールするには認証が必要です</message>
+
+    <icon_name>system-software-install</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/pacman</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">-S</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="com.avalos.store.uninstall">
+    <description>Desinstalar aplicaciones con AvalOS Store</description>
+    <description xml:lang="en">Uninstall applications with AvalOS Store</description>
+    <description xml:lang="es">Desinstalar aplicaciones con AvalOS Store</description>
+    <description xml:lang="zh">使用 AvalOS Store 卸载应用程序</description>
+    <description xml:lang="ja">AvalOS Store でアプリをアンインストール</description>
+
+    <message>Se requiere autenticación para desinstalar una aplicación</message>
+    <message xml:lang="en">Authentication is required to uninstall an application</message>
+    <message xml:lang="es">Se requiere autenticación para desinstalar una aplicación</message>
+    <message xml:lang="zh">卸载应用程序需要身份验证</message>
+    <message xml:lang="ja">アプリをアンインストールするには認証が必要です</message>
+
+    <icon_name>edit-delete</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/pacman</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">-R</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

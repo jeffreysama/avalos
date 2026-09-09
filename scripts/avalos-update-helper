@@ -1,0 +1,515 @@
+#!/usr/bin/env python3
+# ── AvalOS — avalos-update-helper ──────────────────────────────────
+# Este script SIEMPRE corre vía pkexec (ver avalos-update.policy),
+# NUNCA se invoca directo. avalos-update (la GUI) corre SIN privilegios
+# como el usuario normal; esto es lo único que toca root, y a propósito
+# tiene una superficie angosta: un subcomando por cada operación real
+# que necesita privilegios, con argparse choices= cerrando cualquier
+# valor fuera de una lista fija donde aplica. Nada de "aplicar un plan
+# JSON arbitrario" — cada acción posible está escrita a mano acá.
+#
+# Lo que SÍ necesita root (vive acá):
+#   apply-system, apply-kernel, apply-aur, sync-system-files, snapshot
+# Lo que NO necesita root (vive en avalos-update, nunca pasa por acá):
+#   chequear qué hay para actualizar (checkupdates/yay -Qu/flatpak
+#   remote-ls), detectar CPU, listar variantes de kernel disponibles,
+#   aplicar updates de flatpak (flatpak maneja su propio polkit interno
+#   si el remote es system-wide; envolverlo en ESTE pkexec sería un
+#   segundo mecanismo de privilegio pisando al de flatpak).
+# ────────────────────────────────────────────────────────────────────
+from __future__ import annotations
+import argparse, os, pwd, subprocess, sys, time, urllib.request
+from pathlib import Path
+
+REPO_RAW = "https://raw.githubusercontent.com/jeffreysama/avalos/main"
+BOOT_DIR = Path("/boot")
+MKINITCPIO_D = Path("/etc/mkinitcpio.d")
+GRUB_CFG = BOOT_DIR / "grub" / "grub.cfg"
+SUDOERS_AUR = Path("/etc/sudoers.d/99-avalos-update-aur")
+
+KERNEL_VARIANTS = {
+    "eevdf": ("linux-avalos", "linux-avalos-headers"),
+    "bore": ("linux-avalos-bore", "linux-avalos-bore-headers"),
+    "compat": ("linux-avalos-compat", "linux-avalos-compat-headers"),
+}
+
+# ── Utilidades base ─────────────────────────────────────────────────
+
+def _out(msg: str) -> None:
+    """Línea de narración del helper (no de un comando hijo) — el GUI
+    la distingue por el prefijo '### ' para resaltarla en el log."""
+    print(f"### {msg}", flush=True)
+
+
+def _fail(msg: str, code: int = 1) -> None:
+    print(f"### ERROR: {msg}", flush=True)
+    sys.exit(code)
+
+
+def _require_root_via_pkexec() -> str:
+    """Nunca confiar en 'me invocaron bien' — si esto no vino de pkexec
+    o no es root de verdad, cortar acá. PKEXEC_UID es lo que pkexec
+    exporta con el UID de quien lo invocó (nunca root) — sin esto no
+    hay forma de saber a qué usuario soltarle el uid para yay/makepkg
+    (que se niegan a correr como root) o dueño de archivos en su home."""
+    if os.geteuid() != 0:
+        _fail("este script debe correr como root, vía pkexec.")
+    uid = os.environ.get("PKEXEC_UID")
+    if uid is None:
+        _fail("PKEXEC_UID no está seteado — no se invocó vía pkexec.")
+    try:
+        return pwd.getpwuid(int(uid)).pw_name
+    except (ValueError, KeyError):
+        _fail(f"UID invocador ({uid}) no resuelve a un usuario real.")
+
+
+def _stream(cmd: list[str], **kw) -> int:
+    """Corre cmd imprimiendo stdout/stderr línea por línea EN VIVO, no
+    todo junto al final — así el GUI (que nos lee vía pkexec con pipes)
+    puede mostrar progreso real durante una compilación de AUR de 10
+    minutos en vez de una barra congelada."""
+    print(f"### $ {' '.join(cmd)}", flush=True)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, **kw,
+    )
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+    proc.wait()
+    return proc.returncode
+
+
+def detectar_cpu_arch_level() -> str:
+    """Copiado tal cual de skill_instalar_usb.py — mismo criterio que
+    usó el instalador para decidir si esta CPU soporta BORE, no una
+    heurística nueva que podría no coincidir en un caso límite."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            flags = ""
+            for line in f:
+                if line.startswith("flags"):
+                    flags = line.split(":", 1)[1].lower()
+                    break
+        flag_set = set(flags.split())
+        v4 = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
+        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "lzcnt", "movbe", "xsave"}
+        if v4.issubset(flag_set):
+            return "x86-64-v4"
+        elif v3.issubset(flag_set):
+            return "x86-64-v3"
+        else:
+            return "x86-64-v2"
+    except Exception:
+        return "x86-64"
+
+
+def _pacman_disponible(pkg: str, intentos: int = 4, espera: int = 6) -> bool:
+    """Mismo patrón de reintento que _pacman_disponible del instalador:
+    -Syi primero, -Syyi (refresco forzado) en los reintentos, espera
+    entre intentos. El kernel NUNCA debe fallar en silencio."""
+    ultima = ""
+    for i in range(intentos):
+        cmd = ["pacman", "-Syi" if i == 0 else "-Syyi", "--noconfirm", pkg]
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        ultima = (p.stdout or "") + (p.stderr or "")
+        if p.returncode == 0:
+            return True
+        if i < intentos - 1:
+            _out(f"'{pkg}' no disponible todavía (intento {i + 2}/{intentos})…")
+            time.sleep(espera)
+    if "signature" in ultima.lower() or "gpg" in ultima.lower():
+        _out("la última salida de pacman menciona firmas/GPG — revisá las llaves (pacman-key).")
+    return False
+
+
+def _instalado_kernel_actual() -> str | None:
+    """¿Cuál de las 3 variantes está instalada ahora? None si ninguna
+    (no debería pasar en un sistema AvalOS real, pero no asumir)."""
+    for variante, (pkg, _headers) in KERNEL_VARIANTS.items():
+        if subprocess.run(["pacman", "-Q", pkg], capture_output=True).returncode == 0:
+            return variante
+    return None
+
+
+def _limpiar_presets_huerfanos(preset_valido: str) -> None:
+    """Mismo fix que ya existe en el instalador: mkinitcpio -P procesa
+    TODOS los .preset de mkinitcpio.d/, no solo el del kernel activo.
+    Si queda un preset de la variante vieja apuntando a un vmlinuz que
+    ya no existe, mkinitcpio tira 'must be readable' — no rompe nada
+    pero ensucia el log. pacman -R debería llevarse el .preset de la
+    variante removida solo, pero por las dudas se limpia explícito."""
+    if not MKINITCPIO_D.is_dir():
+        return
+    for p in MKINITCPIO_D.glob("*.preset"):
+        if p.name != preset_valido:
+            try:
+                p.unlink()
+                _out(f"preset huérfano eliminado: {p.name}")
+            except OSError as e:
+                _out(f"no se pudo limpiar preset huérfano {p.name}: {e}")
+
+
+def detectar_microcode() -> str:
+    """Copiado tal cual de skill_instalar_usb.py (detectar_microcode) —
+    mismo criterio que usó el instalador para decidir amd-ucode vs
+    intel-ucode, no una heurística nueva."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            c = f.read().lower()
+        if "genuineintel" in c or "intel" in c:
+            return "intel-ucode"
+        if "authenticamd" in c or "amd" in c:
+            return "amd-ucode"
+    except OSError:
+        pass
+    return ""
+
+
+def _actualizar_systemd_boot_entry(kernel_name: str) -> None:
+    """El instalador (skill_instalar_usb.py) escribe UNA sola entrada
+    fija en /boot/efi/loader/entries/avalos.conf, con el nombre exacto
+    del kernel (vmlinuz-{kernel_name}) grabado en las líneas 'linux' e
+    'initrd' — a diferencia de kernel-install genérico, esto NO se
+    regenera solo cuando cambia el paquete de kernel instalado, porque
+    los archivos viven en una copia paralela bajo /boot/efi/AvalOS/ (NO
+    en /boot/ directo, que es lo único que pacman gestiona) y el hook
+    del instalador (95-systemd-boot.hook) está atado a
+    'Target = {kernel_name-de-cuando-se-instaló}' — un paquete fijo que
+    ya no matchea tras cambiar de variante. Sin esto, cmd_apply_kernel
+    dejaría avalos.conf apuntando a archivos borrados por el 'pacman -R'
+    de la variante vieja: sistema sin arrancar, mensaje de "listo" o no.
+    GRUB no tiene este problema (grub-mkconfig regenera todo desde cero
+    cada vez) y rEFInd tampoco (refind_linux.conf no tiene NINGÚN nombre
+    de kernel embebido, hace scan de /boot en cada arranque) — por eso
+    esto es exclusivo de systemd-boot, no un patrón a repetir ahí."""
+    sdboot_entry = BOOT_DIR / "efi" / "loader" / "entries" / "avalos.conf"
+    sdboot_esp_dir = BOOT_DIR / "efi" / "AvalOS"
+
+    if not sdboot_entry.is_file():
+        return  # este sistema no usa systemd-boot — nada que hacer.
+
+    esp_kernel = BOOT_DIR / f"vmlinuz-{kernel_name}"
+    if not esp_kernel.is_file():
+        _out(f"aviso: {esp_kernel} no existe todavía — se omite actualizar la entrada de systemd-boot.")
+        return
+
+    _out("actualizando entrada de systemd-boot (avalos.conf)…")
+    sdboot_esp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import shutil as _shutil
+        _shutil.copy2(esp_kernel, sdboot_esp_dir / f"vmlinuz-{kernel_name}")
+        initrd_src = BOOT_DIR / f"initramfs-{kernel_name}.img"
+        if initrd_src.is_file():
+            _shutil.copy2(initrd_src, sdboot_esp_dir / f"initramfs-{kernel_name}.img")
+    except OSError as e:
+        _out(f"aviso: no se pudieron copiar los archivos de kernel a la ESP: {e} — avalos.conf no se actualiza para no dejarlo apuntando a algo a medio copiar.")
+        return
+
+    ucode = detectar_microcode()
+    ucode_copied = False
+    if ucode:
+        ucode_src = BOOT_DIR / f"{ucode}.img"
+        if ucode_src.is_file():
+            try:
+                _shutil.copy2(ucode_src, sdboot_esp_dir / f"{ucode}.img")
+                ucode_copied = True
+            except OSError as e:
+                _out(f"aviso: no se pudo copiar {ucode}.img a la ESP: {e}")
+
+    # 'options' (root=UUID=..., subvol, flags de arranque) se PRESERVA tal
+    # cual del avalos.conf existente — no se reconstruye desde cero acá,
+    # para no arriesgar divergir de lo que el instalador ya calculó bien
+    # una vez (UUID real del root, rootflags=subvol=@ si aplica, etc).
+    # Solo se reemplazan los nombres de archivo, que sí cambian con la
+    # variante de kernel. De paso, se toma nota del kernel_name VIEJO acá
+    # (antes de sobrescribir) para poder limpiar sus archivos huérfanos
+    # de la ESP una vez que la entrada nueva ya está escrita con éxito.
+    try:
+        contenido_actual = sdboot_entry.read_text(encoding="utf-8")
+    except OSError as e:
+        _out(f"aviso: no se pudo leer {sdboot_entry} para preservar sus opciones: {e} — se omite actualizar la entrada.")
+        return
+
+    options_line = "options root=UUID=CHANGEME rw quiet splash loglevel=3\n"
+    kernel_name_viejo = None
+    for line in contenido_actual.splitlines(keepends=True):
+        if line.startswith("options"):
+            options_line = line if line.endswith("\n") else line + "\n"
+        elif line.startswith("linux") and "/AvalOS/vmlinuz-" in line:
+            kernel_name_viejo = line.split("/AvalOS/vmlinuz-", 1)[1].strip()
+
+    initrd_line = f"initrd  /AvalOS/{ucode}.img\n" if ucode_copied else ""
+    nuevo_contenido = (
+        "title   AvalOS\n"
+        f"linux   /AvalOS/vmlinuz-{kernel_name}\n"
+        f"{initrd_line}"
+        f"initrd  /AvalOS/initramfs-{kernel_name}.img\n"
+        f"{options_line}"
+    )
+    try:
+        sdboot_entry.write_text(nuevo_contenido, encoding="utf-8")
+    except OSError as e:
+        _out(f"aviso: no se pudo escribir {sdboot_entry}: {e} — la ESP tiene los archivos nuevos pero la entrada de boot sigue apuntando a los viejos, revisar a mano.")
+        return
+    _out(f"entrada de systemd-boot actualizada para {kernel_name}.")
+
+    # avalos.conf ya apunta al kernel nuevo con éxito confirmado — recién
+    # ACÁ se limpian los archivos de la variante vieja en la ESP, nunca
+    # antes: si algo de lo de arriba hubiese fallado a mitad de camino,
+    # esos archivos viejos son la única copia que sigue siendo arrancable.
+    if kernel_name_viejo and kernel_name_viejo != kernel_name:
+        for patron in (f"vmlinuz-{kernel_name_viejo}", f"initramfs-{kernel_name_viejo}.img"):
+            viejo = sdboot_esp_dir / patron
+            if viejo.is_file():
+                try:
+                    viejo.unlink()
+                except OSError as e:
+                    _out(f"aviso: no se pudo limpiar {viejo} (huérfano, sin romper nada): {e}")
+
+
+def _actualizar_bootloader(kernel_name: str | None = None) -> None:
+    """GRUB: grub-mkconfig regenera todo desde cero, cubre cualquier
+    cambio de kernel/variante sin intervención adicional.
+    systemd-boot: ver _actualizar_systemd_boot_entry — SÍ necesita este
+    paso explícito por el diseño de entrada fija de AvalOS, a diferencia
+    de un setup con kernel-install genérico.
+    rEFInd: refind_linux.conf no tiene nombres de kernel embebidos, hace
+    scan de /boot en cada arranque — nada que regenerar acá, y el hook
+    propio del instalador (refind.hook) ya cubre refind-install cuando
+    el paquete refind se actualiza."""
+    if GRUB_CFG.parent.exists() and Path("/etc/default/grub").exists():
+        _out("regenerando grub.cfg…")
+        _stream(["grub-mkconfig", "-o", str(GRUB_CFG)])
+    elif kernel_name:
+        # _actualizar_systemd_boot_entry ya verifica internamente si
+        # existe avalos.conf de systemd-boot; si no hay GRUB ni esa
+        # entrada (p.ej. sistema con rEFInd), no hace nada y vuelve.
+        _actualizar_systemd_boot_entry(kernel_name)
+    else:
+        _out("no hay GRUB configurado y no se especificó kernel_name — se omite regenerar bootloader.")
+
+
+# ── Subcomandos ──────────────────────────────────────────────────────
+
+def cmd_apply_system(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    cmd = ["pacman", "-Syu", "--noconfirm"]
+    if args.hold_kernel:
+        actual = _instalado_kernel_actual()
+        if actual:
+            pkg, headers = KERNEL_VARIANTS[actual]
+            cmd += ["--ignore", pkg, "--ignore", headers]
+            _out(f"kernel retenido a propósito: {pkg} (elegiste actualizar todo menos el kernel).")
+    rc = _stream(cmd)
+    if rc != 0:
+        _fail(f"pacman -Syu terminó con código {rc}.", rc)
+    _out("sistema actualizado.")
+
+
+def cmd_apply_kernel(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    variante = args.variant
+    pkg, headers = KERNEL_VARIANTS[variante]
+
+    if variante == "bore":
+        cpu_arch = detectar_cpu_arch_level()
+        if cpu_arch not in ("x86-64-v3", "x86-64-v4"):
+            _fail(
+                f"BORE necesita AVX2 (x86-64-v3+) y esta CPU detecta "
+                f"'{cpu_arch}'. No se instala un kernel que probablemente "
+                f"no arranque — elegí EEVDF o Compat."
+            )
+
+    _out(f"buscando {pkg} en el repo [avalos]…")
+    if not _pacman_disponible(pkg):
+        _fail(f"'{pkg}' no está disponible ahora mismo en el repo — probá más tarde.")
+
+    actual = _instalado_kernel_actual()
+    if actual and KERNEL_VARIANTS[actual][0] == pkg:
+        _out(f"{pkg} ya es la variante instalada — se actualiza en su lugar.")
+    elif actual:
+        _out(f"cambiando de variante: {KERNEL_VARIANTS[actual][0]} → {pkg}")
+
+    rc = _stream(["pacman", "-S", "--needed", "--noconfirm", pkg, headers])
+    if rc != 0:
+        _fail(f"no se pudo instalar {pkg}/{headers} (código {rc}) — se deja el kernel viejo intacto.", rc)
+
+    # Regenerar initramfs ACÁ, con el kernel viejo todavía instalado (si
+    # se está cambiando de variante) — así, si mkinitcpio falla para el
+    # kernel NUEVO, se corta antes de tocar el viejo: el sistema sigue
+    # 100% arrancable con lo que ya tenía. Recién después de confirmar
+    # que el nuevo generó initramfs bien se borra la variante anterior.
+    _out("regenerando initramfs…")
+    rc_m = _stream(["mkinitcpio", "-P"])
+    if rc_m != 0:
+        _fail(f"mkinitcpio -P terminó con código {rc_m} para {pkg} — se deja la variante anterior instalada, no reinicies todavía.", rc_m)
+
+    if actual and KERNEL_VARIANTS[actual][0] != pkg:
+        pkg_viejo, headers_viejo = KERNEL_VARIANTS[actual]
+        _out(f"quitando variante anterior: {pkg_viejo}")
+        rc_r = _stream(["pacman", "-R", "--noconfirm", pkg_viejo, headers_viejo])
+        if rc_r != 0:
+            _out(f"aviso: no se pudo quitar {pkg_viejo} (código {rc_r}) — queda instalado junto al nuevo, sin romper nada.")
+        _limpiar_presets_huerfanos(f"{pkg}.preset")
+        # Segunda pasada: limpia cualquier referencia que haya quedado
+        # del preset viejo ahora que ya no está. Barata e idempotente.
+        _stream(["mkinitcpio", "-P"])
+
+    _actualizar_bootloader(kernel_name=pkg)
+    _out(f"listo — {pkg} instalado. Reiniciá para arrancar con el kernel nuevo.")
+
+
+def cmd_apply_aur(args: argparse.Namespace) -> None:
+    usuario = _require_root_via_pkexec()
+    if not args.packages:
+        _fail("no se especificó ningún paquete de AUR.")
+
+    # Mismo patrón que el instalador para el bootstrap de yay: sudoers
+    # NOPASSWD temporal para que 'sudo pacman -U' (que yay invoca
+    # internamente al instalar lo que compiló) no se quede esperando
+    # una contraseña que no tiene cómo pedir desde acá. Limpieza
+    # garantizada con try/finally, igual que ahí.
+    try:
+        SUDOERS_AUR.write_text(f"{usuario} ALL=(ALL:ALL) NOPASSWD: ALL\n")
+        SUDOERS_AUR.chmod(0o440)
+        _out(f"instalando/actualizando de AUR como {usuario}: {' '.join(args.packages)}")
+        rc = 1
+        rc = _stream(
+            ["sudo", "-H", "-u", usuario, "yay", "-S", "--noconfirm", "--needed", *args.packages]
+        )
+    finally:
+        try:
+            SUDOERS_AUR.unlink()
+        except FileNotFoundError:
+            pass
+
+    if rc != 0:
+        _fail(f"yay terminó con código {rc}.", rc)
+    _out("paquetes de AUR actualizados.")
+
+
+def cmd_snapshot(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    desc = args.description or "avalos-update: pre-update"
+    rc = _stream(["snapper", "-c", "root", "create", "--description", desc])
+    if rc != 0:
+        _out(f"aviso: snapper terminó con código {rc} (¿snapper-root configurado?) — se continúa igual, esto no bloquea el update.")
+    else:
+        _out("snapshot creado.")
+
+
+def cmd_sync_system_files(args: argparse.Namespace) -> None:
+    """Sincroniza SOLO rutas de sistema (root:root) contra jeffreysama/
+    avalos@main: los scripts de /usr/local/bin/avalos-*, el .desktop,
+    la policy de polkit, y la copia de referencia de las plantillas en
+    /usr/share/avalos/configs/. A propósito NUNCA toca los dotfiles que
+    ya están aplicados en ningún /home/*/.config/... — eso lo maneja
+    avalos-update (sin root) escribiendo un *.new al lado del archivo
+    del usuario si la plantilla cambió, igual que un .pacnew, nunca
+    pisando directo lo que la persona ya haya personalizado."""
+    _require_root_via_pkexec()
+
+    # Rutas confirmadas 1:1 contra las llamadas reales a _leer_config(...)
+    # en skill_instalar_usb.py (todas bajo configs/<algo>/<archivo> en el
+    # repo, sin excepción — ninguna vive suelta en la raíz de configs/,
+    # a diferencia de lo que un primer vistazo al nombre sugeriría).
+    # 'configs/gtk/settings.ini' era la única que daba 404 contra
+    # jeffreysama/avalos@main al armar esto — no porque _leer_config()
+    # esté mal apuntada, sino porque el archivo nunca se había
+    # commiteado (el instalador ya cae a un fallback embebido si falta).
+    # Se entrega junto con esto — mismo contenido que ese fallback, así
+    # que el resultado final para quien instala no cambia, pero deja de
+    # depender de un texto embebido a mano y pasa a vivir en el repo.
+    manifest = [
+        ("scripts/avalos-settings", "/usr/local/bin/avalos-settings", 0o755),
+        ("scripts/avalos-wallpaper", "/usr/local/bin/avalos-wallpaper", 0o755),
+        ("scripts/avalos-about", "/usr/local/bin/avalos-about", 0o755),
+        ("scripts/avalos-update", "/usr/local/bin/avalos-update", 0o755),
+        ("scripts/avalos-update-helper", "/usr/local/bin/avalos-update-helper", 0o755),
+        ("scripts/avalos-store", "/usr/local/bin/avalos-store", 0o755),
+        ("configs/avalos-store-catalog.json", "/usr/local/bin/avalos-store-catalog.json", 0o644),
+        ("configs/avalos-settings.desktop", "/usr/share/applications/avalos-settings.desktop", 0o644),
+        ("configs/avalos-store.desktop", "/usr/share/applications/avalos-store.desktop", 0o644),
+        ("configs/avalos-update.policy", "/usr/share/polkit-1/actions/com.avalos.update.policy", 0o644),
+        ("configs/avalos-store.policy", "/usr/share/polkit-1/actions/com.avalos.store.policy", 0o644),
+        ("configs/avalos-store.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-store.svg", 0o644),
+        ("configs/hyprland/hyprland_conf_lua.template", "/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template", 0o644),
+        ("configs/hyprland/hyprpaper.conf", "/usr/share/avalos/configs/hyprland/hyprpaper.conf", 0o644),
+        ("configs/hyprland/hypridle.conf", "/usr/share/avalos/configs/hyprland/hypridle.conf", 0o644),
+        ("configs/hyprland/hyprlock.conf", "/usr/share/avalos/configs/hyprland/hyprlock.conf", 0o644),
+        ("configs/waybar/config.jsonc", "/usr/share/avalos/configs/waybar/config.jsonc", 0o644),
+        ("configs/waybar/style.css", "/usr/share/avalos/configs/waybar/style.css", 0o644),
+        ("configs/mako/config", "/usr/share/avalos/configs/mako/config", 0o644),
+        ("configs/kitty/kitty.conf", "/usr/share/avalos/configs/kitty/kitty.conf", 0o644),
+        ("configs/rofi/config.rasi", "/usr/share/avalos/configs/rofi/config.rasi", 0o644),
+        ("configs/rofi/powermenu.sh", "/usr/share/avalos/configs/rofi/powermenu.sh", 0o644),
+        ("configs/mangohud/MangoHud.conf", "/usr/share/avalos/configs/mangohud/MangoHud.conf", 0o644),
+        ("configs/fastfetch/config.jsonc", "/usr/share/avalos/configs/fastfetch/config.jsonc", 0o644),
+        ("configs/gtk/settings.ini", "/usr/share/avalos/configs/gtk/settings.ini", 0o644),
+        ("configs/sddm/Main.qml", "/usr/share/avalos/configs/sddm/Main.qml", 0o644),
+        ("configs/sddm/metadata.desktop", "/usr/share/avalos/configs/sddm/metadata.desktop", 0o644),
+    ]
+
+    fallas = 0
+    for src_rel, dest, mode in manifest:
+        url = f"{REPO_RAW}/{src_rel}"
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                if resp.status != 200:
+                    raise OSError(f"HTTP {resp.status}")
+                contenido = resp.read()
+        except Exception as e:
+            _out(f"aviso: no se pudo bajar {src_rel}: {e} — se deja el archivo actual sin tocar.")
+            fallas += 1
+            continue
+
+        dest_path = Path(dest)
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = Path(str(dest_path) + ".avalos-tmp")
+            tmp.write_bytes(contenido)
+            tmp.chmod(mode)
+            tmp.replace(dest_path)  # replace es atómico dentro del mismo filesystem
+            _out(f"actualizado: {dest}")
+        except OSError as e:
+            _out(f"aviso: no se pudo escribir {dest}: {e}")
+            fallas += 1
+
+    if fallas:
+        _out(f"sync terminado con {fallas} archivo(s) que no se pudieron actualizar (ver arriba).")
+    else:
+        _out("archivos de sistema de AvalOS sincronizados contra el repo.")
+
+
+# ── CLI ──────────────────────────────────────────────────────────────
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="avalos-update-helper")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("apply-system", help="pacman -Syu (opcionalmente reteniendo el kernel)")
+    p.add_argument("--hold-kernel", action="store_true")
+    p.set_defaults(func=cmd_apply_system)
+
+    p = sub.add_parser("apply-kernel", help="instalar/actualizar/cambiar variante de kernel")
+    p.add_argument("--variant", required=True, choices=list(KERNEL_VARIANTS))
+    p.set_defaults(func=cmd_apply_kernel)
+
+    p = sub.add_parser("apply-aur", help="yay -S para paquetes puntuales de AUR")
+    p.add_argument("packages", nargs="+")
+    p.set_defaults(func=cmd_apply_aur)
+
+    p = sub.add_parser("snapshot", help="snapshot de snapper antes de actualizar")
+    p.add_argument("--description", default=None)
+    p.set_defaults(func=cmd_snapshot)
+
+    p = sub.add_parser("sync-system-files", help="re-descargar scripts/policy/plantillas desde el repo")
+    p.set_defaults(func=cmd_sync_system_files)
+
+    args = ap.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

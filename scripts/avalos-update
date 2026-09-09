@@ -1,0 +1,898 @@
+#!/usr/bin/env python3
+# ── AvalOS — avalos-update ──────────────────────────────────────────────────
+# Elegir QUÉ actualizar: paquetes de sistema, kernel (con cambio de variante
+# EEVDF↔BORE↔Compat), AUR, Flatpak, y los scripts/plantillas de AvalOS.
+#
+# Esta GUI corre SIN privilegios, como el usuario normal — igual que
+# avalos-wallpaper. Nada acá toca root directo. Lo único privilegiado es
+# avalos-update-helper, invocado vía pkexec (com.avalos.update.run-helper,
+# ver avalos-update.policy) — hyprpolkitagent ya corre en el sistema
+# instalado así que el diálogo gráfico de contraseña aparece solo, sin
+# configurar nada más.
+#
+# Por qué "system" no permite elegir paquete-por-paquete: un pacman -Syu
+# parcial (aplicar unos paquetes del sync y otros no) es exactamente el
+# patrón de "partial upgrade" que Arch marca como no soportado — se puede
+# romper linking entre paquetes que sí dependen entre sí. El kernel es la
+# EXCEPCIÓN segura: nada en el resto del sistema depende del paquete de
+# kernel por su nombre exacto, así que --ignore sobre él (ver apply-system
+# --hold-kernel en el helper) es un patrón reconocido y seguro. AUR y
+# Flatpak sí son paquete-por-paquete: son hojas sin interdependencias
+# complejas entre sí.
+#
+# Requiere: python-pywebview, webkit2gtk-4.1, python-gobject (ya en
+# HYPRLAND_PKGS por avalos-wallpaper), pacman-contrib (checkupdates).
+import json
+import os
+import subprocess
+import sys
+import threading
+import urllib.request
+from pathlib import Path
+
+import webview
+
+REPO_RAW = "https://raw.githubusercontent.com/jeffreysama/avalos/main"
+HELPER_BIN = "/usr/local/bin/avalos-update-helper"
+TEMPLATE_LOCAL = Path("/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template")
+
+KERNEL_VARIANTS = {
+    "eevdf": "linux-avalos",
+    "bore": "linux-avalos-bore",
+    "compat": "linux-avalos-compat",
+}
+
+# ── i18n — mismo patrón que avalos-about/avalos-settings/avalos-wallpaper ───
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+
+
+def _detectar_idioma() -> str:
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
+
+STRINGS = {
+    "en": {
+        "title": "Update",
+        "checking": "Checking for updates…",
+        "check-error": "Couldn't check for updates. Check your connection and try again.",
+        "up-to-date": "Everything is up to date",
+        "sec-snapshot": "Snapshot before updating",
+        "sec-snapshot-d": "Uses the Btrfs snapshot setup already on this system (snapper). Safety net in case a kernel or driver update goes wrong.",
+        "sec-system": "System packages",
+        "sec-system-d": "Applied as one block (pacman -Syu) — partial updates within this list aren't safe on Arch.",
+        "sec-system-none": "No system package updates",
+        "sec-kernel": "Kernel",
+        "sec-kernel-d": "Update in place, or switch scheduler variant.",
+        "kernel-current": "Current: {variant}",
+        "kernel-update-now": "Update {pkg} in place",
+        "kernel-bore-locked": "BORE needs AVX2 (x86-64-v3+) — not available on this CPU",
+        "sec-aur": "AUR packages",
+        "sec-aur-none": "No AUR updates",
+        "sec-flatpak": "Flatpak apps",
+        "sec-flatpak-none": "No Flatpak updates",
+        "sec-configs": "AvalOS system files",
+        "sec-configs-d": "Re-downloads the avalos-* scripts and reference config templates from the repo. Never touches your own ~/.config files.",
+        "configs-changed": "The upstream template changed since your last sync",
+        "configs-view-diff": "See what changed",
+        "configs-uptodate": "Matches the repo",
+        "configs-note": "If the Hyprland template changed, this only refreshes the copy in /usr/share — your ~/.config/hypr/hyprland.lua is never edited automatically.",
+        "apply": "Apply selected",
+        "applying": "Applying…",
+        "reboot-needed": "Kernel changed — reboot when you're ready to boot into it.",
+        "done-ok": "Done",
+        "done-err": "Finished with errors — check the log above",
+        "close": "Close",
+        "retry-check": "Check again",
+        "auth-note": "You'll be asked for your password (graphical prompt) for anything that needs root.",
+    },
+    "es": {
+        "title": "Actualizar",
+        "checking": "Buscando actualizaciones…",
+        "check-error": "No se pudo comprobar actualizaciones. Revisá tu conexión e intentá de nuevo.",
+        "up-to-date": "Todo está al día",
+        "sec-snapshot": "Snapshot antes de actualizar",
+        "sec-snapshot-d": "Usa el Btrfs + snapper que ya tenés configurado. Red de seguridad por si un kernel o driver nuevo sale mal.",
+        "sec-system": "Paquetes del sistema",
+        "sec-system-d": "Se aplica todo junto (pacman -Syu) — actualizar solo una parte de esta lista no es seguro en Arch.",
+        "sec-system-none": "No hay actualizaciones de sistema",
+        "sec-kernel": "Kernel",
+        "sec-kernel-d": "Actualizalo en su lugar, o cambiá de variante.",
+        "kernel-current": "Actual: {variant}",
+        "kernel-update-now": "Actualizar {pkg} en su lugar",
+        "kernel-bore-locked": "BORE necesita AVX2 (x86-64-v3+) — esta CPU no lo tiene",
+        "sec-aur": "Paquetes de AUR",
+        "sec-aur-none": "No hay actualizaciones de AUR",
+        "sec-flatpak": "Apps de Flatpak",
+        "sec-flatpak-none": "No hay actualizaciones de Flatpak",
+        "sec-configs": "Archivos de sistema de AvalOS",
+        "sec-configs-d": "Vuelve a bajar los scripts avalos-* y las plantillas de referencia desde el repo. Nunca toca tus propios ~/.config.",
+        "configs-changed": "La plantilla del repo cambió desde tu última sincronización",
+        "configs-view-diff": "Ver qué cambió",
+        "configs-uptodate": "Coincide con el repo",
+        "configs-note": "Si la plantilla de Hyprland cambió, esto solo refresca la copia en /usr/share — tu ~/.config/hypr/hyprland.lua nunca se edita solo.",
+        "apply": "Aplicar selección",
+        "applying": "Aplicando…",
+        "reboot-needed": "El kernel cambió — reiniciá cuando quieras arrancar con el nuevo.",
+        "done-ok": "Listo",
+        "done-err": "Terminó con errores — revisá el log arriba",
+        "close": "Cerrar",
+        "retry-check": "Buscar de nuevo",
+        "auth-note": "Te va a pedir tu contraseña (diálogo gráfico) para lo que necesite root.",
+    },
+    "zh": {
+        "title": "更新",
+        "checking": "正在检查更新…",
+        "check-error": "无法检查更新。请检查网络连接后重试。",
+        "up-to-date": "一切都是最新的",
+        "sec-snapshot": "更新前创建快照",
+        "sec-snapshot-d": "使用系统已配置的 Btrfs + snapper。万一内核或驱动更新出问题时的安全网。",
+        "sec-system": "系统软件包",
+        "sec-system-d": "作为一个整体应用（pacman -Syu）——在 Arch 上只更新其中一部分并不安全。",
+        "sec-system-none": "没有系统软件包更新",
+        "sec-kernel": "内核",
+        "sec-kernel-d": "原地更新，或切换调度器变体。",
+        "kernel-current": "当前：{variant}",
+        "kernel-update-now": "原地更新 {pkg}",
+        "kernel-bore-locked": "BORE 需要 AVX2（x86-64-v3+）——此 CPU 不支持",
+        "sec-aur": "AUR 软件包",
+        "sec-aur-none": "没有 AUR 更新",
+        "sec-flatpak": "Flatpak 应用",
+        "sec-flatpak-none": "没有 Flatpak 更新",
+        "sec-configs": "AvalOS 系统文件",
+        "sec-configs-d": "从仓库重新下载 avalos-* 脚本和参考配置模板。绝不会碰你自己的 ~/.config 文件。",
+        "configs-changed": "自上次同步以来，仓库的模板已更改",
+        "configs-view-diff": "查看更改内容",
+        "configs-uptodate": "与仓库一致",
+        "configs-note": "即使 Hyprland 模板变了，这也只刷新 /usr/share 里的副本 —— 你的 ~/.config/hypr/hyprland.lua 绝不会被自动修改。",
+        "apply": "应用所选项",
+        "applying": "正在应用…",
+        "reboot-needed": "内核已更改 —— 准备好后重启以使用新内核。",
+        "done-ok": "完成",
+        "done-err": "完成但有错误 —— 请查看上方日志",
+        "close": "关闭",
+        "retry-check": "重新检查",
+        "auth-note": "任何需要 root 权限的操作都会弹出图形密码提示。",
+    },
+    "ja": {
+        "title": "アップデート",
+        "checking": "更新を確認しています…",
+        "check-error": "更新を確認できませんでした。接続を確認してもう一度お試しください。",
+        "up-to-date": "すべて最新です",
+        "sec-snapshot": "更新前にスナップショットを作成",
+        "sec-snapshot-d": "このシステムに既にある Btrfs + snapper を使います。カーネルやドライバの更新で問題が起きたときの保険です。",
+        "sec-system": "システムパッケージ",
+        "sec-system-d": "まとめて適用されます（pacman -Syu）— このリストの一部だけ更新するのは Arch では安全ではありません。",
+        "sec-system-none": "システムパッケージの更新はありません",
+        "sec-kernel": "カーネル",
+        "sec-kernel-d": "そのまま更新するか、バリアントを切り替えます。",
+        "kernel-current": "現在: {variant}",
+        "kernel-update-now": "{pkg} をそのまま更新",
+        "kernel-bore-locked": "BORE には AVX2（x86-64-v3+）が必要です — このCPUでは利用できません",
+        "sec-aur": "AUR パッケージ",
+        "sec-aur-none": "AUR の更新はありません",
+        "sec-flatpak": "Flatpak アプリ",
+        "sec-flatpak-none": "Flatpak の更新はありません",
+        "sec-configs": "AvalOS システムファイル",
+        "sec-configs-d": "avalos-* スクリプトと参照用設定テンプレートをリポジトリから再取得します。あなた自身の ~/.config には一切触れません。",
+        "configs-changed": "前回の同期以降、リポジトリ側のテンプレートが変更されています",
+        "configs-view-diff": "変更内容を見る",
+        "configs-uptodate": "リポジトリと一致しています",
+        "configs-note": "Hyprland テンプレートが変わっても、更新されるのは /usr/share 側のコピーだけです — あなたの ~/.config/hypr/hyprland.lua が自動で書き換えられることはありません。",
+        "apply": "選択項目を適用",
+        "applying": "適用中…",
+        "reboot-needed": "カーネルが変更されました — 準備ができたら再起動してください。",
+        "done-ok": "完了",
+        "done-err": "エラーで終了しました — 上のログを確認してください",
+        "close": "閉じる",
+        "retry-check": "もう一度確認",
+        "auth-note": "root 権限が必要な操作にはパスワード（グラフィカルなプロンプト）を求められます。",
+    },
+}
+T = STRINGS[LANG]
+
+
+# ── Chequeos SIN privilegios ─────────────────────────────────────────────
+def _run(cmd, timeout=30):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return -1, "", str(e)
+
+
+def _check_system_updates():
+    # checkupdates (pacman-contrib): base de datos temporal aparte, nunca
+    # toca /var/lib/pacman real ni pide contraseña. rc=2 = sin novedades.
+    rc, out, _ = _run(["checkupdates"], timeout=60)
+    if rc not in (0, 2):
+        return []
+    items = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] == "->":
+            items.append({"name": parts[0], "old": parts[1], "new": parts[3]})
+    return items
+
+
+def _check_aur_updates(repo_names):
+    # yay -Qu ya incluye AUR sin necesitar -Sy ni contraseña — se filtran
+    # los que YA salieron en checkupdates para no duplicar entre listas.
+    rc, out, _ = _run(["yay", "-Qu"], timeout=60)
+    if rc not in (0, 2):
+        return []
+    items = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] == "->" and parts[0] not in repo_names:
+            items.append({"name": parts[0], "old": parts[1], "new": parts[3]})
+    return items
+
+
+def _check_flatpak_updates():
+    rc, out, _ = _run(["flatpak", "remote-ls", "--updates", "--app", "--columns=application", "flathub"], timeout=45)
+    if rc != 0:
+        return []
+    return [{"id": line.strip()} for line in out.splitlines() if line.strip()]
+
+
+def _check_kernel_info():
+    variant_installed = None
+    for variant, pkg in KERNEL_VARIANTS.items():
+        if _run(["pacman", "-Q", pkg])[0] == 0:
+            variant_installed = variant
+            break
+    cpu_arch = "x86-64"
+    try:
+        with open("/proc/cpuinfo") as f:
+            flags = ""
+            for line in f:
+                if line.startswith("flags"):
+                    flags = line.split(":", 1)[1].lower()
+                    break
+        flag_set = set(flags.split())
+        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "lzcnt", "movbe", "xsave"}
+        v4 = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
+        if v4.issubset(flag_set):
+            cpu_arch = "x86-64-v4"
+        elif v3.issubset(flag_set):
+            cpu_arch = "x86-64-v3"
+        else:
+            cpu_arch = "x86-64-v2"
+    except Exception:
+        pass
+    return {
+        "current_variant": variant_installed,
+        "current_pkg": KERNEL_VARIANTS.get(variant_installed),
+        "bore_ok": cpu_arch in ("x86-64-v3", "x86-64-v4"),
+        "cpu_arch": cpu_arch,
+    }
+
+
+def _check_configs_drift():
+    # Lectura sola, sin root: /usr/share/avalos/configs es legible por
+    # cualquiera, y el fetch a raw.githubusercontent.com no necesita
+    # privilegios tampoco. La escritura real (si el usuario decide
+    # sincronizar) sí pasa por el helper con pkexec.
+    try:
+        local = TEMPLATE_LOCAL.read_text(encoding="utf-8") if TEMPLATE_LOCAL.exists() else ""
+    except OSError:
+        local = ""
+    try:
+        with urllib.request.urlopen(f"{REPO_RAW}/configs/hyprland/hyprland_conf_lua.template", timeout=10) as resp:
+            remote = resp.read().decode("utf-8")
+    except Exception:
+        return {"reachable": False, "changed": False, "diff": ""}
+
+    if remote.strip() == local.strip():
+        return {"reachable": True, "changed": False, "diff": ""}
+
+    import difflib
+    diff = "\n".join(difflib.unified_diff(
+        local.splitlines(), remote.splitlines(),
+        fromfile="actual (instalado)", tofile="repo (nuevo)", lineterm="",
+    ))
+    return {"reachable": True, "changed": True, "diff": diff}
+
+
+# ── API expuesta a la GUI ────────────────────────────────────────────────
+class UpdateAPI:
+    window = None
+
+    def check(self):
+        system = _check_system_updates()
+        repo_names = {i["name"] for i in system}
+        return json.dumps({
+            "strings": T,
+            "system": system,
+            "kernel": _check_kernel_info(),
+            "aur": _check_aur_updates(repo_names),
+            "flatpak": _check_flatpak_updates(),
+            "configs": _check_configs_drift(),
+        })
+
+    def apply(self, payload_json):
+        payload = json.loads(payload_json)
+        threading.Thread(target=self._apply_worker, args=(payload,), daemon=True).start()
+        return json.dumps({"started": True})
+
+    def close(self):
+        if self.window:
+            self.window.destroy()
+
+    # ── internos ──
+    def _jsc(self, func, *args):
+        if not self.window:
+            return
+        encoded = ", ".join(json.dumps(a, ensure_ascii=False) for a in args)
+        try:
+            self.window.evaluate_js(f"{func}({encoded})")
+        except Exception as e:
+            print(f"[JS] {e}")
+
+    def _log(self, txt, cls="info"):
+        self._jsc("pyLog", txt, cls)
+
+    def _run_helper(self, args):
+        cmd = ["pkexec", HELPER_BIN, *args]
+        self._log(f"$ {' '.join(args)}", "step")
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+        except FileNotFoundError:
+            self._log("pkexec no está disponible en este sistema.", "err")
+            return False
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            cls = "step" if line.startswith("### ") else "info"
+            self._log(line[4:] if line.startswith("### ") else line, cls)
+        proc.wait()
+        if proc.returncode != 0:
+            self._log(f"(código de salida {proc.returncode})", "err")
+            return False
+        return True
+
+    def _apply_flatpak(self, app_ids):
+        # Directo, sin pkexec: flatpak resuelve su propio scope (user o
+        # system) y, si hace falta privilegio para system-wide, usa SU
+        # PROPIO mecanismo de polkit — envolver esto en avalos-update-helper
+        # sería un segundo sistema de privilegios pisando al de flatpak.
+        # Streaming en vivo (no _run() bufferizado): apps grandes de
+        # flatpak pueden tardar varios minutos, y sin esto el log se veía
+        # "colgado" hasta que cada app terminaba entera.
+        ok = True
+        for app_id in app_ids:
+            cmd = ["flatpak", "update", "-y", app_id]
+            self._log(f"$ {' '.join(cmd)}", "step")
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1,
+                )
+            except FileNotFoundError:
+                self._log("flatpak no está disponible en este sistema.", "err")
+                return False
+            for line in proc.stdout:
+                self._log(line.rstrip("\n"), "info")
+            proc.wait()
+            if proc.returncode != 0:
+                self._log(f"(código de salida {proc.returncode})", "err")
+                ok = False
+        return ok
+
+    def _apply_worker(self, payload):
+        ok_all = True
+        kernel_touched = False
+
+        # &= (no 'and'/'&&') a propósito: NO es cortocircuito. Si el
+        # snapshot falla, igual queremos que se intenten system/kernel/
+        # AUR/flatpak — son operaciones independientes entre sí, un
+        # fallo temprano no debería cancelar todo lo demás que el
+        # usuario pidió en la misma corrida.
+        if payload.get("snapshot"):
+            ok_all &= self._run_helper(["snapshot", "--description", "avalos-update: antes de actualizar"])
+
+        if payload.get("sync_configs"):
+            ok_all &= self._run_helper(["sync-system-files"])
+
+        if payload.get("system"):
+            args = ["apply-system"]
+            if payload.get("hold_kernel"):
+                args.append("--hold-kernel")
+            ok_all &= self._run_helper(args)
+
+        variant = payload.get("kernel_variant")
+        if variant:
+            kernel_touched = True
+            ok_all &= self._run_helper(["apply-kernel", "--variant", variant])
+
+        aur_pkgs = payload.get("aur_packages") or []
+        if aur_pkgs:
+            ok_all &= self._run_helper(["apply-aur", *aur_pkgs])
+
+        flatpak_apps = payload.get("flatpak_apps") or []
+        if flatpak_apps:
+            ok_all &= self._apply_flatpak(flatpak_apps)
+
+        self._jsc("pyDone", ok_all, kernel_touched)
+
+
+# ── HTML/CSS/JS embebido (mismo patrón que avalos-wallpaper) ───────────────
+def _build_html():
+    return r"""<!DOCTYPE html>
+<html lang="LANG_PLACEHOLDER">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
+    --border: #414868; --text: #c0caf5; --text-dim: #565f89;
+    --blue: #7aa2f7; --purple: #bb9af7; --green: #9ece6a; --red: #f7768e; --yellow: #e0af68;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
+    overflow: hidden; height: 100%; font-size: 13px; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  header { padding: 16px 22px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; justify-content: space-between; flex-shrink: 0; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header .status { font-size: 11.5px; color: var(--text-dim); }
+
+  .body { flex: 1; overflow-y: auto; padding: 16px 22px; }
+  .hidden { display: none !important; }
+
+  .section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 10px; }
+  .section-head { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+  .section-head input[type=checkbox] { margin-top: 3px; accent-color: var(--blue); width: 15px; height: 15px; cursor: pointer; }
+  .section-title { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .badge { font-size: 10.5px; padding: 1px 7px; border-radius: 8px; background: var(--surface-hi); color: var(--text-dim); font-weight: 600; }
+  .badge.n { background: rgba(122,162,247,.18); color: var(--blue); }
+  .badge.ok { background: rgba(158,206,106,.18); color: var(--green); }
+  .badge.warn { background: rgba(224,175,104,.18); color: var(--yellow); }
+  .section-desc { font-size: 11px; color: var(--text-dim); margin: 3px 0 0; line-height: 1.4; }
+  .section-none { font-size: 11.5px; color: var(--text-dim); padding: 2px 0 0 25px; }
+
+  .item-list { margin: 10px 0 0 25px; display: flex; flex-direction: column; gap: 5px; }
+  .item { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+  .item input[type=checkbox] { accent-color: var(--blue); cursor: pointer; }
+  .item .ver { color: var(--text-dim); }
+  .item .ver .new { color: var(--green); }
+
+  .kernel-variants { margin: 10px 0 0 25px; display: flex; flex-direction: column; gap: 6px; }
+  .kv-opt { display: flex; align-items: center; gap: 8px; font-size: 11.5px; cursor: pointer; }
+  .kv-opt input { accent-color: var(--purple); cursor: pointer; }
+  .kv-opt.locked { opacity: .45; cursor: not-allowed; }
+  .kv-opt.locked input { cursor: not-allowed; }
+  .kv-note { font-size: 10px; color: var(--text-dim); margin-left: 22px; }
+
+  .diff-toggle { font-size: 11px; color: var(--blue); cursor: pointer; margin: 8px 0 0 25px; display: inline-block; }
+  .diff-box { display: none; margin: 8px 0 0 25px; background: var(--bg-alt); border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 10px; font-size: 10.5px; white-space: pre-wrap; max-height: 160px; overflow-y: auto; }
+  .diff-box.show { display: block; }
+  .diff-add { color: var(--green); }
+  .diff-del { color: var(--red); }
+
+  footer { flex-shrink: 0; padding: 12px 22px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; }
+  .auth-note { font-size: 10px; color: var(--text-dim); max-width: 60%; }
+  button.primary { background: linear-gradient(135deg, var(--blue), var(--purple)); color: var(--bg);
+    border: none; border-radius: 8px; padding: 9px 18px; font-weight: 700; font-size: 12px;
+    cursor: pointer; font-family: inherit; }
+  button.primary:disabled { opacity: .4; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 16px; font-size: 12px; cursor: pointer; font-family: inherit; }
+
+  #logPanel { font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
+  .l-info { color: var(--text); }
+  .l-step { color: var(--blue); font-weight: 700; margin-top: 6px; display: block; }
+  .l-err { color: var(--red); }
+  .l-ok { color: var(--green); }
+
+  .checking { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: var(--text-dim); font-size: 12.5px; gap: 10px; }
+  .spinner { width: 22px; height: 22px; border: 2px solid var(--border); border-top-color: var(--blue);
+    border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1><span class="accent">AvalOS</span> — <span id="ttl"></span></h1>
+    <div class="status" id="statusText"></div>
+  </header>
+
+  <div class="body" id="checkingView">
+    <div class="checking"><div class="spinner" id="spinner"></div><div id="checkingTxt"></div></div>
+  </div>
+
+  <div class="body hidden" id="mainView">
+    <div class="section">
+      <label class="section-head">
+        <input type="checkbox" id="cb-snapshot">
+        <div>
+          <div class="section-title" id="t-snapshot"></div>
+          <p class="section-desc" id="d-snapshot"></p>
+        </div>
+      </label>
+    </div>
+
+    <div class="section" id="sec-system">
+      <label class="section-head">
+        <input type="checkbox" id="cb-system">
+        <div style="flex:1">
+          <div class="section-title"><span id="t-system"></span><span class="badge n" id="badge-system"></span></div>
+          <p class="section-desc" id="d-system"></p>
+        </div>
+      </label>
+      <div class="item-list" id="list-system"></div>
+      <div class="section-none hidden" id="none-system"></div>
+    </div>
+
+    <div class="section" id="sec-kernel">
+      <label class="section-head">
+        <input type="checkbox" id="cb-kernel">
+        <div style="flex:1">
+          <div class="section-title"><span id="t-kernel"></span> <span class="badge" id="badge-kernel-current"></span></div>
+          <p class="section-desc" id="d-kernel"></p>
+        </div>
+      </label>
+      <div class="kernel-variants" id="kernel-variants"></div>
+    </div>
+
+    <div class="section" id="sec-aur">
+      <label class="section-head">
+        <input type="checkbox" id="cb-aur-all">
+        <div style="flex:1">
+          <div class="section-title"><span id="t-aur"></span><span class="badge n" id="badge-aur"></span></div>
+        </div>
+      </label>
+      <div class="item-list" id="list-aur"></div>
+      <div class="section-none hidden" id="none-aur"></div>
+    </div>
+
+    <div class="section" id="sec-flatpak">
+      <label class="section-head">
+        <input type="checkbox" id="cb-flatpak-all">
+        <div style="flex:1">
+          <div class="section-title"><span id="t-flatpak"></span><span class="badge n" id="badge-flatpak"></span></div>
+        </div>
+      </label>
+      <div class="item-list" id="list-flatpak"></div>
+      <div class="section-none hidden" id="none-flatpak"></div>
+    </div>
+
+    <div class="section" id="sec-configs">
+      <label class="section-head">
+        <input type="checkbox" id="cb-configs">
+        <div style="flex:1">
+          <div class="section-title"><span id="t-configs"></span><span class="badge" id="badge-configs"></span></div>
+          <p class="section-desc" id="d-configs"></p>
+        </div>
+      </label>
+      <span class="diff-toggle hidden" id="diffToggle"></span>
+      <div class="diff-box" id="diffBox"></div>
+      <p class="section-desc" id="configsNote" style="margin-left:25px;margin-top:8px;"></p>
+    </div>
+  </div>
+
+  <div class="body hidden" id="logView">
+    <pre id="logPanel"></pre>
+  </div>
+
+  <footer>
+    <span class="auth-note" id="authNote"></span>
+    <div style="display:flex; gap:8px;">
+      <button class="ghost hidden" id="retryBtn"></button>
+      <button class="ghost hidden" id="closeBtn"></button>
+      <button class="primary" id="applyBtn"></button>
+    </div>
+  </footer>
+</div>
+
+<script>
+let T = {};
+let STATE = null;
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function el(id) { return document.getElementById(id); }
+
+function pyLog(txt, cls) {
+  const p = el('logPanel');
+  const span = document.createElement('span');
+  span.className = 'l-' + (cls || 'info');
+  span.textContent = txt;
+  p.appendChild(span);
+  p.appendChild(document.createTextNode('\n'));
+  p.parentElement.scrollTop = p.parentElement.scrollHeight;
+}
+
+function pyDone(okAll, kernelTouched) {
+  el('applyBtn').classList.add('hidden');
+  el('retryBtn').classList.remove('hidden');
+  el('closeBtn').classList.remove('hidden');
+  el('statusText').textContent = okAll ? T['done-ok'] : T['done-err'];
+  if (kernelTouched) {
+    pyLog(T['reboot-needed'], okAll ? 'ok' : 'info');
+  }
+}
+
+function verLine(item) {
+  return `<span class="ver">${escapeHtml(item.old)} → <span class="new">${escapeHtml(item.new)}</span></span>`;
+}
+
+function renderSystem() {
+  const list = STATE.system;
+  el('badge-system').textContent = list.length;
+  el('badge-system').classList.toggle('hidden', list.length === 0);
+  el('cb-system').disabled = list.length === 0;
+  if (list.length === 0) {
+    el('none-system').textContent = T['sec-system-none'];
+    el('none-system').classList.remove('hidden');
+    return;
+  }
+  el('list-system').innerHTML = list.map(i =>
+    `<div class="item"><span>${escapeHtml(i.name)}</span>${verLine(i)}</div>`
+  ).join('');
+}
+
+function renderKernel() {
+  const k = STATE.kernel;
+  el('badge-kernel-current').textContent = T['kernel-current'].replace('{variant}', k.current_variant || '?');
+  const variants = [
+    { id: 'eevdf', label: 'EEVDF', pkg: 'linux-avalos', locked: false },
+    { id: 'bore', label: 'BORE', pkg: 'linux-avalos-bore', locked: !k.bore_ok },
+    { id: 'compat', label: 'Compat', pkg: 'linux-avalos-compat', locked: false },
+  ];
+  el('kernel-variants').innerHTML = variants.map(v => {
+    const isCurrent = v.id === k.current_variant;
+    const label = isCurrent
+      ? T['kernel-update-now'].replace('{pkg}', v.pkg)
+      : `${v.label} (${v.pkg})`;
+    const lockedClass = v.locked ? ' locked' : '';
+    const disabled = v.locked ? 'disabled' : '';
+    return `<label class="kv-opt${lockedClass}">
+      <input type="radio" name="kv" value="${v.id}" ${isCurrent ? 'checked' : ''} ${disabled}>
+      <span>${label}</span>
+    </label>` + (v.locked ? `<div class="kv-note">${T['kernel-bore-locked']}</div>` : '');
+  }).join('');
+
+  // El checkbox de la sección es el opt-in real: sin esto, como algún
+  // radio SIEMPRE queda marcado (la variante actual, por defecto),
+  // kernel_variant se mandaría en cada "Aplicar" aunque el usuario solo
+  // quisiera tocar AUR o Flatpak. Elegir un radio marca el checkbox solo
+  // — no hace falta que el usuario haga las dos cosas por separado.
+  document.querySelectorAll('input[name=kv]').forEach(r => {
+    r.addEventListener('change', () => { el('cb-kernel').checked = true; });
+  });
+  if (!k.current_variant) {
+    el('cb-kernel').disabled = true;
+  }
+}
+
+function renderAur() {
+  const list = STATE.aur;
+  el('badge-aur').textContent = list.length;
+  el('badge-aur').classList.toggle('hidden', list.length === 0);
+  el('cb-aur-all').disabled = list.length === 0;
+  if (list.length === 0) {
+    el('none-aur').textContent = T['sec-aur-none'];
+    el('none-aur').classList.remove('hidden');
+    return;
+  }
+  el('list-aur').innerHTML = list.map(i =>
+    `<label class="item"><input type="checkbox" class="aur-item" value="${escapeHtml(i.name)}" checked><span>${escapeHtml(i.name)}</span>${verLine(i)}</label>`
+  ).join('');
+  el('cb-aur-all').checked = true;
+  el('cb-aur-all').addEventListener('change', e => {
+    document.querySelectorAll('.aur-item').forEach(cb => cb.checked = e.target.checked);
+  });
+}
+
+function renderFlatpak() {
+  const list = STATE.flatpak;
+  el('badge-flatpak').textContent = list.length;
+  el('badge-flatpak').classList.toggle('hidden', list.length === 0);
+  el('cb-flatpak-all').disabled = list.length === 0;
+  if (list.length === 0) {
+    el('none-flatpak').textContent = T['sec-flatpak-none'];
+    el('none-flatpak').classList.remove('hidden');
+    return;
+  }
+  el('list-flatpak').innerHTML = list.map(i =>
+    `<label class="item"><input type="checkbox" class="fp-item" value="${escapeHtml(i.id)}" checked><span>${escapeHtml(i.id)}</span></label>`
+  ).join('');
+  el('cb-flatpak-all').checked = true;
+  el('cb-flatpak-all').addEventListener('change', e => {
+    document.querySelectorAll('.fp-item').forEach(cb => cb.checked = e.target.checked);
+  });
+}
+
+function renderConfigs() {
+  const c = STATE.configs;
+  if (!c.reachable) {
+    el('badge-configs').textContent = '?';
+    el('cb-configs').disabled = true;
+  } else if (c.changed) {
+    el('badge-configs').textContent = T['configs-changed'];
+    el('badge-configs').className = 'badge warn';
+    el('diffToggle').textContent = T['configs-view-diff'];
+    el('diffToggle').classList.remove('hidden');
+    el('diffToggle').onclick = () => el('diffBox').classList.toggle('show');
+    const lines = c.diff.split('\n').map(l => {
+      const cls = l.startsWith('+') ? 'diff-add' : (l.startsWith('-') ? 'diff-del' : '');
+      return `<span class="${cls}">${escapeHtml(l)}</span>`;
+    });
+    el('diffBox').innerHTML = lines.join('\n');
+  } else {
+    el('badge-configs').textContent = T['configs-uptodate'];
+    el('badge-configs').className = 'badge ok';
+  }
+  el('configsNote').textContent = T['configs-note'];
+}
+
+let firstCheckDone = false;
+
+function applyStrings() {
+  document.title = 'AvalOS — ' + T['title'];
+  el('ttl').textContent = T['title'];
+  el('t-snapshot').textContent = T['sec-snapshot'];
+  el('d-snapshot').textContent = T['sec-snapshot-d'];
+  el('t-system').textContent = T['sec-system'];
+  el('d-system').textContent = T['sec-system-d'];
+  el('t-kernel').textContent = T['sec-kernel'];
+  el('d-kernel').textContent = T['sec-kernel-d'];
+  el('t-aur').textContent = T['sec-aur'];
+  el('t-flatpak').textContent = T['sec-flatpak'];
+  el('t-configs').textContent = T['sec-configs'];
+  el('d-configs').textContent = T['sec-configs-d'];
+  el('applyBtn').textContent = T['apply'];
+  el('closeBtn').textContent = T['close'];
+  el('retryBtn').textContent = T['retry-check'];
+  el('authNote').textContent = T['auth-note'];
+  el('checkingTxt').textContent = T['checking'];
+  if (!firstCheckDone) {
+    el('cb-snapshot').checked = true;
+    firstCheckDone = true;
+  }
+}
+
+function collectPayload() {
+  const variantChosen = document.querySelector('input[name=kv]:checked');
+  const kernelOptedIn = el('cb-kernel').checked;
+  return {
+    snapshot: el('cb-snapshot').checked,
+    system: el('cb-system').checked,
+    hold_kernel: kernelOptedIn,
+    kernel_variant: kernelOptedIn && variantChosen ? variantChosen.value : null,
+    aur_packages: Array.from(document.querySelectorAll('.aur-item:checked')).map(cb => cb.value),
+    flatpak_apps: Array.from(document.querySelectorAll('.fp-item:checked')).map(cb => cb.value),
+    sync_configs: el('cb-configs').checked,
+  };
+}
+
+function onApply() {
+  const payload = collectPayload();
+  el('mainView').classList.add('hidden');
+  el('logView').classList.remove('hidden');
+  el('logPanel').innerHTML = '';
+  el('statusText').textContent = T['applying'];
+  el('applyBtn').disabled = true;
+  window.pywebview.api.apply(JSON.stringify(payload));
+}
+
+const FALLBACK_T = { 'check-error': 'Could not check for updates.', 'retry-check': 'Retry' };
+
+async function runCheck() {
+  el('checkingView').classList.remove('hidden');
+  el('mainView').classList.add('hidden');
+  el('logView').classList.add('hidden');
+  el('retryBtn').classList.add('hidden');
+  el('closeBtn').classList.add('hidden');
+  el('applyBtn').classList.remove('hidden');
+  el('applyBtn').disabled = false;
+  el('spinner').classList.remove('hidden');
+  el('checkingTxt').textContent = (Object.keys(T).length ? T : FALLBACK_T)['checking'] || '';
+
+  try {
+    const raw = await window.pywebview.api.check();
+    STATE = JSON.parse(raw);
+    T = STATE.strings;
+    applyStrings();
+    renderSystem();
+    renderKernel();
+    renderAur();
+    renderFlatpak();
+    renderConfigs();
+
+    el('checkingView').classList.add('hidden');
+    el('mainView').classList.remove('hidden');
+    const nadaPendiente = STATE.system.length === 0 && STATE.aur.length === 0 && STATE.flatpak.length === 0;
+    el('statusText').textContent = nadaPendiente ? T['up-to-date'] : '';
+  } catch (e) {
+    const t = Object.keys(T).length ? T : FALLBACK_T;
+    el('spinner').classList.add('hidden');
+    el('checkingTxt').textContent = t['check-error'];
+    el('applyBtn').classList.add('hidden');
+    el('retryBtn').textContent = t['retry-check'];
+    el('retryBtn').classList.remove('hidden');
+    console.error('avalos-update check() failed:', e);
+  }
+}
+
+function closeWindow() {
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.close) {
+    window.pywebview.api.close();
+  }
+}
+
+function init() {
+  el('applyBtn').addEventListener('click', onApply);
+  el('retryBtn').addEventListener('click', runCheck);
+  el('closeBtn').addEventListener('click', closeWindow);
+  runCheck();
+}
+
+window.addEventListener('pywebviewready', init);
+</script>
+</body>
+</html>"""
+
+
+def main():
+    html = _build_html().replace("LANG_PLACEHOLDER", LANG)
+
+    # Mismo fix que avalos-wallpaper (BUG-012): sin esto GTK usa "python3"
+    # como app_id en Wayland y la window rule (class = "avalos-update")
+    # nunca matchea.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-update")
+    except Exception:
+        pass
+
+    api = UpdateAPI()
+    win = webview.create_window(
+        title            = f"AvalOS — {T['title']}",
+        html             = html,
+        js_api           = api,
+        width            = 760,
+        height           = 720,
+        min_size         = (620, 520),
+        resizable        = True,
+        background_color = "#1a1b26",
+    )
+    api.window = win
+
+    try:
+        webview.start(debug=False)
+    except Exception as e:
+        print(f"ERROR al iniciar pywebview: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

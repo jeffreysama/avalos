@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AvalOS Store
+Name[es]=AvalOS Tienda
+Name[zh_CN]=AvalOS 应用商店
+Name[ja]=AvalOS ストア
+Comment=Install games, applications and utilities for AvalOS
+Comment[es]=Instala juegos, aplicaciones y utilidades para AvalOS
+Comment[zh_CN]=为 AvalOS 安装游戏、应用程序和实用工具
+Comment[ja]=AvalOS 用のゲーム・アプリ・ユーティリティをインストール
+Exec=avalos-store
+Icon=avalos-store
+Terminal=false
+NoDisplay=false
+StartupNotify=true
+StartupWMClass=avalos-store
+Categories=System;PackageManager;Settings;
+Keywords=store;tienda;software;apps;juegos;games;paquetes;pacman;aur;flatpak;

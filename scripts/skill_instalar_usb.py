@@ -189,6 +189,21 @@ HYPRLAND_PKGS =[
 "lm_sensors","acpi","capitaine-cursors",
 
 "python-pywebview","python-gobject","webkit2gtk-4.1",
+# archlinux-appstream-data: catálogo oficial de metadata AppStream de los
+# repos [core]/[extra]/[multilib], con los íconos reales (48/64/128px) de
+# la inmensa mayoría de paquetes empaquetados — no es dependencia de
+# pywebview, es lo que avalos-store usa para mostrar el ícono REAL de una
+# app en la tarjeta ANTES de instalarla (sin esto, apps sin flathub_id en
+# el catálogo solo muestran su ícono real una vez ya instaladas, porque
+# ahí sí lo trae el propio paquete en /usr/share/icons/hicolor/).
+"archlinux-appstream-data",
+# hicolor-icon-theme: casi con certeza llega igual como dependencia
+# transitiva de gtk3/gtk4 (ya en esta lista), pero se deja explícito acá
+# porque es la pieza de la que depende directamente que el propio ícono
+# de avalos-store.svg (instalado por el instalador en hicolor/scalable/
+# apps/) resuelva en el theme — 55KB, sin costo real, sin dejarlo librado
+# a una dependencia transitiva sin confirmar contra el .PKGINFO real.
+"hicolor-icon-theme",
 ]
 
 HYPRLAND_AUR_PKGS =[]
@@ -2794,7 +2809,7 @@ class VentanaInstalador :
         self ._log (self ._t ("log-gpu-env-installed"),"ok")
 
         self ._log (self ._t ("log-installing-scripts"),"info")
-        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about"):
+        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about","avalos-update","avalos-update-helper","avalos-store"):
             _contenido =_leer_config (f"scripts/{_script_name }")
             if _contenido :
                 _script_path =_bin_dir /_script_name
@@ -2804,6 +2819,17 @@ class VentanaInstalador :
             else :
                 self ._log (self ._t ("log-script-missing",script =_script_name ),"warn")
 
+        # avalos-store necesita su catálogo de apps aparte — no es un script
+        # ejecutable, es data, así que va directo a configs/ (sin el prefijo
+        # "scripts/" que usan los .desktop por el bug histórico de abajo) y
+        # sin chmod 755.
+        _contenido =_leer_config ("avalos-store-catalog.json")
+        if _contenido :
+            (_bin_dir /"avalos-store-catalog.json").write_text (_contenido ,encoding ="utf-8")
+            self ._log (self ._t ("log-script-installed",script ="avalos-store-catalog.json"),"ok")
+        else :
+            self ._log (self ._t ("log-script-missing",script ="avalos-store-catalog.json"),"warn")
+
         _apps_dir =MOUNT_ROOT /"usr"/"share"/"applications"
         _apps_dir .mkdir (parents =True ,exist_ok =True )
         _contenido =_leer_config ("scripts/avalos-settings.desktop")
@@ -2812,6 +2838,63 @@ class VentanaInstalador :
             self ._log (self ._t ("log-settings-desktop-installed"),"ok")
         else :
             self ._log (self ._t ("log-settings-desktop-missing"),"warn")
+
+        _contenido =_leer_config ("scripts/avalos-store.desktop")
+        if _contenido :
+            (_apps_dir /"avalos-store.desktop").write_text (_contenido ,encoding ="utf-8")
+            self ._log (self ._t ("log-store-desktop-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-store-desktop-missing"),"warn")
+
+        # avalos-update necesita pkexec para elevar avalos-update-helper (ver
+        # avalos-update.policy) — polkitd + hyprpolkitagent ya corren en el
+        # sistema instalado (servicios habilitados / exec-once de Hyprland),
+        # así que lo único que falta es que la acción exista donde polkit la
+        # busca. 0644, NO ejecutable: polkitd solo necesita leerla.
+        _polkit_dir =MOUNT_ROOT /"usr"/"share"/"polkit-1"/"actions"
+        _polkit_dir .mkdir (parents =True ,exist_ok =True )
+        _contenido =_leer_config ("avalos-update.policy")
+        if _contenido :
+            _policy_path =_polkit_dir /"com.avalos.update.policy"
+            _policy_path .write_text (_contenido ,encoding ="utf-8")
+            _policy_path .chmod (0o644 )
+            self ._log (self ._t ("log-polkit-policy-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-polkit-policy-missing"),"warn")
+
+        # avalos-store: mismo mecanismo de polkit que avalos-update (ver
+        # comentario arriba), acción separada (com.avalos.store.policy) para
+        # que pkexec pacman -S/-R dentro de avalos-store recuerde la sesión
+        # (auth_admin_keep) y muestre mensaje/ícono propios de AvalOS, en vez
+        # de caer en la acción genérica org.freedesktop.policykit.exec (sin
+        # policy dedicada, pkexec pide contraseña en CADA instalación/
+        # desinstalación de la Store, sin recordar nada entre una app y la
+        # siguiente — ver avalos-store.policy para el detalle completo).
+        _contenido =_leer_config ("avalos-store.policy")
+        if _contenido :
+            _policy_path =_polkit_dir /"com.avalos.store.policy"
+            _policy_path .write_text (_contenido ,encoding ="utf-8")
+            _policy_path .chmod (0o644 )
+            self ._log (self ._t ("log-store-polkit-policy-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-store-polkit-policy-missing"),"warn")
+
+        # Ícono de avalos-store en el theme hicolor del sistema, para que
+        # Icon=avalos-store (en avalos-store.desktop) resuelva a algo real en
+        # vez de caer al ícono genérico de "aplicación desconocida" — mismo
+        # spec que ya usa el propio avalos-store para resolver íconos de
+        # terceros (_HICOLOR_ROOTS/_HICOLOR_SIZES), aplicado ahora a sí mismo.
+        # scalable/ porque es un SVG: un solo archivo cubre todos los tamaños
+        # que el spec de FreeDesktop Icon Theme pida, sin necesidad de
+        # generar rasters en 48/64/128/256 aparte.
+        _icon_dir =MOUNT_ROOT /"usr"/"share"/"icons"/"hicolor"/"scalable"/"apps"
+        _icon_dir .mkdir (parents =True ,exist_ok =True )
+        _contenido =_leer_config ("avalos-store.svg")
+        if _contenido :
+            (_icon_dir /"avalos-store.svg").write_text (_contenido ,encoding ="utf-8")
+            self ._log (self ._t ("log-store-icon-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-store-icon-missing"),"warn")
 
         (MOUNT_ROOT /"etc"/"avalos-install-date").write_text (
         datetime .datetime .now ().strftime ("%Y-%m-%d %H:%M"),
@@ -2826,6 +2909,21 @@ class VentanaInstalador :
         # los 4 idiomas soportados: pt_BR o fr_FR no tienen equivalente acá).
         (MOUNT_ROOT /"etc"/"avalos-lang").write_text (
         self ._lang +"\n",
+        encoding ="utf-8"
+        )
+
+        # Perfil de instalación (gaming/bore) para que herramientas
+        # post-instalación (avalos-store) sepan qué eligió el usuario acá
+        # sin tener que re-detectarlo. Una flag por línea, solo las que
+        # quedaron en True — mismo espíritu que avalos-lang: un archivo,
+        # una fuente de verdad, nada de parsear config compartida.
+        _perfil_flags =[]
+        if getattr (self ,'_install_gaming',False ):
+            _perfil_flags .append ("gaming")
+        if getattr (self ,'_install_bore',False ):
+            _perfil_flags .append ("bore")
+        (MOUNT_ROOT /"etc"/"avalos-profile").write_text (
+        ("\n".join (_perfil_flags )+"\n")if _perfil_flags else "",
         encoding ="utf-8"
         )
 

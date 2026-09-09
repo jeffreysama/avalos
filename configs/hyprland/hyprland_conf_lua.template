@@ -239,6 +239,18 @@ hl.window_rule({
     center = true,
     size   = { 1000, 700 },
 })
+hl.window_rule({
+    match  = { class = "avalos-update" },
+    float  = true,
+    center = true,
+    size   = { 760, 720 },
+})
+hl.window_rule({
+    match  = { class = "avalos-store" },
+    float  = true,
+    center = true,
+    size   = { 1200, 780 },
+})
 
 -- Atajos para abrir las apps de AvalOS directo, sin pasar por rofi
 hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+
+<!--
+  AvalOS — avalos-update
+  ───────────────────────────────────────────────────────────────
+  Autoriza avalos-update-helper vía pkexec, para que avalos-update
+  (la GUI, corriendo SIN privilegios) nunca toque root directamente.
+  hyprpolkitagent ya corre en el sistema instalado (exec-once de
+  hyprland.lua) — no hace falta instalar ni configurar nada más
+  para que el diálogo gráfico de autenticación aparezca.
+
+  allow_active=auth_admin_keep: pide contraseña de admin la primera
+  vez y la recuerda un rato (como sudo), para no pedirla de nuevo
+  si el usuario aplica sistema + kernel + AUR en la misma sesión.
+  allow_inactive/allow_any=no: nunca autoriza desde una sesión
+  inactiva o remota — solo con sesión gráfica activa al frente.
+-->
+<policyconfig>
+  <vendor>AvalOS</vendor>
+  <vendor_url>https://github.com/jeffreysama/avalos</vendor_url>
+  <icon_name>system-software-update</icon_name>
+
+  <action id="com.avalos.update.run-helper">
+    <description>Actualizar AvalOS</description>
+    <description xml:lang="en">Update AvalOS</description>
+    <description xml:lang="es">Actualizar AvalOS</description>
+    <description xml:lang="zh">更新 AvalOS</description>
+    <description xml:lang="ja">AvalOS を更新</description>
+
+    <message>Se requiere autenticación para actualizar el sistema</message>
+    <message xml:lang="en">Authentication is required to update the system</message>
+    <message xml:lang="es">Se requiere autenticación para actualizar el sistema</message>
+    <message xml:lang="zh">更新系统需要身份验证</message>
+    <message xml:lang="ja">システムを更新するには認証が必要です</message>
+
+    <icon_name>system-software-update</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/avalos-update-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

@@ -1,0 +1,1502 @@
+[
+  {
+    "id": "steam",
+    "name": "Steam",
+    "category": "games",
+    "source": "pacman",
+    "package": "steam",
+    "exec": "steam",
+    "icon": "🎮",
+    "developer": "Valve Corporation",
+    "license": "Propietario",
+    "website": "https://store.steampowered.com",
+    "tags": [
+      "juegos",
+      "games",
+      "proton",
+      "windows games",
+      "tienda"
+    ],
+    "short_desc": {
+      "en": "The biggest PC games storefront, with Proton for Windows titles.",
+      "es": "La tienda de juegos más grande de PC, con Proton para títulos de Windows."
+    },
+    "long_desc": {
+      "en": "Steam is Valve's game store and launcher. Proton, its Windows compatibility layer, runs a huge share of the Windows library on Linux out of the box, and the open-source AMD/Mesa RADV stack works well with it on your RX 580.",
+      "es": "Steam es la tienda y lanzador de juegos de Valve. Proton, su capa de compatibilidad con Windows, corre gran parte de la biblioteca de Windows en Linux sin configuración extra, y el stack abierto AMD/Mesa RADV funciona bien con tu RX 580."
+    },
+    "note": {
+      "en": "AvalOS enables the multilib repo by default — Steam and Proton work out of the box, no setup needed.",
+      "es": "AvalOS trae el repo multilib habilitado desde la instalación — Steam y Proton funcionan directo, sin configurar nada."
+    },
+    "flathub_id": "com.valvesoftware.Steam"
+  },
+  {
+    "id": "lutris",
+    "name": "Lutris",
+    "category": "games",
+    "source": "pacman",
+    "package": "lutris",
+    "exec": "lutris",
+    "icon": "🍷",
+    "developer": "Lutris Team",
+    "license": "GPL-3.0",
+    "website": "https://lutris.net",
+    "tags": [
+      "wine",
+      "gog",
+      "emuladores",
+      "launcher",
+      "juegos"
+    ],
+    "short_desc": {
+      "en": "Open gaming platform: Wine, emulators and native games in one place.",
+      "es": "Plataforma de juegos abierta: Wine, emuladores y juegos nativos en un solo lugar."
+    },
+    "long_desc": {
+      "en": "Lutris manages install scripts for thousands of games across Wine, GOG, emulators and native Linux ports, handling prefixes and runners so you don't have to configure everything by hand.",
+      "es": "Lutris administra scripts de instalación para miles de juegos entre Wine, GOG, emuladores y ports nativos de Linux, encargándose de prefixes y runners para que no tengas que configurar todo a mano."
+    },
+    "flathub_id": "net.lutris.Lutris"
+  },
+  {
+    "id": "heroic",
+    "name": "Heroic Games Launcher",
+    "category": "games",
+    "source": "aur",
+    "package": "heroic-games-launcher-bin",
+    "exec": "heroic",
+    "icon": "🚀",
+    "developer": "Heroic Games Launcher Team",
+    "license": "GPL-3.0",
+    "website": "https://heroicgameslauncher.com",
+    "tags": [
+      "epic games",
+      "gog",
+      "amazon games",
+      "launcher"
+    ],
+    "short_desc": {
+      "en": "Native launcher for your Epic Games, GOG and Amazon libraries.",
+      "es": "Launcher nativo para tus bibliotecas de Epic Games, GOG y Amazon."
+    },
+    "long_desc": {
+      "en": "Heroic is a free, open-source alternative to the official Epic and Amazon launchers, letting you install and play your existing library on Linux via Wine/Proton without running Windows software directly.",
+      "es": "Heroic es una alternativa libre y de código abierto a los launchers oficiales de Epic y Amazon, permitiéndote instalar y jugar tu biblioteca existente en Linux vía Wine/Proton sin correr el software de Windows directamente."
+    },
+    "flathub_id": "com.heroicgameslauncher.hgl"
+  },
+  {
+    "id": "supertuxkart",
+    "name": "SuperTuxKart",
+    "category": "games",
+    "source": "pacman",
+    "package": "supertuxkart",
+    "exec": "supertuxkart",
+    "icon": "🐧",
+    "developer": "SuperTuxKart Team",
+    "license": "GPL-3.0",
+    "website": "https://supertuxkart.net",
+    "tags": [
+      "carreras",
+      "racing",
+      "familiar",
+      "local multiplayer"
+    ],
+    "short_desc": {
+      "en": "Free kart racer starring Tux and friends from the FOSS world.",
+      "es": "Juego de carreras de karts libre con Tux y amigos del mundo FOSS."
+    },
+    "long_desc": {
+      "en": "A colorful, Mario Kart-style racer built entirely with free software, with local split-screen, online play and dozens of tracks and characters.",
+      "es": "Un juego de carreras al estilo Mario Kart, hecho enteramente con software libre, con pantalla dividida local, juego en línea y decenas de pistas y personajes."
+    },
+    "flathub_id": "net.supertuxkart.SuperTuxKart"
+  },
+  {
+    "id": "0ad",
+    "name": "0 A.D.",
+    "category": "games",
+    "source": "pacman",
+    "package": "0ad",
+    "exec": "0ad",
+    "icon": "🏛️",
+    "developer": "Wildfire Games",
+    "license": "GPL-2.0",
+    "website": "https://play0ad.com",
+    "tags": [
+      "estrategia",
+      "rts",
+      "historia",
+      "civilizaciones"
+    ],
+    "short_desc": {
+      "en": "Free real-time strategy game set in the ancient world.",
+      "es": "Juego de estrategia en tiempo real libre, ambientado en la antigüedad."
+    },
+    "long_desc": {
+      "en": "A historically-grounded RTS pitting ancient civilizations against each other, built and polished by volunteers for over a decade, entirely free and open source.",
+      "es": "Un RTS ambientado históricamente que enfrenta a civilizaciones antiguas, construido y pulido por voluntarios durante más de una década, totalmente libre y de código abierto."
+    },
+    "flathub_id": "com.play0ad.zeroad"
+  },
+  {
+    "id": "xonotic",
+    "name": "Xonotic",
+    "category": "games",
+    "source": "pacman",
+    "package": "xonotic",
+    "exec": "xonotic-glx",
+    "icon": "🎯",
+    "developer": "Xonotic Team",
+    "license": "GPL-2.0",
+    "website": "https://xonotic.org",
+    "tags": [
+      "shooter",
+      "arena",
+      "fps",
+      "multijugador"
+    ],
+    "short_desc": {
+      "en": "Fast-paced free arena shooter, spiritual successor to Quake-likes.",
+      "es": "Shooter de arena libre y veloz, sucesor espiritual del estilo Quake."
+    },
+    "long_desc": {
+      "en": "A frantic, skill-based arena FPS with rocket jumps and dozens of weapons, running on a heavily modified Quake engine and completely free to play and modify.",
+      "es": "Un FPS de arena frenético y basado en habilidad, con rocket jumps y decenas de armas, corriendo sobre un motor Quake muy modificado, totalmente libre de jugar y modificar."
+    }
+  },
+  {
+    "id": "wesnoth",
+    "name": "Battle for Wesnoth",
+    "category": "games",
+    "source": "pacman",
+    "package": "wesnoth",
+    "exec": "wesnoth",
+    "icon": "⚔️",
+    "developer": "Wesnoth Team",
+    "license": "GPL-2.0",
+    "website": "https://www.wesnoth.org",
+    "tags": [
+      "estrategia por turnos",
+      "fantasia",
+      "tactica"
+    ],
+    "short_desc": {
+      "en": "Turn-based tactical fantasy strategy with hundreds of campaigns.",
+      "es": "Estrategia táctica de fantasía por turnos, con cientos de campañas."
+    },
+    "long_desc": {
+      "en": "A deep, hex-based tactics game with a huge official and community campaign library, unit recruitment and terrain-driven combat that rewards careful planning.",
+      "es": "Un juego táctico profundo basado en hexágonos, con una enorme biblioteca de campañas oficiales y de la comunidad, reclutamiento de unidades y combate influido por el terreno que premia la planeación cuidadosa."
+    },
+    "flathub_id": "org.wesnoth.Wesnoth"
+  },
+  {
+    "id": "openttd",
+    "name": "OpenTTD",
+    "category": "games",
+    "source": "pacman",
+    "package": "openttd",
+    "exec": "openttd",
+    "icon": "🚂",
+    "developer": "OpenTTD Team",
+    "license": "GPL-2.0",
+    "website": "https://www.openttd.org",
+    "tags": [
+      "simulacion",
+      "transporte",
+      "tycoon",
+      "trenes"
+    ],
+    "short_desc": {
+      "en": "Open-source remake of Transport Tycoon Deluxe.",
+      "es": "Recreación de código abierto de Transport Tycoon Deluxe."
+    },
+    "long_desc": {
+      "en": "Build sprawling networks of trains, buses, ships and planes across decades of simulated history, with mod support and a huge library of community scenarios.",
+      "es": "Construye enormes redes de trenes, autobuses, barcos y aviones a lo largo de décadas de historia simulada, con soporte de mods y una gran biblioteca de escenarios de la comunidad."
+    },
+    "flathub_id": "org.openttd.OpenTTD"
+  },
+  {
+    "id": "warzone2100",
+    "name": "Warzone 2100",
+    "category": "games",
+    "source": "pacman",
+    "package": "warzone2100",
+    "exec": "warzone2100",
+    "icon": "🛡️",
+    "developer": "Warzone 2100 Project",
+    "license": "GPL-2.0",
+    "website": "https://wz2100.net",
+    "tags": [
+      "rts",
+      "estrategia",
+      "post-apocaliptico"
+    ],
+    "short_desc": {
+      "en": "Classic post-apocalyptic RTS with a deep tech-tree and unit designer.",
+      "es": "RTS post-apocalíptico clásico con un árbol tecnológico profundo y diseñador de unidades."
+    },
+    "long_desc": {
+      "en": "Originally a 1999 commercial title, now fully free and open source, with base building, a custom unit designer and a full single-player campaign.",
+      "es": "Originalmente un título comercial de 1999, ahora totalmente libre y de código abierto, con construcción de bases, diseñador de unidades personalizado y una campaña completa para un jugador."
+    },
+    "flathub_id": "net.wz2100.wz2100"
+  },
+  {
+    "id": "prismlauncher",
+    "name": "Prism Launcher",
+    "category": "games",
+    "source": "pacman",
+    "package": "prismlauncher",
+    "exec": "prismlauncher",
+    "icon": "🧱",
+    "developer": "Prism Launcher Team",
+    "license": "GPL-3.0",
+    "website": "https://prismlauncher.org",
+    "tags": [
+      "minecraft",
+      "launcher",
+      "mods",
+      "modpacks"
+    ],
+    "short_desc": {
+      "en": "Custom, actively-maintained launcher for managing Minecraft instances.",
+      "es": "Launcher personalizado y activamente mantenido para administrar instancias de Minecraft."
+    },
+    "long_desc": {
+      "en": "Manage multiple isolated Minecraft instances with different versions, mod loaders and modpacks side by side, without touching the official launcher.",
+      "es": "Administra múltiples instancias aisladas de Minecraft con distintas versiones, mod loaders y modpacks en paralelo, sin tocar el launcher oficial."
+    },
+    "flathub_id": "org.prismlauncher.PrismLauncher"
+  },
+  {
+    "id": "retroarch",
+    "name": "RetroArch",
+    "category": "games",
+    "source": "pacman",
+    "package": "retroarch",
+    "exec": "retroarch",
+    "icon": "🕹️",
+    "developer": "Libretro Team",
+    "license": "GPL-3.0",
+    "website": "https://www.retroarch.com",
+    "tags": [
+      "emulacion",
+      "retro",
+      "consolas clasicas"
+    ],
+    "short_desc": {
+      "en": "Frontend for dozens of emulator cores in a single, unified interface.",
+      "es": "Frontend para decenas de núcleos de emulación en una sola interfaz unificada."
+    },
+    "long_desc": {
+      "en": "One shell for emulating everything from the NES to PS1 and beyond via the Libretro core system, with shaders, rewind, netplay and consistent controller mapping across all of them.",
+      "es": "Una sola interfaz para emular desde NES hasta PS1 y más, vía el sistema de núcleos Libretro, con shaders, rebobinado, juego en red y mapeo de controles consistente entre todos."
+    },
+    "flathub_id": "org.libretro.RetroArch"
+  },
+  {
+    "id": "freeciv",
+    "name": "Freeciv",
+    "category": "games",
+    "source": "pacman",
+    "package": "freeciv",
+    "exec": "freeciv-gtk4",
+    "icon": "🏙️",
+    "developer": "Freeciv Team",
+    "license": "GPL-2.0",
+    "website": "https://www.freeciv.org",
+    "tags": [
+      "4x",
+      "civilizacion",
+      "estrategia por turnos"
+    ],
+    "short_desc": {
+      "en": "Free turn-based empire-building game inspired by Civilization.",
+      "es": "Juego libre de construcción de imperios por turnos, inspirado en Civilization."
+    },
+    "long_desc": {
+      "en": "Guide a civilization from the ancient era to the space age through research, diplomacy and war, in a mature open-source project with two decades of development.",
+      "es": "Guía una civilización desde la antigüedad hasta la era espacial mediante investigación, diplomacia y guerra, en un proyecto de código abierto maduro con dos décadas de desarrollo."
+    }
+  },
+  {
+    "id": "duckstation",
+    "name": "DuckStation",
+    "category": "games",
+    "source": "flatpak",
+    "package": "org.duckstation.DuckStation",
+    "icon": "💿",
+    "developer": "Connor McLaughlin (stenzek)",
+    "license": "Código fuente disponible",
+    "website": "https://www.duckstation.org",
+    "tags": [
+      "ps1",
+      "playstation",
+      "emulador",
+      "retro"
+    ],
+    "short_desc": {
+      "en": "PS1 emulator focused on playability, speed and accuracy.",
+      "es": "Emulador de PS1 enfocado en jugabilidad, velocidad y precisión."
+    },
+    "long_desc": {
+      "en": "The current standard for PlayStation 1 emulation on Linux — upscaling, save states, and both hardware and software rendering. The developer explicitly recommends installing via Flatpak over AUR, which is what this uses.",
+      "es": "El estándar actual para emulación de PlayStation 1 en Linux — upscaling, save states, y renderizado por hardware y software. El propio desarrollador recomienda instalarlo vía Flatpak en vez de AUR, que es justo lo que se usa acá."
+    }
+  },
+  {
+    "id": "pcsx2",
+    "name": "PCSX2",
+    "category": "games",
+    "source": "flatpak",
+    "package": "net.pcsx2.PCSX2",
+    "icon": "🎮",
+    "developer": "PCSX2 Team",
+    "license": "GPL-3.0",
+    "website": "https://pcsx2.net",
+    "tags": [
+      "ps2",
+      "playstation",
+      "emulador",
+      "retro"
+    ],
+    "short_desc": {
+      "en": "PlayStation 2 emulator with two decades of active development.",
+      "es": "Emulador de PlayStation 2 con dos décadas de desarrollo activo."
+    },
+    "long_desc": {
+      "en": "Runs the vast majority of the PS2's library at full speed on modern hardware, with widescreen patches, texture upscaling and both OpenGL and Vulkan renderers.",
+      "es": "Corre la gran mayoría de la biblioteca de PS2 a velocidad completa en hardware moderno, con parches widescreen, upscaling de texturas y renderizado tanto en OpenGL como Vulkan."
+    }
+  },
+  {
+    "id": "dolphin-emu",
+    "name": "Dolphin Emulator",
+    "category": "games",
+    "source": "pacman",
+    "package": "dolphin-emu",
+    "exec": "dolphin-emu",
+    "icon": "🔷",
+    "developer": "Dolphin Team",
+    "license": "GPL-2.0",
+    "website": "https://dolphin-emu.org",
+    "tags": [
+      "gamecube",
+      "wii",
+      "nintendo",
+      "emulador",
+      "retro"
+    ],
+    "short_desc": {
+      "en": "GameCube and Wii emulator, one of the most polished emulation projects.",
+      "es": "Emulador de GameCube y Wii, uno de los proyectos de emulación más pulidos que existen."
+    },
+    "long_desc": {
+      "en": "Runs most of the GameCube and Wii library at native or higher resolutions, with netplay, save states, and motion control support via real or virtual Wiimotes.",
+      "es": "Corre la mayoría de la biblioteca de GameCube y Wii a resolución nativa o superior, con juego en red, save states, y soporte de controles de movimiento vía Wiimotes reales o virtuales."
+    }
+  },
+  {
+    "id": "ppsspp",
+    "name": "PPSSPP",
+    "category": "games",
+    "source": "pacman",
+    "package": "ppsspp",
+    "exec": "ppsspp",
+    "icon": "🎒",
+    "developer": "Henrik Rydgård and contributors",
+    "license": "GPL-2.0",
+    "website": "https://www.ppsspp.org",
+    "tags": [
+      "psp",
+      "playstation portable",
+      "emulador",
+      "retro"
+    ],
+    "short_desc": {
+      "en": "PSP emulator that runs most of the library well above original resolution.",
+      "es": "Emulador de PSP que corre la mayoría de la biblioteca muy por encima de la resolución original."
+    },
+    "long_desc": {
+      "en": "One of the most accurate and complete handheld emulators available, with upscaling well beyond the PSP's native resolution and support for texture replacement packs.",
+      "es": "Uno de los emuladores de portátiles más precisos y completos que existen, con upscaling muy por encima de la resolución nativa de la PSP y soporte para paquetes de reemplazo de texturas."
+    }
+  },
+  {
+    "id": "cemu",
+    "name": "Cemu",
+    "category": "games",
+    "source": "flatpak",
+    "package": "info.cemu.Cemu",
+    "icon": "🧩",
+    "developer": "Cemu Project",
+    "license": "MPL-2.0",
+    "website": "https://cemu.info",
+    "tags": [
+      "wii u",
+      "nintendo",
+      "emulador"
+    ],
+    "short_desc": {
+      "en": "Wii U emulator, actively developed with growing game compatibility.",
+      "es": "Emulador de Wii U, activamente desarrollado y con compatibilidad de juegos en crecimiento."
+    },
+    "long_desc": {
+      "en": "Runs most of the Wii U library in a playable state, with Vulkan and OpenGL rendering, shader caching to reduce stutter, and native Linux builds.",
+      "es": "Corre la mayoría de la biblioteca de Wii U de forma jugable, con renderizado en Vulkan y OpenGL, cache de shaders para reducir el stutter, y builds nativos para Linux."
+    }
+  },
+  {
+    "id": "scummvm",
+    "name": "ScummVM",
+    "category": "games",
+    "source": "pacman",
+    "package": "scummvm",
+    "exec": "scummvm",
+    "icon": "🗝️",
+    "developer": "ScummVM Team",
+    "license": "GPL-3.0",
+    "website": "https://www.scummvm.org",
+    "tags": [
+      "aventuras graficas",
+      "point and click",
+      "clasicos"
+    ],
+    "short_desc": {
+      "en": "Reimplemented engine for hundreds of classic point-and-click adventures.",
+      "es": "Motor reimplementado para cientos de aventuras gráficas clásicas point-and-click."
+    },
+    "long_desc": {
+      "en": "Doesn't emulate hardware — it reimplements the engines behind classics like Monkey Island, Broken Sword and countless others, so they run natively without DOSBox or old drivers.",
+      "es": "No emula hardware — reimplementa los motores detrás de clásicos como Monkey Island, Broken Sword y muchos más, para que corran de forma nativa sin necesidad de DOSBox ni drivers viejos."
+    },
+    "flathub_id": "org.scummvm.ScummVM"
+  },
+  {
+    "id": "dosbox-staging",
+    "name": "DOSBox Staging",
+    "category": "games",
+    "source": "pacman",
+    "package": "dosbox-staging",
+    "exec": "dosbox",
+    "icon": "🖥️",
+    "developer": "DOSBox Staging Team",
+    "license": "GPL-2.0",
+    "website": "https://dosbox-staging.github.io",
+    "tags": [
+      "dos",
+      "clasicos",
+      "emulador"
+    ],
+    "short_desc": {
+      "en": "Actively maintained fork of DOSBox for running classic DOS games.",
+      "es": "Fork activamente mantenido de DOSBox para correr juegos clásicos de DOS."
+    },
+    "long_desc": {
+      "en": "A modernized, more actively developed alternative to vanilla DOSBox, with better default configuration, improved compatibility and regular releases.",
+      "es": "Una alternativa modernizada y más activamente desarrollada al DOSBox tradicional, con mejor configuración por defecto, más compatibilidad y lanzamientos regulares."
+    }
+  },
+  {
+    "id": "firefox",
+    "name": "Firefox",
+    "category": "apps",
+    "source": "pacman",
+    "package": "firefox",
+    "exec": "firefox",
+    "icon": "🦊",
+    "developer": "Mozilla Foundation",
+    "license": "MPL-2.0",
+    "website": "https://www.mozilla.org/firefox",
+    "tags": [
+      "navegador",
+      "browser",
+      "web",
+      "privacidad"
+    ],
+    "short_desc": {
+      "en": "Fast, open-source browser with a strong focus on privacy.",
+      "es": "Navegador rápido y de código abierto, con fuerte enfoque en privacidad."
+    },
+    "long_desc": {
+      "en": "Mozilla's independent browser engine, with tracking protection on by default, container tabs and deep customization via extensions.",
+      "es": "El motor de navegador independiente de Mozilla, con protección contra rastreo activada por defecto, pestañas contenedor y personalización profunda vía extensiones."
+    },
+    "flathub_id": "org.mozilla.firefox"
+  },
+  {
+    "id": "brave",
+    "name": "Brave",
+    "category": "apps",
+    "source": "aur",
+    "package": "brave-bin",
+    "exec": "brave",
+    "icon": "🦁",
+    "developer": "Brave Software",
+    "license": "MPL-2.0",
+    "website": "https://brave.com",
+    "tags": [
+      "navegador",
+      "browser",
+      "chromium",
+      "adblock"
+    ],
+    "short_desc": {
+      "en": "Chromium-based browser with built-in ad and tracker blocking.",
+      "es": "Navegador basado en Chromium con bloqueo de anuncios y rastreadores integrado."
+    },
+    "long_desc": {
+      "en": "Gives you Chromium's compatibility and extension ecosystem with aggressive built-in ad/tracker blocking, so most sites feel noticeably faster without extra extensions.",
+      "es": "Te da la compatibilidad y el ecosistema de extensiones de Chromium con bloqueo agresivo de anuncios y rastreadores integrado, así que la mayoría de sitios se sienten notablemente más rápidos sin extensiones extra."
+    },
+    "flathub_id": "com.brave.Browser"
+  },
+  {
+    "id": "thunderbird",
+    "name": "Thunderbird",
+    "category": "apps",
+    "source": "pacman",
+    "package": "thunderbird",
+    "exec": "thunderbird",
+    "icon": "🐦",
+    "developer": "Mozilla Foundation",
+    "license": "MPL-2.0",
+    "website": "https://www.thunderbird.net",
+    "tags": [
+      "correo",
+      "email",
+      "calendario"
+    ],
+    "short_desc": {
+      "en": "Free email client with calendar, RSS and multi-account support.",
+      "es": "Cliente de correo libre con calendario, RSS y soporte multicuenta."
+    },
+    "long_desc": {
+      "en": "Manage several email accounts, a calendar and RSS feeds from one desktop app, with built-in filtering, encryption and a large add-on ecosystem.",
+      "es": "Administra varias cuentas de correo, un calendario y feeds RSS desde una sola app de escritorio, con filtrado, cifrado integrado y un gran ecosistema de complementos."
+    },
+    "flathub_id": "org.mozilla.Thunderbird"
+  },
+  {
+    "id": "libreoffice",
+    "name": "LibreOffice",
+    "category": "apps",
+    "source": "pacman",
+    "package": "libreoffice-fresh",
+    "exec": "libreoffice",
+    "icon": "📄",
+    "developer": "The Document Foundation",
+    "license": "MPL-2.0",
+    "website": "https://www.libreoffice.org",
+    "tags": [
+      "ofimatica",
+      "office",
+      "documentos",
+      "hojas de calculo"
+    ],
+    "short_desc": {
+      "en": "Full free office suite: documents, spreadsheets, slides and more.",
+      "es": "Suite ofimática libre completa: documentos, hojas de cálculo, presentaciones y más."
+    },
+    "long_desc": {
+      "en": "Writer, Calc, Impress, Draw and Base cover word processing, spreadsheets, presentations, diagrams and databases, with solid compatibility for .docx/.xlsx/.pptx files.",
+      "es": "Writer, Calc, Impress, Draw y Base cubren procesamiento de texto, hojas de cálculo, presentaciones, diagramas y bases de datos, con buena compatibilidad para archivos .docx/.xlsx/.pptx."
+    },
+    "flathub_id": "org.libreoffice.LibreOffice"
+  },
+  {
+    "id": "gimp",
+    "name": "GIMP",
+    "category": "apps",
+    "source": "pacman",
+    "package": "gimp",
+    "exec": "gimp",
+    "icon": "🎨",
+    "developer": "GIMP Team",
+    "license": "GPL-3.0",
+    "website": "https://www.gimp.org",
+    "tags": [
+      "edicion de imagenes",
+      "photoshop",
+      "diseño"
+    ],
+    "short_desc": {
+      "en": "Free raster image editor comparable to Photoshop.",
+      "es": "Editor de imágenes rasterizadas libre, comparable a Photoshop."
+    },
+    "long_desc": {
+      "en": "Layers, masks, a full selection toolkit and scripting via Script-Fu/Python make GIMP capable of everything from quick edits to full digital painting.",
+      "es": "Capas, máscaras, un set completo de herramientas de selección y scripting vía Script-Fu/Python hacen que GIMP sirva desde ediciones rápidas hasta pintura digital completa."
+    },
+    "flathub_id": "org.gimp.GIMP"
+  },
+  {
+    "id": "inkscape",
+    "name": "Inkscape",
+    "category": "apps",
+    "source": "pacman",
+    "package": "inkscape",
+    "exec": "inkscape",
+    "icon": "✒️",
+    "developer": "Inkscape Project",
+    "license": "GPL-3.0",
+    "website": "https://inkscape.org",
+    "tags": [
+      "vectores",
+      "svg",
+      "illustrator",
+      "diseño"
+    ],
+    "short_desc": {
+      "en": "Free vector graphics editor built around the open SVG standard.",
+      "es": "Editor de gráficos vectoriales libre, construido sobre el estándar abierto SVG."
+    },
+    "long_desc": {
+      "en": "A mature Illustrator-style tool for logos, icons and illustrations, with path operations, gradients and native SVG editing.",
+      "es": "Una herramienta madura al estilo Illustrator para logos, íconos e ilustraciones, con operaciones de trazado, gradientes y edición nativa de SVG."
+    },
+    "flathub_id": "org.inkscape.Inkscape"
+  },
+  {
+    "id": "blender",
+    "name": "Blender",
+    "category": "apps",
+    "source": "pacman",
+    "package": "blender",
+    "exec": "blender",
+    "icon": "🧊",
+    "developer": "Blender Foundation",
+    "license": "GPL-2.0",
+    "website": "https://www.blender.org",
+    "tags": [
+      "3d",
+      "modelado",
+      "animacion",
+      "render"
+    ],
+    "short_desc": {
+      "en": "Complete free 3D suite: modeling, animation, sculpting and video editing.",
+      "es": "Suite 3D libre completa: modelado, animación, escultura y edición de video."
+    },
+    "long_desc": {
+      "en": "An industry-grade pipeline in one download, covering modeling, rigging, simulation, compositing and rendering, with active GPU-accelerated Cycles rendering on AMD via HIP.",
+      "es": "Un pipeline de nivel industrial en una sola descarga: modelado, rigging, simulación, compositing y render, con renderizado Cycles acelerado por GPU en AMD vía HIP."
+    },
+    "flathub_id": "org.blender.Blender"
+  },
+  {
+    "id": "vlc",
+    "name": "VLC",
+    "category": "apps",
+    "source": "pacman",
+    "package": "vlc",
+    "exec": "vlc",
+    "icon": "🎬",
+    "developer": "VideoLAN",
+    "license": "GPL-2.0",
+    "website": "https://www.videolan.org/vlc",
+    "tags": [
+      "reproductor",
+      "video",
+      "audio",
+      "codecs"
+    ],
+    "short_desc": {
+      "en": "Plays practically any video or audio format, no codecs needed.",
+      "es": "Reproduce prácticamente cualquier formato de video o audio, sin codecs extra."
+    },
+    "long_desc": {
+      "en": "Ships its own decoders for nearly every format that exists, plus streaming, subtitle handling and network playback, all without phoning home.",
+      "es": "Trae sus propios decodificadores para casi cualquier formato existente, además de streaming, manejo de subtítulos y reproducción por red, todo sin enviar datos a ningún lado."
+    },
+    "flathub_id": "org.videolan.VLC"
+  },
+  {
+    "id": "obs-studio",
+    "name": "OBS Studio",
+    "category": "apps",
+    "source": "pacman",
+    "package": "obs-studio",
+    "exec": "obs",
+    "icon": "🔴",
+    "developer": "OBS Project",
+    "license": "GPL-2.0",
+    "website": "https://obsproject.com",
+    "tags": [
+      "streaming",
+      "grabacion",
+      "recording",
+      "twitch"
+    ],
+    "short_desc": {
+      "en": "Free recording and live-streaming software with scene composition.",
+      "es": "Software libre de grabación y transmisión en vivo, con composición de escenas."
+    },
+    "long_desc": {
+      "en": "Compose scenes from windows, cameras and overlays, then record locally or stream to Twitch/YouTube, with VAAPI hardware encoding support on AMD.",
+      "es": "Compón escenas a partir de ventanas, cámaras y overlays, y luego graba localmente o transmite a Twitch/YouTube, con soporte de codificación por hardware VAAPI en AMD."
+    },
+    "flathub_id": "com.obsproject.Studio"
+  },
+  {
+    "id": "discord",
+    "name": "Discord",
+    "category": "apps",
+    "source": "aur",
+    "package": "discord",
+    "exec": "discord",
+    "icon": "💬",
+    "developer": "Discord Inc.",
+    "license": "Propietario",
+    "website": "https://discord.com",
+    "tags": [
+      "chat",
+      "voz",
+      "comunidad",
+      "gaming"
+    ],
+    "short_desc": {
+      "en": "Voice, video and text chat built around communities and servers.",
+      "es": "Chat de voz, video y texto organizado en comunidades y servidores."
+    },
+    "long_desc": {
+      "en": "The de facto chat app for gaming and tech communities, with low-latency voice channels, screen share and a huge bot/integration ecosystem.",
+      "es": "La app de chat de facto para comunidades de gaming y tecnología, con canales de voz de baja latencia, compartir pantalla y un enorme ecosistema de bots e integraciones."
+    },
+    "flathub_id": "com.discordapp.Discord"
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "category": "apps",
+    "source": "aur",
+    "package": "spotify",
+    "exec": "spotify",
+    "icon": "🎵",
+    "developer": "Spotify AB",
+    "license": "Propietario",
+    "website": "https://www.spotify.com",
+    "tags": [
+      "musica",
+      "streaming",
+      "podcasts"
+    ],
+    "short_desc": {
+      "en": "On-demand music and podcast streaming client.",
+      "es": "Cliente de streaming de música y podcasts bajo demanda."
+    },
+    "long_desc": {
+      "en": "The standard music streaming client, with offline downloads for Premium accounts, playlists and algorithmic recommendations.",
+      "es": "El cliente estándar de streaming de música, con descargas offline para cuentas Premium, playlists y recomendaciones algorítmicas."
+    },
+    "flathub_id": "com.spotify.Client"
+  },
+  {
+    "id": "vscode",
+    "name": "Visual Studio Code",
+    "category": "apps",
+    "source": "aur",
+    "package": "visual-studio-code-bin",
+    "exec": "code",
+    "icon": "💻",
+    "developer": "Microsoft",
+    "license": "Propietario (core MIT)",
+    "website": "https://code.visualstudio.com",
+    "tags": [
+      "editor",
+      "codigo",
+      "ide",
+      "desarrollo"
+    ],
+    "short_desc": {
+      "en": "Popular code editor with a massive extension marketplace.",
+      "es": "Editor de código popular, con un mercado de extensiones enorme."
+    },
+    "long_desc": {
+      "en": "Microsoft's official pre-built binary, with integrated Git, debugging, remote development and thousands of extensions for virtually every language.",
+      "es": "El binario oficial pre-compilado de Microsoft, con Git integrado, depuración, desarrollo remoto y miles de extensiones para prácticamente cualquier lenguaje."
+    },
+    "flathub_id": "com.visualstudio.code"
+  },
+  {
+    "id": "telegram",
+    "name": "Telegram Desktop",
+    "category": "apps",
+    "source": "pacman",
+    "package": "telegram-desktop",
+    "exec": "telegram-desktop",
+    "icon": "✈️",
+    "developer": "Telegram FZ-LLC",
+    "license": "GPL-3.0",
+    "website": "https://desktop.telegram.org",
+    "tags": [
+      "mensajeria",
+      "chat",
+      "canales"
+    ],
+    "short_desc": {
+      "en": "Cloud-synced messaging with channels, groups and large file transfer.",
+      "es": "Mensajería sincronizada en la nube, con canales, grupos y transferencia de archivos grandes."
+    },
+    "long_desc": {
+      "en": "Official open-source desktop client, with full history synced across devices, self-destructing chats and no practical file-size limits for most transfers.",
+      "es": "Cliente de escritorio oficial y de código abierto, con historial completo sincronizado entre dispositivos, chats autodestructivos y sin límites prácticos de tamaño para la mayoría de transferencias."
+    },
+    "flathub_id": "org.telegram.desktop"
+  },
+  {
+    "id": "signal",
+    "name": "Signal",
+    "category": "apps",
+    "source": "pacman",
+    "package": "signal-desktop",
+    "exec": "signal-desktop",
+    "icon": "🔒",
+    "developer": "Signal Foundation",
+    "license": "AGPL-3.0",
+    "website": "https://signal.org",
+    "tags": [
+      "mensajeria",
+      "privacidad",
+      "cifrado"
+    ],
+    "short_desc": {
+      "en": "End-to-end encrypted messaging, non-profit and open source.",
+      "es": "Mensajería cifrada de extremo a extremo, sin fines de lucro y de código abierto."
+    },
+    "long_desc": {
+      "en": "The reference implementation of the Signal Protocol, used by WhatsApp and others under the hood — but here it's the whole product: no ads, no data harvesting, funded by a non-profit foundation.",
+      "es": "La implementación de referencia del protocolo Signal, el mismo que usan WhatsApp y otros por debajo — pero acá es todo el producto: sin anuncios, sin recolección de datos, financiado por una fundación sin fines de lucro."
+    },
+    "flathub_id": "org.signal.Signal"
+  },
+  {
+    "id": "microsoft-edge",
+    "name": "Microsoft Edge",
+    "category": "apps",
+    "source": "aur",
+    "package": "microsoft-edge-stable-bin",
+    "exec": "microsoft-edge",
+    "icon": "🌐",
+    "developer": "Microsoft",
+    "license": "Propietario",
+    "website": "https://www.microsoft.com/edge",
+    "tags": [
+      "navegador",
+      "browser",
+      "chromium"
+    ],
+    "short_desc": {
+      "en": "Microsoft's Chromium-based browser, official Linux build repackaged for Arch.",
+      "es": "El navegador de Microsoft basado en Chromium, build oficial de Linux reempaquetado para Arch."
+    },
+    "long_desc": {
+      "en": "Same Chromium engine as Chrome/Brave with Microsoft's account sync, collections and Copilot features layered on top. This package just unpacks Microsoft's official .deb — useful if you need it for work or cross-device sync with Windows.",
+      "es": "El mismo motor Chromium que Chrome/Brave, con el sync de cuenta, colecciones y funciones de Copilot de Microsoft encima. Este paquete solo desempaqueta el .deb oficial de Microsoft — útil si lo necesitas para el trabajo o sincronizar con Windows."
+    }
+  },
+  {
+    "id": "onlyoffice",
+    "name": "OnlyOffice Desktop Editors",
+    "category": "apps",
+    "source": "aur",
+    "package": "onlyoffice-bin",
+    "exec": "onlyoffice-desktopeditors",
+    "icon": "📊",
+    "developer": "Ascensio System SIA",
+    "license": "AGPL-3.0",
+    "website": "https://www.onlyoffice.com",
+    "tags": [
+      "ofimatica",
+      "office",
+      "documentos",
+      "docx"
+    ],
+    "short_desc": {
+      "en": "Office suite with the closest UI and format fidelity to MS Office.",
+      "es": "Suite ofimática con la interfaz y fidelidad de formato más cercana a MS Office."
+    },
+    "long_desc": {
+      "en": "Where LibreOffice prioritizes its own format and workflow, OnlyOffice mirrors Microsoft Office's ribbon UI and keeps .docx/.xlsx/.pptx formatting closer to pixel-perfect — worth having alongside LibreOffice if you exchange files with Office users often.",
+      "es": "Donde LibreOffice prioriza su propio formato y flujo de trabajo, OnlyOffice imita la interfaz de cintas de Microsoft Office y mantiene el formato de .docx/.xlsx/.pptx más cercano a pixel-perfect — vale la pena tenerlo junto a LibreOffice si intercambias archivos seguido con gente que usa Office."
+    },
+    "flathub_id": "org.onlyoffice.desktopeditors"
+  },
+  {
+    "id": "unityhub",
+    "name": "Unity Hub",
+    "category": "apps",
+    "source": "aur",
+    "package": "unityhub",
+    "exec": "unityhub",
+    "icon": "🎲",
+    "developer": "Unity Technologies",
+    "license": "Propietario",
+    "website": "https://unity.com",
+    "tags": [
+      "desarrollo de juegos",
+      "game dev",
+      "motor de juegos",
+      "unity3d"
+    ],
+    "short_desc": {
+      "en": "Manages your Unity Editor installations and projects.",
+      "es": "Administra tus instalaciones del editor Unity y tus proyectos."
+    },
+    "long_desc": {
+      "en": "Doesn't include the Unity Editor itself — it's the launcher that lets you install and switch between multiple Unity versions side by side and open your projects, exactly like on Windows/Mac.",
+      "es": "No incluye el editor de Unity en sí — es el launcher que te deja instalar y alternar entre varias versiones de Unity en paralelo y abrir tus proyectos, igual que en Windows/Mac."
+    }
+  },
+  {
+    "id": "krita",
+    "name": "Krita",
+    "category": "apps",
+    "source": "pacman",
+    "package": "krita",
+    "exec": "krita",
+    "icon": "🖌️",
+    "developer": "KDE / Krita Foundation",
+    "license": "GPL-3.0",
+    "website": "https://krita.org",
+    "tags": [
+      "pintura digital",
+      "ilustracion",
+      "diseño",
+      "arte"
+    ],
+    "short_desc": {
+      "en": "Free digital painting app, purpose-built for illustration and concept art.",
+      "es": "App de pintura digital libre, hecha específicamente para ilustración y concept art."
+    },
+    "long_desc": {
+      "en": "Where GIMP is general-purpose photo editing, Krita is built around brushes, layers and animation for artists — stabilizers, brush engines and a canvas that feels made for a tablet.",
+      "es": "Donde GIMP es edición de fotos de propósito general, Krita está construido alrededor de pinceles, capas y animación para artistas — estabilizadores, motores de pincel y un lienzo que se siente hecho para tableta."
+    },
+    "flathub_id": "org.kde.krita"
+  },
+  {
+    "id": "kdenlive",
+    "name": "Kdenlive",
+    "category": "apps",
+    "source": "pacman",
+    "package": "kdenlive",
+    "exec": "kdenlive",
+    "icon": "🎞️",
+    "developer": "KDE Community",
+    "license": "GPL-3.0",
+    "website": "https://kdenlive.org",
+    "tags": [
+      "edicion de video",
+      "video editing",
+      "multipista"
+    ],
+    "short_desc": {
+      "en": "Free multitrack video editor, more full-featured than most FOSS options.",
+      "es": "Editor de video multipista libre, más completo que la mayoría de opciones FOSS."
+    },
+    "long_desc": {
+      "en": "Multitrack timeline, keyframeable effects, proxy clips for smoother editing on modest hardware, and broad format support via FFmpeg — a real alternative to Premiere for most editing work.",
+      "es": "Timeline multipista, efectos con keyframes, clips proxy para editar más fluido en hardware modesto, y soporte amplio de formatos vía FFmpeg — una alternativa real a Premiere para la mayoría del trabajo de edición."
+    },
+    "flathub_id": "org.kde.kdenlive"
+  },
+  {
+    "id": "audacity",
+    "name": "Audacity",
+    "category": "apps",
+    "source": "pacman",
+    "package": "audacity",
+    "exec": "audacity",
+    "icon": "🎙️",
+    "developer": "Audacity Team",
+    "license": "GPL-3.0",
+    "website": "https://www.audacityteam.org",
+    "tags": [
+      "audio",
+      "edicion de audio",
+      "grabacion",
+      "podcast"
+    ],
+    "short_desc": {
+      "en": "The standard free audio editor and recorder.",
+      "es": "El editor y grabador de audio libre por excelencia."
+    },
+    "long_desc": {
+      "en": "Multitrack recording and editing, noise reduction, a big library of effects, and support for VST/LV2 plugins — everything you need for podcast editing or basic mixing.",
+      "es": "Grabación y edición multipista, reducción de ruido, una biblioteca grande de efectos, y soporte para plugins VST/LV2 — todo lo que necesitas para editar podcasts o hacer mezclas básicas."
+    },
+    "flathub_id": "org.audacityteam.Audacity"
+  },
+  {
+    "id": "obsidian",
+    "name": "Obsidian",
+    "category": "apps",
+    "source": "aur",
+    "package": "obsidian",
+    "exec": "obsidian",
+    "icon": "🧠",
+    "developer": "Obsidian.md",
+    "license": "Propietario (gratis para uso personal)",
+    "website": "https://obsidian.md",
+    "tags": [
+      "notas",
+      "conocimiento",
+      "markdown",
+      "segundo cerebro"
+    ],
+    "short_desc": {
+      "en": "Markdown note-taking app built around linking ideas together.",
+      "es": "App de notas en Markdown construida alrededor de conectar ideas entre sí."
+    },
+    "long_desc": {
+      "en": "Your notes live as local .md files (no lock-in), with backlinks and a graph view that surfaces connections between them — popular for research, journaling and long-term project notes.",
+      "es": "Tus notas viven como archivos .md locales (sin lock-in), con backlinks y una vista de grafo que muestra las conexiones entre ellas — popular para investigación, journaling y notas de proyectos a largo plazo."
+    },
+    "flathub_id": "md.obsidian.Obsidian"
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "category": "apps",
+    "source": "aur",
+    "package": "slack-desktop",
+    "exec": "slack",
+    "icon": "💼",
+    "developer": "Slack Technologies",
+    "license": "Propietario",
+    "website": "https://slack.com",
+    "tags": [
+      "trabajo",
+      "equipos",
+      "chat",
+      "comunicacion"
+    ],
+    "short_desc": {
+      "en": "Team chat and workspace communication for companies.",
+      "es": "Chat de equipo y comunicación de espacio de trabajo para empresas."
+    },
+    "long_desc": {
+      "en": "Channels, threads, huddles and a huge integration ecosystem — install this one if work requires it, since most teams don't have a Linux-friendly alternative on the table.",
+      "es": "Canales, hilos, huddles y un ecosistema enorme de integraciones — instala este si el trabajo lo requiere, porque la mayoría de equipos no tienen una alternativa Linux-friendly sobre la mesa."
+    },
+    "flathub_id": "com.slack.Slack"
+  },
+  {
+    "id": "zoom",
+    "name": "Zoom",
+    "category": "apps",
+    "source": "aur",
+    "package": "zoom",
+    "exec": "zoom",
+    "icon": "📹",
+    "developer": "Zoom Video Communications",
+    "license": "Propietario",
+    "website": "https://zoom.us",
+    "tags": [
+      "videollamadas",
+      "reuniones",
+      "trabajo"
+    ],
+    "short_desc": {
+      "en": "Video conferencing client, still the most common one requested for work/school.",
+      "es": "Cliente de videollamadas, sigue siendo el más pedido para trabajo o escuela."
+    },
+    "long_desc": {
+      "en": "Official Linux client, packaged from Zoom's own .deb. Worth having installed even if you prefer other tools day-to-day, since plenty of meetings still land in a Zoom link.",
+      "es": "Cliente oficial de Linux, empaquetado desde el .deb propio de Zoom. Vale la pena tenerlo instalado aunque prefieras otras herramientas en el día a día, porque muchas reuniones igual terminan siendo un link de Zoom."
+    },
+    "flathub_id": "us.zoom.Zoom"
+  },
+  {
+    "id": "postman",
+    "name": "Postman",
+    "category": "apps",
+    "source": "aur",
+    "package": "postman-bin",
+    "exec": "postman",
+    "icon": "📡",
+    "developer": "Postman, Inc.",
+    "license": "Propietario",
+    "website": "https://www.postman.com",
+    "tags": [
+      "desarrollo",
+      "api",
+      "rest",
+      "testing"
+    ],
+    "short_desc": {
+      "en": "The standard GUI client for testing and documenting APIs.",
+      "es": "El cliente gráfico estándar para probar y documentar APIs."
+    },
+    "long_desc": {
+      "en": "Build, save and organize HTTP requests into collections, chain them into test flows, and share collections with a team — the default choice for most API work even among people who complain about it.",
+      "es": "Arma, guarda y organiza requests HTTP en colecciones, encadénalas en flujos de prueba, y comparte colecciones con un equipo — la opción por defecto para trabajo con APIs, incluso entre quienes se quejan de ella."
+    }
+  },
+  {
+    "id": "btop",
+    "name": "btop",
+    "category": "utils",
+    "source": "pacman",
+    "package": "btop",
+    "exec": "btop",
+    "icon": "📊",
+    "developer": "Aristocratos",
+    "license": "Apache-2.0",
+    "website": "https://github.com/aristocratos/btop",
+    "tags": [
+      "monitor de sistema",
+      "cpu",
+      "ram",
+      "terminal"
+    ],
+    "short_desc": {
+      "en": "Gorgeous terminal resource monitor for CPU, memory, disks and network.",
+      "es": "Monitor de recursos en terminal, con CPU, memoria, discos y red."
+    },
+    "long_desc": {
+      "en": "A fast, mouse-and-keyboard-friendly TUI monitor with per-core CPU graphs, GPU stats and process management, all in a themeable terminal UI.",
+      "es": "Un monitor TUI rápido y usable con mouse y teclado, con gráficas de CPU por núcleo, estadísticas de GPU y gestión de procesos, todo en una interfaz de terminal personalizable."
+    }
+  },
+  {
+    "id": "btrfs-assistant",
+    "name": "Btrfs Assistant",
+    "category": "utils",
+    "source": "aur",
+    "package": "btrfs-assistant",
+    "exec": "btrfs-assistant",
+    "icon": "🗂️",
+    "developer": "Btrfs Assistant Team",
+    "license": "GPL-3.0",
+    "website": "https://gitlab.com/btrfs-assistant/btrfs-assistant",
+    "tags": [
+      "btrfs",
+      "snapper",
+      "snapshots",
+      "backups"
+    ],
+    "short_desc": {
+      "en": "Graphical manager for Btrfs snapshots and snapper configs.",
+      "es": "Gestor gráfico para snapshots de Btrfs y configuraciones de snapper."
+    },
+    "long_desc": {
+      "en": "Browse, restore and delete snapper snapshots from a GUI, and manage Btrfs subvolumes — a natural fit for AvalOS's @/@home/@snapshots layout.",
+      "es": "Explora, restaura y elimina snapshots de snapper desde una interfaz gráfica, y administra subvolúmenes de Btrfs — encaja de forma natural con el layout @/@home/@snapshots de AvalOS."
+    }
+  },
+  {
+    "id": "gparted",
+    "name": "GParted",
+    "category": "utils",
+    "source": "pacman",
+    "package": "gparted",
+    "exec": "gparted",
+    "icon": "💽",
+    "developer": "GParted Team",
+    "license": "GPL-2.0",
+    "website": "https://gparted.org",
+    "tags": [
+      "particiones",
+      "discos",
+      "formatear"
+    ],
+    "short_desc": {
+      "en": "Graphical partition editor for resizing, formatting and moving partitions.",
+      "es": "Editor gráfico de particiones para redimensionar, formatear y mover particiones."
+    },
+    "long_desc": {
+      "en": "The standard GUI front-end for parted, supporting most filesystems including Btrfs, ext4, FAT32 and NTFS — handy on a triple-boot setup like yours.",
+      "es": "El front-end gráfico estándar para parted, con soporte para la mayoría de sistemas de archivos incluyendo Btrfs, ext4, FAT32 y NTFS — útil en un setup triple boot como el tuyo."
+    },
+    "flathub_id": "org.gnome.GParted"
+  },
+  {
+    "id": "bleachbit",
+    "name": "BleachBit",
+    "category": "utils",
+    "source": "pacman",
+    "package": "bleachbit",
+    "exec": "bleachbit",
+    "icon": "🧹",
+    "developer": "BleachBit Team",
+    "license": "GPL-3.0",
+    "website": "https://www.bleachbit.org",
+    "tags": [
+      "limpieza",
+      "cache",
+      "espacio en disco"
+    ],
+    "short_desc": {
+      "en": "Frees disk space by clearing caches, logs and temporary junk.",
+      "es": "Libera espacio en disco limpiando cachés, logs y archivos temporales."
+    },
+    "long_desc": {
+      "en": "Cleans browser caches, package manager caches, old logs and other reclaimable space across dozens of recognized applications, with a preview before deleting anything.",
+      "es": "Limpia cachés de navegadores, cachés del gestor de paquetes, logs viejos y otro espacio recuperable en decenas de aplicaciones reconocidas, con una vista previa antes de borrar nada."
+    }
+  },
+  {
+    "id": "corectrl",
+    "name": "CoreCtrl",
+    "category": "utils",
+    "source": "aur",
+    "package": "corectrl",
+    "exec": "corectrl",
+    "icon": "🎛️",
+    "developer": "CoreCtrl Team",
+    "license": "GPL-3.0",
+    "website": "https://gitlab.com/corectrl/corectrl",
+    "tags": [
+      "gpu",
+      "amd",
+      "overclock",
+      "ventiladores"
+    ],
+    "short_desc": {
+      "en": "GPU control panel for AMD cards: clocks, fan curves and power profiles.",
+      "es": "Panel de control de GPU para tarjetas AMD: clocks, curvas de ventilador y perfiles de energía."
+    },
+    "long_desc": {
+      "en": "A graphical front-end for the amdgpu driver's sysfs controls, built specifically for cards like your RX 580 — adjust power states, fan curves and clocks without editing files by hand.",
+      "es": "Un front-end gráfico para los controles sysfs del driver amdgpu, hecho justo para tarjetas como tu RX 580 — ajusta estados de energía, curvas de ventilador y clocks sin editar archivos a mano."
+    }
+  },
+  {
+    "id": "keepassxc",
+    "name": "KeePassXC",
+    "category": "utils",
+    "source": "pacman",
+    "package": "keepassxc",
+    "exec": "keepassxc",
+    "icon": "🔐",
+    "developer": "KeePassXC Team",
+    "license": "GPL-3.0",
+    "website": "https://keepassxc.org",
+    "tags": [
+      "contraseñas",
+      "seguridad",
+      "gestor"
+    ],
+    "short_desc": {
+      "en": "Offline password manager with an encrypted local database.",
+      "es": "Gestor de contraseñas offline con base de datos local cifrada."
+    },
+    "long_desc": {
+      "en": "Stores credentials in a single AES-256 encrypted file you control, with browser integration, TOTP support and no cloud account required.",
+      "es": "Guarda credenciales en un solo archivo cifrado con AES-256 que tú controlas, con integración de navegador, soporte de TOTP y sin necesidad de cuenta en la nube."
+    },
+    "flathub_id": "org.keepassxc.KeePassXC"
+  },
+  {
+    "id": "syncthing",
+    "name": "Syncthing",
+    "category": "utils",
+    "source": "pacman",
+    "package": "syncthing",
+    "exec": "syncthing",
+    "icon": "🔄",
+    "developer": "Syncthing Foundation",
+    "license": "MPL-2.0",
+    "website": "https://syncthing.net",
+    "tags": [
+      "sincronizacion",
+      "archivos",
+      "backup",
+      "p2p"
+    ],
+    "short_desc": {
+      "en": "Continuous, peer-to-peer file sync with no central server.",
+      "es": "Sincronización continua de archivos entre dispositivos, sin servidor central."
+    },
+    "long_desc": {
+      "en": "Keeps folders in sync directly between your own devices over an encrypted connection, controlled from a local web UI, with nothing passing through third-party servers.",
+      "es": "Mantiene carpetas sincronizadas directamente entre tus propios dispositivos por una conexión cifrada, controlado desde una interfaz web local, sin que nada pase por servidores de terceros."
+    }
+  },
+  {
+    "id": "qbittorrent",
+    "name": "qBittorrent",
+    "category": "utils",
+    "source": "pacman",
+    "package": "qbittorrent",
+    "exec": "qbittorrent",
+    "icon": "⬇️",
+    "developer": "qBittorrent Team",
+    "license": "GPL-2.0",
+    "website": "https://www.qbittorrent.org",
+    "tags": [
+      "torrent",
+      "descargas",
+      "p2p"
+    ],
+    "short_desc": {
+      "en": "Free BitTorrent client with no ads and a built-in search.",
+      "es": "Cliente BitTorrent libre, sin anuncios y con búsqueda integrada."
+    },
+    "long_desc": {
+      "en": "A lightweight Qt-based torrent client with sequential downloading, bandwidth scheduling and a web UI for remote control, without the bundled adware some alternatives ship.",
+      "es": "Un cliente de torrents ligero basado en Qt, con descarga secuencial, programación de ancho de banda e interfaz web para control remoto, sin el adware que traen algunas alternativas."
+    },
+    "flathub_id": "org.qbittorrent.qBittorrent"
+  },
+  {
+    "id": "flatseal",
+    "name": "Flatseal",
+    "category": "utils",
+    "source": "flatpak",
+    "package": "com.github.tchx84.Flatseal",
+    "icon": "🛡️",
+    "developer": "Martín Abente Lahaye",
+    "license": "GPL-3.0",
+    "website": "https://flathub.org/apps/com.github.tchx84.Flatseal",
+    "tags": [
+      "flatpak",
+      "permisos",
+      "sandbox"
+    ],
+    "short_desc": {
+      "en": "Graphical editor for Flatpak app permissions and sandbox rules.",
+      "es": "Editor gráfico para permisos y reglas de sandbox de apps Flatpak."
+    },
+    "long_desc": {
+      "en": "See and tweak exactly what filesystem, network and device access each Flatpak app has, without touching the command line.",
+      "es": "Consulta y ajusta exactamente qué acceso a sistema de archivos, red y dispositivos tiene cada app Flatpak, sin tocar la línea de comandos."
+    }
+  },
+  {
+    "id": "bottles",
+    "name": "Bottles",
+    "category": "utils",
+    "source": "flatpak",
+    "package": "com.usebottles.bottles",
+    "icon": "🍾",
+    "developer": "Bottles Team",
+    "license": "GPL-3.0",
+    "website": "https://usebottles.com",
+    "tags": [
+      "wine",
+      "windows apps",
+      "prefixes"
+    ],
+    "short_desc": {
+      "en": "Manages isolated Wine prefixes for running Windows apps and games.",
+      "es": "Administra prefixes de Wine aislados para correr apps y juegos de Windows."
+    },
+    "long_desc": {
+      "en": "Creates and organizes separate Wine 'bottles' per application, each with its own runner version and dependencies, so one messy install never breaks another.",
+      "es": "Crea y organiza 'bottles' de Wine separados por aplicación, cada uno con su propia versión de runner y dependencias, así una instalación problemática nunca rompe otra."
+    }
+  },
+  {
+    "id": "baobab",
+    "name": "Baobab",
+    "category": "utils",
+    "source": "pacman",
+    "package": "baobab",
+    "exec": "baobab",
+    "icon": "🌳",
+    "developer": "GNOME",
+    "license": "GPL-2.0",
+    "website": "https://apps.gnome.org/DiskUsageAnalyzer",
+    "tags": [
+      "disco",
+      "espacio",
+      "analizador"
+    ],
+    "short_desc": {
+      "en": "Visualizes what's actually eating your disk space, folder by folder.",
+      "es": "Visualiza qué está ocupando tu espacio en disco, carpeta por carpeta."
+    },
+    "long_desc": {
+      "en": "GNOME's disk usage analyzer, with a ring/treemap chart that makes it obvious which folder is hiding the 40GB you can't account for.",
+      "es": "El analizador de uso de disco de GNOME, con un gráfico de anillos/treemap que hace obvio qué carpeta esconde esos 40GB que no encuentras."
+    },
+    "flathub_id": "org.gnome.baobab"
+  },
+  {
+    "id": "deja-dup",
+    "name": "Déjà Dup",
+    "category": "utils",
+    "source": "pacman",
+    "package": "deja-dup",
+    "exec": "deja-dup",
+    "icon": "💾",
+    "developer": "GNOME",
+    "license": "GPL-3.0",
+    "website": "https://apps.gnome.org/DejaDup",
+    "tags": [
+      "backup",
+      "respaldo",
+      "encriptado"
+    ],
+    "short_desc": {
+      "en": "Simple, encrypted, scheduled backups for your personal files.",
+      "es": "Respaldos simples, cifrados y programados para tus archivos personales."
+    },
+    "long_desc": {
+      "en": "A straightforward front-end over duplicity for scheduled, incremental, encrypted backups of your home folder to local disks or remote storage.",
+      "es": "Una interfaz sencilla sobre duplicity para respaldos programados, incrementales y cifrados de tu carpeta personal, hacia discos locales o almacenamiento remoto."
+    },
+    "flathub_id": "org.gnome.DejaDup"
+  },
+  {
+    "id": "filezilla",
+    "name": "FileZilla",
+    "category": "utils",
+    "source": "pacman",
+    "package": "filezilla",
+    "exec": "filezilla",
+    "icon": "📁",
+    "developer": "Tim Kosse / FileZilla Project",
+    "license": "GPL-2.0",
+    "website": "https://filezilla-project.org",
+    "tags": [
+      "ftp",
+      "sftp",
+      "transferencia de archivos"
+    ],
+    "short_desc": {
+      "en": "The classic free FTP/SFTP client.",
+      "es": "El cliente FTP/SFTP libre de siempre."
+    },
+    "long_desc": {
+      "en": "Drag-and-drop transfers over FTP, FTPS and SFTP with a dual-pane browser, a transfer queue and a site manager for saving connections — still the tool most people reach for.",
+      "es": "Transferencias por drag-and-drop vía FTP, FTPS y SFTP con un explorador de dos paneles, cola de transferencias y gestor de sitios para guardar conexiones — sigue siendo la herramienta que la mayoría usa por defecto."
+    },
+    "flathub_id": "org.filezillaproject.Filezilla"
+  },
+  {
+    "id": "wireshark",
+    "name": "Wireshark",
+    "category": "utils",
+    "source": "pacman",
+    "package": "wireshark-qt",
+    "exec": "wireshark",
+    "icon": "🦈",
+    "developer": "Wireshark Foundation",
+    "license": "GPL-2.0",
+    "website": "https://www.wireshark.org",
+    "tags": [
+      "red",
+      "network",
+      "analisis",
+      "paquetes",
+      "sniffer"
+    ],
+    "short_desc": {
+      "en": "The standard network protocol analyzer.",
+      "es": "El analizador de protocolos de red por excelencia."
+    },
+    "long_desc": {
+      "en": "Captures and dissects traffic live or from a file, with deep protocol support and powerful display filters — the tool to reach for when something's wrong at the network layer and you need real evidence, not guesses.",
+      "es": "Captura y diseca tráfico en vivo o desde un archivo, con soporte profundo de protocolos y filtros de visualización potentes — la herramienta para cuando algo anda mal en la capa de red y necesitas evidencia real, no adivinar."
+    },
+    "flathub_id": "org.wireshark.Wireshark"
+  }
+]

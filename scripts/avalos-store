@@ -1,0 +1,1422 @@
+#!/usr/bin/env python3
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║  avalos-store — Tienda de software de AvalOS                        ║
+# ║  Catálogo curado de juegos, aplicaciones y utilidades, instalables   ║
+# ║  vía pacman, AUR (yay/paru) o Flatpak.                               ║
+# ║  Mismo patrón que avalos-wallpaper: pywebview + HTML/CSS/JS          ║
+# ║  embebido en este mismo archivo, i18n leído de /etc/avalos-lang.     ║
+# ║  Soporta: English · Español · 中文简体 · 日本語                      ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+#
+# Requiere: python-pywebview, webkit2gtk-4.1, python-gobject
+# (ya están en HYPRLAND_PKGS por avalos-wallpaper — no hace falta tocar
+# el instalador para esto).
+#
+# Catálogo: busca avalos-store-catalog.json junto a este script primero,
+# y si no está, en las rutas del sistema listadas en CATALOG_CANDIDATES.
+# Es un JSON plano a propósito — agregar/editar apps no debería requerir
+# tocar este .py.
+import base64
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+try:
+    import webview
+except ImportError:
+    print("ERROR: pywebview no está instalado.")
+    print("Instala con: pacman -S python-pywebview webkit2gtk-4.1 python-gobject")
+    sys.exit(1)
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+CATALOG_CANDIDATES = [
+    SCRIPT_DIR / "avalos-store-catalog.json",
+    Path("/usr/share/avalos-store/avalos-store-catalog.json"),
+    Path("/usr/local/share/avalos-store/avalos-store-catalog.json"),
+]
+TERMINALS = ("kitty", "foot", "alacritty", "xterm")
+AUR_HELPERS = ("yay", "paru")
+AUR_RPC_URL = "https://aur.archlinux.org/rpc/v5/info"
+CATEGORIES = ("games", "apps", "utils")
+
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+
+
+def _detectar_idioma() -> str:
+    # Fuente de verdad: /etc/avalos-lang, el idioma real elegido en el
+    # instalador (chooseLang -> set_language -> self._lang). NO es el
+    # locale regional (LANG=es_MX.UTF-8...) — mismo criterio que
+    # avalos-about / avalos-settings / avalos-wallpaper.
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
+
+_AVALOS_PROFILE_FILE = Path("/etc/avalos-profile")
+
+
+def _leer_perfil_instalacion() -> set[str]:
+    # /etc/avalos-profile: una flag por línea (ej. "gaming"), escrita por
+    # el instalador según los checkboxes que el usuario marcó (chk-gaming,
+    # chk-bore). Mismo espíritu que avalos-lang: un archivo, una fuente de
+    # verdad. Si el instalador todavía no la escribe (versión vieja), esto
+    # simplemente devuelve un set vacío y la Store se comporta como antes.
+    try:
+        texto = _AVALOS_PROFILE_FILE.read_text(encoding="utf-8")
+        return {linea.strip() for linea in texto.splitlines() if linea.strip()}
+    except OSError:
+        return set()
+
+
+PERFIL_INSTALACION = _leer_perfil_instalacion()
+
+STRINGS = {
+    "en": {
+        "title": "AvalOS — Store",
+        "search_placeholder": "Search games, apps, utilities…",
+        "refresh": "Refresh",
+        "nav_all": "All", "nav_games": "Games", "nav_apps": "Apps",
+        "nav_utils": "Utilities", "nav_installed": "Installed",
+        "badge_pacman": "Official Repos", "badge_aur": "AUR", "badge_flatpak": "Flatpak",
+        "btn_install": "Install", "btn_uninstall": "Uninstall",
+        "btn_open": "Open", "btn_close": "Close",
+        "label_developer": "Developer", "label_license": "License",
+        "label_website": "Website", "label_source": "Source",
+        "label_package": "Package", "label_version": "Version",
+        "label_size": "Download size", "label_aur_votes": "AUR votes",
+        "label_aur_maintainer": "AUR maintainer", "label_note": "Note",
+        "found_one": "{n} result", "found_many": "{n} results",
+        "empty_title": "No results", "empty_body": "Try a different search term or category.",
+        "status_fetching": "Fetching live details…",
+        "log_start_install": "{name}: starting install…",
+        "log_start_uninstall": "{name}: starting removal…",
+        "log_aur_terminal": "Opening a terminal to install {name} with {helper}…",
+        "done_install": "{name} installed", "done_uninstall": "{name} removed",
+        "done_external": "Continuing in the terminal window",
+        "err_install": "Install failed, check the log above",
+        "err_uninstall": "Removal failed, check the log above",
+        "err_notfound": "App not found in the catalog",
+        "err_nopkexec": "pkexec is not available",
+        "err_noflatpak": "Flatpak is not installed",
+        "err_noaur": "No AUR helper found (paru or yay)",
+        "err_noterm": "No terminal emulator found",
+        "err_unknown_source": "Unknown package source",
+        "installed_label": "Installed",
+        "confirm_uninstall": "Uninstall {name}?",
+        "status_installing": "Installing…", "status_uninstalling": "Removing…",
+    },
+    "es": {
+        "title": "AvalOS — Tienda",
+        "search_placeholder": "Buscar juegos, apps, utilidades…",
+        "refresh": "Actualizar",
+        "nav_all": "Todo", "nav_games": "Juegos", "nav_apps": "Aplicaciones",
+        "nav_utils": "Utilidades", "nav_installed": "Instalados",
+        "badge_pacman": "Repos Oficiales", "badge_aur": "AUR", "badge_flatpak": "Flatpak",
+        "btn_install": "Instalar", "btn_uninstall": "Desinstalar",
+        "btn_open": "Abrir", "btn_close": "Cerrar",
+        "label_developer": "Desarrollador", "label_license": "Licencia",
+        "label_website": "Sitio web", "label_source": "Fuente",
+        "label_package": "Paquete", "label_version": "Versión",
+        "label_size": "Tamaño de descarga", "label_aur_votes": "Votos en AUR",
+        "label_aur_maintainer": "Mantenedor en AUR", "label_note": "Nota",
+        "found_one": "{n} resultado", "found_many": "{n} resultados",
+        "empty_title": "Sin resultados", "empty_body": "Prueba con otro término o categoría.",
+        "status_fetching": "Cargando detalles en vivo…",
+        "log_start_install": "{name}: iniciando instalación…",
+        "log_start_uninstall": "{name}: iniciando desinstalación…",
+        "log_aur_terminal": "Abriendo una terminal para instalar {name} con {helper}…",
+        "done_install": "{name} instalado", "done_uninstall": "{name} desinstalado",
+        "done_external": "Continúa en la ventana de terminal",
+        "err_install": "Falló la instalación, revisa el log de arriba",
+        "err_uninstall": "Falló la desinstalación, revisa el log de arriba",
+        "err_notfound": "App no encontrada en el catálogo",
+        "err_nopkexec": "pkexec no está disponible",
+        "err_noflatpak": "Flatpak no está instalado",
+        "err_noaur": "No se encontró un AUR helper (paru o yay)",
+        "err_noterm": "No se encontró un emulador de terminal",
+        "err_unknown_source": "Fuente de paquete desconocida",
+        "installed_label": "Instalado",
+        "confirm_uninstall": "¿Desinstalar {name}?",
+        "status_installing": "Instalando…", "status_uninstalling": "Desinstalando…",
+    },
+    "zh": {
+        "title": "AvalOS — 应用商店",
+        "search_placeholder": "搜索游戏、应用、工具…",
+        "refresh": "刷新",
+        "nav_all": "全部", "nav_games": "游戏", "nav_apps": "应用",
+        "nav_utils": "工具", "nav_installed": "已安装",
+        "badge_pacman": "官方仓库", "badge_aur": "AUR", "badge_flatpak": "Flatpak",
+        "btn_install": "安装", "btn_uninstall": "卸载",
+        "btn_open": "打开", "btn_close": "关闭",
+        "label_developer": "开发者", "label_license": "许可证",
+        "label_website": "网站", "label_source": "来源",
+        "label_package": "软件包", "label_version": "版本",
+        "label_size": "下载大小", "label_aur_votes": "AUR 投票数",
+        "label_aur_maintainer": "AUR 维护者", "label_note": "说明",
+        "found_one": "找到 {n} 个结果", "found_many": "找到 {n} 个结果",
+        "empty_title": "没有结果", "empty_body": "试试其他搜索词或分类。",
+        "status_fetching": "正在获取实时信息…",
+        "log_start_install": "{name}：开始安装…",
+        "log_start_uninstall": "{name}：开始卸载…",
+        "log_aur_terminal": "正在打开终端，使用 {helper} 安装 {name}…",
+        "done_install": "{name} 安装完成", "done_uninstall": "{name} 已卸载",
+        "done_external": "请在终端窗口中继续",
+        "err_install": "安装失败，请查看上方日志",
+        "err_uninstall": "卸载失败，请查看上方日志",
+        "err_notfound": "目录中未找到该应用",
+        "err_nopkexec": "pkexec 不可用",
+        "err_noflatpak": "未安装 Flatpak",
+        "err_noaur": "未找到 AUR 助手（paru 或 yay）",
+        "err_noterm": "未找到终端模拟器",
+        "err_unknown_source": "未知的软件包来源",
+        "installed_label": "已安装",
+        "confirm_uninstall": "卸载 {name}？",
+        "status_installing": "正在安装…", "status_uninstalling": "正在卸载…",
+    },
+    "ja": {
+        "title": "AvalOS — ストア",
+        "search_placeholder": "ゲーム・アプリ・ユーティリティを検索…",
+        "refresh": "更新",
+        "nav_all": "すべて", "nav_games": "ゲーム", "nav_apps": "アプリ",
+        "nav_utils": "ユーティリティ", "nav_installed": "インストール済み",
+        "badge_pacman": "公式リポジトリ", "badge_aur": "AUR", "badge_flatpak": "Flatpak",
+        "btn_install": "インストール", "btn_uninstall": "アンインストール",
+        "btn_open": "開く", "btn_close": "閉じる",
+        "label_developer": "開発者", "label_license": "ライセンス",
+        "label_website": "ウェブサイト", "label_source": "ソース",
+        "label_package": "パッケージ", "label_version": "バージョン",
+        "label_size": "ダウンロードサイズ", "label_aur_votes": "AUR 投票数",
+        "label_aur_maintainer": "AUR メンテナー", "label_note": "注記",
+        "found_one": "{n} 件の結果", "found_many": "{n} 件の結果",
+        "empty_title": "結果がありません", "empty_body": "別のキーワードやカテゴリーを試してください。",
+        "status_fetching": "最新情報を取得中…",
+        "log_start_install": "{name}：インストールを開始します…",
+        "log_start_uninstall": "{name}：アンインストールを開始します…",
+        "log_aur_terminal": "{helper} で {name} をインストールするためにターミナルを開いています…",
+        "done_install": "{name} をインストールしました", "done_uninstall": "{name} をアンインストールしました",
+        "done_external": "ターミナルウィンドウで続行してください",
+        "err_install": "インストールに失敗しました。上のログを確認してください",
+        "err_uninstall": "アンインストールに失敗しました。上のログを確認してください",
+        "err_notfound": "カタログにこのアプリが見つかりません",
+        "err_nopkexec": "pkexec が利用できません",
+        "err_noflatpak": "Flatpak がインストールされていません",
+        "err_noaur": "AUR ヘルパー（paru または yay）が見つかりません",
+        "err_noterm": "ターミナルエミュレータが見つかりません",
+        "err_unknown_source": "不明なパッケージソースです",
+        "installed_label": "インストール済み",
+        "confirm_uninstall": "{name} をアンインストールしますか？",
+        "status_installing": "インストール中…", "status_uninstalling": "アンインストール中…",
+    },
+}
+T = STRINGS[LANG]
+
+
+def load_catalog():
+    for path in CATALOG_CANDIDATES:
+        try:
+            if path.is_file():
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            continue
+    return []
+
+
+CATALOG = load_catalog()
+
+
+def app_by_id(app_id):
+    return next((a for a in CATALOG if a.get("id") == app_id), None)
+
+
+def find_aur_helper():
+    for helper in AUR_HELPERS:
+        if shutil.which(helper):
+            return helper
+    return None
+
+
+def find_terminal():
+    for term in TERMINALS:
+        if shutil.which(term):
+            return term
+    return None
+
+
+def spawn_terminal(term, title, argv):
+    if term == "kitty":
+        return subprocess.Popen([term, "--title", title, "--"] + list(argv))
+    if term == "foot":
+        return subprocess.Popen([term, "-T", title] + list(argv))
+    return subprocess.Popen([term, "-e"] + list(argv))
+
+
+def installed_snapshot():
+    pacman_pkgs = set()
+    try:
+        r = subprocess.run(["pacman", "-Qq"], capture_output=True, text=True, timeout=10)
+        pacman_pkgs = set(r.stdout.split())
+    except Exception:
+        pass
+    flatpak_apps = set()
+    if shutil.which("flatpak"):
+        try:
+            r = subprocess.run(
+                ["flatpak", "list", "--app", "--columns=application"],
+                capture_output=True, text=True, timeout=10,
+            )
+            flatpak_apps = set(r.stdout.split())
+        except Exception:
+            pass
+    return pacman_pkgs, flatpak_apps
+
+
+def installed_ids_from_snapshot(pacman_pkgs, flatpak_apps):
+    ids = []
+    for app in CATALOG:
+        pkg = app.get("package", "")
+        if app.get("source") == "flatpak":
+            if pkg in flatpak_apps:
+                ids.append(app["id"])
+        elif pkg in pacman_pkgs:
+            ids.append(app["id"])
+    return ids
+
+
+def parse_pacman_info(text):
+    info = {}
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip(), value.strip()
+        if key == "Version":
+            info["live_version"] = value
+        elif key == "Download Size":
+            info["live_download_size"] = value
+        elif key == "Installed Size":
+            info["live_installed_size"] = value
+    return info
+
+
+def fetch_aur_info(pkg):
+    try:
+        url = AUR_RPC_URL + "?" + urllib.parse.urlencode({"type": "info", "arg[]": pkg})
+        req = urllib.request.Request(url, headers={"User-Agent": "avalos-store"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        results = data.get("results") or []
+        return results[0] if results else None
+    except Exception:
+        return None
+
+
+# ── Resolución de íconos reales ──────────────────────────────────────────
+# Mismo principio que COSMIC Store/GNOME Software: nunca se "dibuja" un
+# logo, se trae el ícono que el propio proyecto ya publica para esto.
+#   1. Si la app está instalada, su ícono YA vive en el sistema de
+#      archivos (así funciona el spec de iconos de FreeDesktop) — se lee
+#      directo, cero red, cero dependencias nuevas.
+#   2. Si no está instalada pero es Flatpak (o tiene flathub_id aunque se
+#      instale por pacman/AUR), se trae de la API pública de Flathub y se
+#      cachea en disco para no repetir la descarga cada vez que se abre
+#      la Store.
+#   3. Si nada de eso aplica (típicamente AUR sin equivalente en Flathub),
+#      el frontend cae de vuelta al emoji — igual que COSMIC Store se
+#      queda sin ícono decente para paquetes que ni AppStream ni Flatpak
+#      conocen.
+ICON_CACHE_DIR = Path.home() / ".cache" / "avalos-store" / "icons"
+FLATHUB_APPSTREAM_URL = "https://flathub.org/api/v2/appstream/"
+
+_HICOLOR_SIZES = ("128x128", "256x256", "96x96", "64x64", "48x48", "scalable")
+_HICOLOR_ROOTS = (
+    Path.home() / ".local" / "share" / "icons" / "hicolor",
+    Path("/usr/share/icons/hicolor"),
+    Path("/var/lib/flatpak/exports/share/icons/hicolor"),
+    Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "icons" / "hicolor",
+)
+_PIXMAP_ROOTS = (Path("/usr/share/pixmaps"),)
+
+
+_DESKTOP_APPS_DIRS = (
+    Path("/usr/share/applications"),
+    Path.home() / ".local" / "share" / "applications",
+    Path("/var/lib/flatpak/exports/share/applications"),
+    Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
+)
+
+
+def _icon_name_from_desktop_file(exec_name):
+    icon_re = re.compile(r"^Icon\s*=\s*(.+)$", re.MULTILINE)
+    for apps_dir in _DESKTOP_APPS_DIRS:
+        if not apps_dir.is_dir():
+            continue
+        try:
+            entries = list(apps_dir.glob("*.desktop"))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                text = entry.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if not line.startswith("Exec"):
+                    continue
+                key, sep, value = line.partition("=")
+                if not sep or key.strip() != "Exec":
+                    continue
+                value = value.strip()
+                first_token = value.split()[0] if value else ""
+                base_name = first_token.rsplit("/", 1)[-1]
+                if base_name == exec_name:
+                    m = icon_re.search(text)
+                    return m.group(1).strip() if m else None
+                break
+    return None
+
+
+def _resolve_icon_name_to_path(icon_name):
+    if not icon_name:
+        return None
+    p = Path(icon_name)
+    if p.is_absolute() and p.is_file():
+        return p
+    for root in _HICOLOR_ROOTS:
+        for size in _HICOLOR_SIZES:
+            for ext in ("png", "svg", "svgz", "xpm"):
+                candidate = root / size / "apps" / f"{icon_name}.{ext}"
+                if candidate.is_file():
+                    return candidate
+    for root in _PIXMAP_ROOTS:
+        for ext in ("png", "svg", "xpm"):
+            candidate = root / f"{icon_name}.{ext}"
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+# archlinux-appstream-data (paquete oficial de [extra], en HYPRLAND_PKGS del
+# instalador): metadata + íconos AppStream de la inmensa mayoría de paquetes
+# de los repos oficiales, generados por appstream-generator SIN necesidad de
+# tener el paquete instalado. Layout real (confirmado contra el file list del
+# paquete en archlinux.org, no supuesto): una carpeta PLANA por resolución,
+# NO el layout size/apps/ de hicolor —
+#   swcatalog/icons/archlinux-arch-{core,extra}/<size>/<pkgname>_<algo>.<ext>
+# — donde "<algo>" es case por case el nombre del binario, un app-id
+# reverse-DNS, o directamente igual al pkgname (xonotic_xonotic.png), sin
+# regla fija. Por eso esto es glob por PREFIJO de pkgname, no una ruta
+# construida a mano como en hicolor: cubre el caso común (pkgname real ==
+# nuestro app["package"], que es la mayoría) pero NO resuelve paquetes cuyo
+# nombre real en el repo difiere del genérico en el catálogo — ej. "freeciv"
+# en avalos-store-catalog.json empaqueta como freeciv-gtk4/freeciv-qt/
+# freeciv-gtk3 en Arch real, ninguno literalmente "freeciv", así que ese caso
+# específico sigue sin ícono real hasta instalarse. Ver resumen de la sesión.
+_APPSTREAM_SIZES = ("128x128", "64x64", "48x48")
+_APPSTREAM_ROOTS = (
+    Path("/usr/share/swcatalog/icons/archlinux-arch-extra"),
+    Path("/usr/share/swcatalog/icons/archlinux-arch-core"),
+    Path("/usr/share/swcatalog/icons/archlinux-arch-multilib"),
+)
+
+
+def _appstream_icon_path(pkgname):
+    if not pkgname:
+        return None
+    for root in _APPSTREAM_ROOTS:
+        for size in _APPSTREAM_SIZES:
+            size_dir = root / size
+            if not size_dir.is_dir():
+                continue
+            try:
+                # Prefijo exacto "<pkgname>_" primero (evita que "foo"
+                # matchee "foobar_x.png"); si no hay nada, se intenta
+                # cualquier archivo que CONTENGA el pkgname como último
+                # recurso, por si el pkgname real trae versión o sufijo
+                # (ej. algo-git, algo2) que el catálogo no versiona.
+                matches = sorted(size_dir.glob(f"{pkgname}_*"))
+                if not matches:
+                    matches = sorted(size_dir.glob(f"*{pkgname}*"))
+                if matches:
+                    return matches[0]
+            except OSError:
+                continue
+    return None
+
+
+def _local_icon_path(app):
+    if app.get("source") == "flatpak":
+        icon_name = app["package"]
+    else:
+        icon_name = _icon_name_from_desktop_file(app.get("exec") or app["package"])
+        if not icon_name:
+            icon_name = app.get("exec") or app["package"]
+    return _resolve_icon_name_to_path(icon_name)
+
+
+_MIME_BY_EXT = {".png": "image/png", ".svg": "image/svg+xml", ".svgz": "image/svg+xml", ".xpm": "image/x-xpixmap"}
+
+
+def _file_to_data_uri(path):
+    try:
+        mime = _MIME_BY_EXT.get(path.suffix.lower(), "application/octet-stream")
+        raw = path.read_bytes()
+        b64 = base64.b64encode(raw).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return None
+
+
+def _cached_icon_data_uri(app_id):
+    for ext in ("png", "svg"):
+        p = ICON_CACHE_DIR / f"{app_id}.{ext}"
+        if p.is_file():
+            return _file_to_data_uri(p)
+    return None
+
+
+def _fetch_flathub_icon(app_id, flathub_id):
+    try:
+        req = urllib.request.Request(
+            FLATHUB_APPSTREAM_URL + urllib.parse.quote(flathub_id),
+            headers={"User-Agent": "avalos-store", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    icon_url = None
+    if isinstance(data.get("icon"), str):
+        icon_url = data["icon"]
+    elif isinstance(data.get("icon"), dict):
+        icon_url = data["icon"].get("url") or data["icon"].get("128") or data["icon"].get("64")
+    elif isinstance(data.get("icons"), list) and data["icons"]:
+        icon_url = data["icons"][-1].get("url") if isinstance(data["icons"][-1], dict) else None
+    if not icon_url:
+        return None
+    if icon_url.startswith("/"):
+        icon_url = "https://flathub.org" + icon_url
+
+    try:
+        req = urllib.request.Request(icon_url, headers={"User-Agent": "avalos-store"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+    except Exception:
+        return None
+
+    ext = "svg" if "svg" in content_type or icon_url.endswith(".svg") else "png"
+    try:
+        ICON_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        (ICON_CACHE_DIR / f"{app_id}.{ext}").write_bytes(raw)
+    except OSError:
+        pass
+    mime = "image/svg+xml" if ext == "svg" else "image/png"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def resolve_icon(app, installed_ids):
+    cached = _cached_icon_data_uri(app["id"])
+    if cached:
+        return cached
+
+    if app["id"] in installed_ids:
+        local_path = _local_icon_path(app)
+        if local_path:
+            data_uri = _file_to_data_uri(local_path)
+            if data_uri:
+                return data_uri
+
+    flathub_id = app["package"] if app.get("source") == "flatpak" else app.get("flathub_id")
+
+    # Sin flathub_id conocido (típicamente pacman/AUR sin equivalente en
+    # Flathub) Y todavía no instalada: se intenta archlinux-appstream-data
+    # ANTES de rendirse al emoji — es la única fuente de ícono real que
+    # queda en ese caso, ya que Flathub no tiene nada que devolver sin un
+    # ID válido. Cuando SÍ hay flathub_id, Flathub tiene prioridad más
+    # abajo: es una fuente determinística (el ID viene mapeado a mano en
+    # el catálogo), mientras que esto es glob por prefijo de pkgname
+    # (best-effort, ver docstring de _appstream_icon_path) — no tiene
+    # sentido preferir la heurística cuando ya hay algo exacto disponible.
+    if not flathub_id and app["id"] not in installed_ids and app.get("source") in ("pacman", "aur"):
+        appstream_path = _appstream_icon_path(app["package"])
+        if appstream_path:
+            data_uri = _file_to_data_uri(appstream_path)
+            if data_uri:
+                return data_uri
+
+    if flathub_id:
+        data_uri = _fetch_flathub_icon(app["id"], flathub_id)
+        if data_uri:
+            return data_uri
+
+    return None
+
+
+class StoreAPI:
+    def __init__(self):
+        self.window = None
+
+    def list(self):
+        pacman_pkgs, flatpak_apps = installed_snapshot()
+        return json.dumps({
+            "apps": CATALOG,
+            "installed": installed_ids_from_snapshot(pacman_pkgs, flatpak_apps),
+            "strings": T,
+            "lang": LANG,
+            "has_flatpak": shutil.which("flatpak") is not None,
+            "has_aur_helper": find_aur_helper(),
+            "default_category": "games" if "gaming" in PERFIL_INSTALACION else "all",
+        })
+
+    def refresh_installed(self):
+        pacman_pkgs, flatpak_apps = installed_snapshot()
+        return json.dumps({"installed": installed_ids_from_snapshot(pacman_pkgs, flatpak_apps)})
+
+    def get_icon(self, app_id, installed):
+        app = app_by_id(app_id)
+        if not app:
+            return json.dumps({"ok": False})
+        data_uri = resolve_icon(app, {app_id} if installed else set())
+        return json.dumps({"ok": data_uri is not None, "data_uri": data_uri})
+
+    def details(self, app_id):
+        app = app_by_id(app_id)
+        if not app:
+            return json.dumps({"ok": False})
+        extra = {}
+        source, pkg = app.get("source"), app.get("package", "")
+        if source in ("pacman", "aur"):
+            try:
+                r = subprocess.run(["pacman", "-Si", pkg], capture_output=True, text=True, timeout=6)
+                text = r.stdout
+                if not text.strip():
+                    r = subprocess.run(["pacman", "-Qi", pkg], capture_output=True, text=True, timeout=6)
+                    text = r.stdout
+                extra.update(parse_pacman_info(text))
+            except Exception:
+                pass
+        if source == "aur":
+            aur = fetch_aur_info(pkg)
+            if aur:
+                if aur.get("Version"):
+                    extra["live_version"] = aur["Version"]
+                extra["aur_votes"] = aur.get("NumVotes")
+                extra["aur_popularity"] = aur.get("Popularity")
+                extra["aur_maintainer"] = aur.get("Maintainer")
+        return json.dumps({"ok": True, "extra": extra})
+
+    def install(self, app_id):
+        app = app_by_id(app_id)
+        if not app:
+            return json.dumps({"ok": False, "message": T["err_notfound"]})
+        threading.Thread(target=self._do_install, args=(app,), daemon=True).start()
+        return json.dumps({"ok": True})
+
+    def uninstall(self, app_id):
+        app = app_by_id(app_id)
+        if not app:
+            return json.dumps({"ok": False, "message": T["err_notfound"]})
+        threading.Thread(target=self._do_uninstall, args=(app,), daemon=True).start()
+        return json.dumps({"ok": True})
+
+    def launch(self, app_id):
+        app = app_by_id(app_id)
+        if not app:
+            return json.dumps({"ok": False})
+        try:
+            if app.get("source") == "flatpak":
+                subprocess.Popen(["flatpak", "run", app["package"]], start_new_session=True)
+            else:
+                subprocess.Popen([app.get("exec") or app["package"]], start_new_session=True)
+            return json.dumps({"ok": True})
+        except Exception as e:
+            return json.dumps({"ok": False, "message": str(e)})
+
+    def _emit(self, app_id, event, payload):
+        if not self.window:
+            return
+        packet = json.dumps({"appId": app_id, "event": event, **payload})
+        try:
+            self.window.evaluate_js(f"avalosStore.onBackendEvent({packet})")
+        except Exception:
+            pass
+
+    def _log(self, app_id, message):
+        self._emit(app_id, "log", {"message": message})
+
+    def _finish(self, app_id, action, ok, message="", external=False):
+        self._emit(app_id, "finish", {"action": action, "ok": ok, "message": message, "external": external})
+
+    def _stream(self, app_id, proc):
+        try:
+            for line in proc.stdout:
+                self._log(app_id, line.rstrip())
+        except Exception:
+            pass
+        proc.wait()
+        return proc.returncode
+
+    def _notify(self, message):
+        try:
+            subprocess.run(
+                ["notify-send", "AvalOS Store", message, "-i", "system-software-install", "-t", "3500"],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+
+    def _do_install(self, app):
+        app_id, name, source, pkg = app["id"], app["name"], app.get("source"), app.get("package", "")
+        self._log(app_id, T["log_start_install"].format(name=name))
+        try:
+            if source == "pacman":
+                if not shutil.which("pkexec"):
+                    self._finish(app_id, "install", False, T["err_nopkexec"])
+                    return
+                # "-S" debe ser el PRIMER argumento después de "pacman" — es lo
+                # que org.freedesktop.policykit.exec.argv1 en avalos-store.policy
+                # (acción com.avalos.store.install) usa para matchear esto contra
+                # la acción con auth_admin_keep. Si esto se reordena, cae en la
+                # acción genérica de pkexec (pide contraseña en cada instalación).
+                proc = subprocess.Popen(
+                    ["pkexec", "pacman", "-S", "--noconfirm", "--needed", pkg],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                )
+                rc = self._stream(app_id, proc)
+                ok = rc == 0
+                msg = T["done_install"].format(name=name) if ok else T["err_install"]
+                self._finish(app_id, "install", ok, msg)
+                if ok:
+                    self._notify(msg)
+            elif source == "flatpak":
+                if not shutil.which("flatpak"):
+                    self._finish(app_id, "install", False, T["err_noflatpak"])
+                    return
+                proc = subprocess.Popen(
+                    ["flatpak", "install", "--user", "--noninteractive", "-y", "flathub", pkg],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                )
+                rc = self._stream(app_id, proc)
+                ok = rc == 0
+                msg = T["done_install"].format(name=name) if ok else T["err_install"]
+                self._finish(app_id, "install", ok, msg)
+                if ok:
+                    self._notify(msg)
+            elif source == "aur":
+                helper = find_aur_helper()
+                term = find_terminal()
+                if not helper:
+                    self._finish(app_id, "install", False, T["err_noaur"])
+                    return
+                if not term:
+                    self._finish(app_id, "install", False, T["err_noterm"])
+                    return
+                spawn_terminal(term, f"AvalOS — {name}", [helper, "-S", pkg])
+                self._log(app_id, T["log_aur_terminal"].format(name=name, helper=helper))
+                self._finish(app_id, "install", True, T["done_external"], external=True)
+            else:
+                self._finish(app_id, "install", False, T["err_unknown_source"])
+        except Exception as e:
+            self._log(app_id, str(e))
+            self._finish(app_id, "install", False, T["err_install"])
+
+    def _do_uninstall(self, app):
+        app_id, name, source, pkg = app["id"], app["name"], app.get("source"), app.get("package", "")
+        self._log(app_id, T["log_start_uninstall"].format(name=name))
+        try:
+            if source in ("pacman", "aur"):
+                if not shutil.which("pkexec"):
+                    self._finish(app_id, "uninstall", False, T["err_nopkexec"])
+                    return
+                # Mismo criterio que en _do_install: "-R" primero, para
+                # matchear com.avalos.store.uninstall en avalos-store.policy.
+                proc = subprocess.Popen(
+                    ["pkexec", "pacman", "-R", "--noconfirm", pkg],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                )
+                rc = self._stream(app_id, proc)
+                ok = rc == 0
+                msg = T["done_uninstall"].format(name=name) if ok else T["err_uninstall"]
+                self._finish(app_id, "uninstall", ok, msg)
+                if ok:
+                    self._notify(msg)
+            elif source == "flatpak":
+                proc = subprocess.Popen(
+                    ["flatpak", "uninstall", "--user", "-y", pkg],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                )
+                rc = self._stream(app_id, proc)
+                ok = rc == 0
+                msg = T["done_uninstall"].format(name=name) if ok else T["err_uninstall"]
+                self._finish(app_id, "uninstall", ok, msg)
+                if ok:
+                    self._notify(msg)
+            else:
+                self._finish(app_id, "uninstall", False, T["err_unknown_source"])
+        except Exception as e:
+            self._log(app_id, str(e))
+            self._finish(app_id, "uninstall", False, T["err_uninstall"])
+
+
+# ── HTML/CSS/JS embebido (mismo patrón que avalos-wallpaper / skill_instalar_usb.py) ──
+def _build_html():
+    return r"""<!DOCTYPE html>
+<html lang="LANG_PLACEHOLDER">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
+    --border: #414868; --text: #c0caf5; --text-dim: #565f89;
+    --blue: #7aa2f7; --purple: #bb9af7; --green: #9ece6a; --red: #f7768e;
+    --orange: #ff9e64; --yellow: #e0af68; --cyan: #7dcfff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
+    overflow: hidden; height: 100%; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  header { padding: 16px 22px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; white-space: nowrap; }
+  header h1 .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .search-wrap { flex: 1; position: relative; max-width: 420px; }
+  .search-wrap svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px; color: var(--text-dim); pointer-events: none; }
+  .search-wrap input { width: 100%; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 9px; color: var(--text); font-family: inherit; font-size: 12.5px;
+    padding: 9px 12px 9px 32px; outline: none; transition: border-color .15s; }
+  .search-wrap input:focus { border-color: var(--blue); }
+  .icon-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+    color: var(--text-dim); width: 34px; height: 34px; display: flex; align-items: center;
+    justify-content: center; cursor: pointer; flex-shrink: 0; font-size: 14px;
+    transition: color .15s, border-color .15s; }
+  .icon-btn:hover { color: var(--text); border-color: #565f89; }
+  .icon-btn.spin { animation: spin .6s linear; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  header .count { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+
+  .catbar { display: flex; gap: 8px; padding: 12px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .cat-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text-dim); padding: 7px 14px; cursor: pointer; font-family: inherit; font-size: 12px;
+    transition: border-color .15s, color .15s, background .15s; }
+  .cat-btn:hover { color: var(--text); border-color: #565f89; }
+  .cat-btn.active { color: var(--bg); background: linear-gradient(135deg, var(--blue), var(--purple));
+    border-color: transparent; font-weight: 600; }
+
+  .grid-wrap { flex: 1; overflow-y: auto; padding: 18px 22px 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+
+  .card { cursor: pointer; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
+    padding: 14px; display: flex; flex-direction: column; gap: 10px; transition: transform .12s, border-color .12s; }
+  .card:hover { transform: translateY(-2px); border-color: #565f89; }
+  .card-top { display: flex; align-items: flex-start; justify-content: space-between; }
+  .card-icon { width: 42px; height: 42px; border-radius: 10px; background: var(--surface-hi);
+    display: flex; align-items: center; justify-content: center; font-size: 20px; position: relative; flex-shrink: 0; overflow: hidden; }
+  .card-icon img { width: 100%; height: 100%; object-fit: contain; padding: 5px; }
+  .card-icon .check { position: absolute; bottom: -4px; right: -4px; width: 17px; height: 17px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue), var(--purple)); color: var(--bg);
+    display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
+    border: 2px solid var(--surface); }
+  .badge { font-size: 9.5px; padding: 3px 7px; border-radius: 6px; font-weight: 600; white-space: nowrap; }
+  .badge-col { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .badge-installed { background: rgba(158,206,106,.15); color: var(--green); }
+  .badge-pacman { background: rgba(158,206,106,.15); color: var(--green); }
+  .badge-aur { background: rgba(255,158,100,.15); color: var(--orange); }
+  .badge-flatpak { background: rgba(125,207,255,.15); color: var(--cyan); }
+  .card h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+  .card .desc { margin: 0; font-size: 11.5px; color: var(--text-dim); line-height: 1.45; min-height: 2.9em;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card-footer { margin-top: auto; }
+  .btn { border: none; border-radius: 8px; font-family: inherit; font-size: 11.5px; font-weight: 600;
+    padding: 8px 10px; cursor: pointer; width: 100%; transition: opacity .15s, transform .1s; }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { background: linear-gradient(135deg, var(--blue), var(--purple)); color: var(--bg); }
+  .btn-primary:hover { opacity: .9; }
+  .btn-danger-ghost { background: rgba(247,118,142,.12); color: var(--red); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .installed-row { display: flex; gap: 6px; }
+  .installed-row .btn { flex: 1; }
+  .progress-row { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--blue); padding: 8px 0; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+
+  .empty { text-align: center; margin-top: 14vh; color: var(--text-dim); grid-column: 1/-1; }
+  .empty .big { font-size: 30px; margin-bottom: 10px; }
+  .empty .t { font-size: 14px; color: var(--text); margin-bottom: 6px; font-weight: 600; }
+  .empty .b { font-size: 12px; }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(10,10,16,.6); backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center; z-index: 20; opacity: 0; pointer-events: none;
+    transition: opacity .15s; }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal { width: 600px; max-width: 92vw; max-height: 84vh; overflow-y: auto; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 14px; padding: 22px; transform: scale(.96); transition: transform .15s; }
+  .modal-overlay.open .modal { transform: scale(1); }
+  .modal-head { display: flex; gap: 14px; align-items: flex-start; }
+  .modal-icon { width: 56px; height: 56px; border-radius: 13px; background: var(--surface-hi);
+    display: flex; align-items: center; justify-content: center; font-size: 28px; flex-shrink: 0; overflow: hidden; }
+  .modal-icon img { width: 100%; height: 100%; object-fit: contain; padding: 7px; }
+  .modal-titles { flex: 1; min-width: 0; }
+  .modal-titles h2 { margin: 0 0 4px; font-size: 17px; }
+  .modal-titles .sub { font-size: 12px; color: var(--text-dim); }
+  .modal-close { background: none; border: none; color: var(--text-dim); font-size: 18px; cursor: pointer; padding: 4px; }
+  .modal-close:hover { color: var(--text); }
+  .modal p.long { font-size: 12.5px; line-height: 1.6; color: var(--text); margin: 16px 0; }
+  .fetching-line { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-dim); margin: -6px 0 14px; }
+  .fetching-line::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); animation: pulse 1s ease-in-out infinite; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin: 14px 0; font-size: 11.5px; }
+  .meta-grid .k { color: var(--text-dim); margin-bottom: 2px; }
+  .meta-grid .v { color: var(--text); word-break: break-word; }
+  .meta-grid a { color: var(--blue); text-decoration: none; }
+  .meta-grid a:hover { text-decoration: underline; }
+  .note-box { display: flex; gap: 8px; background: rgba(122,162,247,.1); border-left: 3px solid var(--blue);
+    border-radius: 6px; padding: 9px 11px; font-size: 11.5px; color: var(--text); margin: 14px 0; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 16px; }
+  .modal-actions .btn { width: auto; padding: 9px 16px; }
+  .log-wrap { margin-top: 14px; }
+  .log { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    font-size: 10.5px; line-height: 1.5; max-height: 150px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  .modal-status { margin-top: 10px; font-size: 11.5px; min-height: 15px; }
+  .modal-status.ok { color: var(--green); }
+  .modal-status.err { color: var(--red); }
+  .modal-status.pending { color: var(--blue); }
+
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-hi); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>AvalOS — <span class="accent">TITLE_PLACEHOLDER</span></h1>
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="search" type="text" autocomplete="off" />
+    </div>
+    <button class="icon-btn" id="refreshBtn">↻</button>
+    <span class="count" id="count"></span>
+  </header>
+  <div class="catbar" id="catbar"></div>
+  <div class="grid-wrap"><div class="grid" id="grid"></div></div>
+</div>
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+let T = {};
+let STATE = {
+  apps: [], installedIds: new Set(), lang: 'en', hasFlatpak: true, hasAurHelper: null,
+  category: 'all', query: '', openAppId: null, progress: {}, logs: {}, iconCache: {}, iconPending: {},
+  detailsFetching: new Set(),
+};
+let pollTimer = null;
+
+function tr(key, vars) {
+  let s = T[key] || key;
+  if (vars) for (const k in vars) s = s.split('{' + k + '}').join(vars[k]);
+  return s;
+}
+
+function localized(obj) {
+  if (!obj) return '';
+  return obj[STATE.lang] || obj.en || obj.es || '';
+}
+
+function setup() {
+  document.title = T.title;
+  document.getElementById('search').placeholder = T.search_placeholder;
+  document.getElementById('refreshBtn').title = T.refresh;
+  renderCatbar();
+  renderGrid();
+}
+
+function renderCatbar() {
+  const bar = document.getElementById('catbar');
+  bar.innerHTML = '';
+  const cats = [
+    ['all', T.nav_all], ['games', T.nav_games], ['apps', T.nav_apps],
+    ['utils', T.nav_utils], ['installed', T.nav_installed],
+  ];
+  for (const [id, label] of cats) {
+    const btn = document.createElement('button');
+    btn.className = 'cat-btn' + (STATE.category === id ? ' active' : '');
+    btn.textContent = label;
+    btn.addEventListener('click', () => { STATE.category = id; renderCatbar(); renderGrid(); });
+    bar.appendChild(btn);
+  }
+}
+
+function matchesQuery(app, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  const hay = [
+    app.name, localized(app.short_desc), (app.short_desc && app.short_desc.en) || '',
+    (app.tags || []).join(' '),
+  ].join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
+function filteredApps() {
+  return STATE.apps.filter(app => {
+    if (STATE.category === 'installed') { if (!STATE.installedIds.has(app.id)) return false; }
+    else if (STATE.category !== 'all' && app.category !== STATE.category) return false;
+    return matchesQuery(app, STATE.query);
+  });
+}
+
+function renderGrid() {
+  const grid = document.getElementById('grid');
+  const count = document.getElementById('count');
+  const apps = filteredApps();
+  grid.innerHTML = '';
+  count.textContent = (apps.length === 1 ? T.found_one : T.found_many).replace('{n}', apps.length);
+
+  if (apps.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.innerHTML = '<div class="big">🔍</div><div class="t">' + T.empty_title + '</div><div class="b">' + T.empty_body + '</div>';
+    grid.appendChild(empty);
+    return;
+  }
+  for (const app of apps) grid.appendChild(buildCard(app));
+}
+
+function setCardIcon(iconWrap, app) {
+  iconWrap.dataset.iconFor = app.id;
+  iconWrap.dataset.fallbackEmoji = app.icon || '📦';
+  iconWrap.textContent = app.icon || '📦';
+  if (STATE.iconCache[app.id]) {
+    applyIconDataUri(iconWrap, STATE.iconCache[app.id]);
+    return;
+  }
+  if (STATE.iconPending[app.id]) return;
+  STATE.iconPending[app.id] = true;
+  const installed = STATE.installedIds.has(app.id);
+  window.pywebview.api.get_icon(app.id, installed).then(raw => {
+    delete STATE.iconPending[app.id];
+    const res = JSON.parse(raw);
+    if (res.ok && res.data_uri) {
+      STATE.iconCache[app.id] = res.data_uri;
+      document.querySelectorAll('[data-icon-for="' + app.id + '"]').forEach(el => applyIconDataUri(el, res.data_uri));
+    }
+  }).catch(() => { delete STATE.iconPending[app.id]; });
+}
+
+function applyIconDataUri(iconWrap, dataUri) {
+  const existingCheck = iconWrap.querySelector('.check');
+  // Fallback emoji guardado ANTES de vaciar el div: si dataUri resulta ser
+  // un data: URI corrupto o truncado (cache en disco dañado, respuesta
+  // parcial de Flathub), onerror necesita algo a lo que volver — sin esto,
+  // el fallback quedaba en un div completamente vacío en vez del emoji.
+  const fallbackEmoji = iconWrap.dataset.fallbackEmoji || iconWrap.textContent || '📦';
+  iconWrap.dataset.fallbackEmoji = fallbackEmoji;
+  const img = document.createElement('img');
+  img.src = dataUri;
+  img.alt = '';
+  img.onerror = () => {
+    img.remove();
+    iconWrap.textContent = fallbackEmoji;
+    if (existingCheck) iconWrap.appendChild(existingCheck);
+  };
+  iconWrap.textContent = '';
+  iconWrap.appendChild(img);
+  if (existingCheck) iconWrap.appendChild(existingCheck);
+}
+
+function buildCard(app) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.addEventListener('click', (e) => { if (!e.target.closest('button')) openModal(app.id); });
+
+  const top = document.createElement('div');
+  top.className = 'card-top';
+  const iconWrap = document.createElement('div');
+  iconWrap.className = 'card-icon';
+  setCardIcon(iconWrap, app);
+  if (STATE.installedIds.has(app.id)) {
+    const check = document.createElement('div');
+    check.className = 'check';
+    check.textContent = '✓';
+    iconWrap.appendChild(check);
+  }
+  const badge = document.createElement('span');
+  badge.className = 'badge badge-' + app.source;
+  badge.textContent = T['badge_' + app.source] || app.source;
+  const badgeCol = document.createElement('div');
+  badgeCol.className = 'badge-col';
+  badgeCol.appendChild(badge);
+  if (STATE.installedIds.has(app.id)) {
+    const installedBadge = document.createElement('span');
+    installedBadge.className = 'badge badge-installed';
+    installedBadge.textContent = T.installed_label;
+    badgeCol.appendChild(installedBadge);
+  }
+  top.appendChild(iconWrap);
+  top.appendChild(badgeCol);
+
+  const body = document.createElement('div');
+  const h3 = document.createElement('h3');
+  h3.textContent = app.name;
+  const desc = document.createElement('p');
+  desc.className = 'desc';
+  desc.textContent = localized(app.short_desc);
+  body.appendChild(h3);
+  body.appendChild(desc);
+
+  const footer = document.createElement('div');
+  footer.className = 'card-footer';
+  footer.appendChild(buildActionArea(app.id));
+
+  card.appendChild(top);
+  card.appendChild(body);
+  card.appendChild(footer);
+  return card;
+}
+
+function buildActionArea(appId) {
+  const wrap = document.createElement('div');
+  const prog = STATE.progress[appId];
+  const installed = STATE.installedIds.has(appId);
+  const busy = prog && (prog.status === 'installing' || prog.status === 'external');
+
+  if (busy) {
+    wrap.className = 'progress-row';
+    const dot = document.createElement('span'); dot.className = 'dot';
+    const label = document.createElement('span');
+    label.textContent = prog.status === 'external' ? T.done_external
+      : (prog.action === 'uninstall' ? T.status_uninstalling : T.status_installing);
+    wrap.appendChild(dot); wrap.appendChild(label);
+    return wrap;
+  }
+
+  if (installed) {
+    wrap.className = 'installed-row';
+    const openBtn = document.createElement('button');
+    openBtn.className = 'btn btn-primary'; openBtn.textContent = T.btn_open;
+    openBtn.addEventListener('click', (e) => { e.stopPropagation(); doLaunch(appId); });
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger-ghost'; delBtn.textContent = '🗑'; delBtn.title = T.btn_uninstall;
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); doUninstall(appId); });
+    wrap.appendChild(openBtn); wrap.appendChild(delBtn);
+    return wrap;
+  }
+
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-primary'; btn.textContent = T.btn_install;
+  btn.addEventListener('click', (e) => { e.stopPropagation(); doInstall(appId); });
+  wrap.appendChild(btn);
+  return wrap;
+}
+
+function openModal(appId) {
+  STATE.openAppId = appId;
+  const app = STATE.apps.find(a => a.id === appId);
+  if (!app._extra) {
+    STATE.detailsFetching.add(appId);
+  }
+  renderModal();
+  document.getElementById('modalOverlay').classList.add('open');
+  window.pywebview.api.details(appId).then(raw => {
+    const res = JSON.parse(raw);
+    STATE.detailsFetching.delete(appId);
+    if (res.ok && STATE.openAppId === appId) {
+      const app = STATE.apps.find(a => a.id === appId);
+      app._extra = res.extra;
+      renderModal();
+    } else if (STATE.openAppId === appId) {
+      renderModal();
+    }
+  }).catch(() => {
+    STATE.detailsFetching.delete(appId);
+    if (STATE.openAppId === appId) renderModal();
+  });
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+  STATE.openAppId = null;
+}
+
+function addMeta(grid, label, value, isLink) {
+  if (!value) return;
+  const kd = document.createElement('div'); kd.className = 'k'; kd.textContent = label;
+  const vd = document.createElement('div'); vd.className = 'v';
+  if (isLink) {
+    const a = document.createElement('a'); a.href = value; a.target = '_blank';
+    a.textContent = value.replace(/^https?:\/\//, '');
+    vd.appendChild(a);
+  } else {
+    vd.textContent = value;
+  }
+  grid.appendChild(kd); grid.appendChild(vd);
+}
+
+function buildModalActionButtons(app) {
+  const wrap = document.createElement('div');
+  wrap.style.display = 'flex'; wrap.style.gap = '8px'; wrap.style.flex = '1';
+  const installed = STATE.installedIds.has(app.id);
+  const prog = STATE.progress[app.id];
+  const busy = prog && (prog.status === 'installing' || prog.status === 'external');
+
+  if (installed) {
+    const openBtn = document.createElement('button');
+    openBtn.className = 'btn btn-primary'; openBtn.textContent = T.btn_open;
+    openBtn.addEventListener('click', () => doLaunch(app.id));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger-ghost'; delBtn.textContent = T.btn_uninstall;
+    delBtn.disabled = busy;
+    delBtn.addEventListener('click', () => doUninstall(app.id));
+    wrap.appendChild(openBtn); wrap.appendChild(delBtn);
+  } else {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary'; btn.textContent = T.btn_install;
+    btn.disabled = busy;
+    btn.addEventListener('click', () => doInstall(app.id));
+    wrap.appendChild(btn);
+  }
+  return wrap;
+}
+
+function renderModal() {
+  const appId = STATE.openAppId;
+  if (!appId) return;
+  const app = STATE.apps.find(a => a.id === appId);
+  if (!app) return;
+  const modal = document.getElementById('modal');
+  modal.innerHTML = '';
+
+  const head = document.createElement('div'); head.className = 'modal-head';
+  const icon = document.createElement('div'); icon.className = 'modal-icon';
+  setCardIcon(icon, app);
+  const titles = document.createElement('div'); titles.className = 'modal-titles';
+  const h2 = document.createElement('h2'); h2.textContent = app.name;
+  const sub = document.createElement('div'); sub.className = 'sub'; sub.textContent = localized(app.short_desc);
+  titles.appendChild(h2); titles.appendChild(sub);
+  const closeBtn = document.createElement('button'); closeBtn.className = 'modal-close'; closeBtn.innerHTML = '✕';
+  closeBtn.title = T.btn_close;
+  closeBtn.addEventListener('click', closeModal);
+  head.appendChild(icon); head.appendChild(titles); head.appendChild(closeBtn);
+  modal.appendChild(head);
+
+  const p = document.createElement('p'); p.className = 'long'; p.textContent = localized(app.long_desc);
+  modal.appendChild(p);
+
+  const extra = app._extra || {};
+  if (STATE.detailsFetching.has(appId)) {
+    const fetching = document.createElement('div');
+    fetching.className = 'fetching-line';
+    fetching.textContent = T.status_fetching;
+    modal.appendChild(fetching);
+  }
+  const mgrid = document.createElement('div'); mgrid.className = 'meta-grid';
+  addMeta(mgrid, T.label_developer, app.developer);
+  addMeta(mgrid, T.label_license, app.license);
+  addMeta(mgrid, T.label_source, T['badge_' + app.source] || app.source);
+  addMeta(mgrid, T.label_package, app.package);
+  addMeta(mgrid, T.label_version, extra.live_version);
+  addMeta(mgrid, T.label_size, extra.live_download_size);
+  if (app.source === 'aur') {
+    addMeta(mgrid, T.label_aur_votes, extra.aur_votes != null ? String(extra.aur_votes) : '');
+    addMeta(mgrid, T.label_aur_maintainer, extra.aur_maintainer);
+  }
+  addMeta(mgrid, T.label_website, app.website, true);
+  modal.appendChild(mgrid);
+
+  if (app.note) {
+    const note = document.createElement('div'); note.className = 'note-box';
+    const s1 = document.createElement('span'); s1.textContent = 'ℹ️';
+    const s2 = document.createElement('span');
+    const strong = document.createElement('strong'); strong.textContent = T.label_note + ': ';
+    s2.appendChild(strong);
+    s2.appendChild(document.createTextNode(localized(app.note)));
+    note.appendChild(s1); note.appendChild(s2);
+    modal.appendChild(note);
+  }
+
+  const actions = document.createElement('div'); actions.className = 'modal-actions';
+  actions.appendChild(buildModalActionButtons(app));
+  modal.appendChild(actions);
+
+  const prog = STATE.progress[appId];
+  const logs = STATE.logs[appId] || [];
+  if (prog || logs.length) {
+    const logWrap = document.createElement('div'); logWrap.className = 'log-wrap';
+    const pre = document.createElement('pre'); pre.className = 'log';
+    pre.textContent = logs.join('\n');
+    logWrap.appendChild(pre);
+    const status = document.createElement('div');
+    status.className = 'modal-status ' + (prog ? (prog.status === 'done' ? 'ok' : prog.status === 'error' ? 'err' : 'pending') : '');
+    status.textContent = prog ? (prog.message || '') : '';
+    logWrap.appendChild(status);
+    modal.appendChild(logWrap);
+    pre.scrollTop = pre.scrollHeight;
+  }
+}
+
+async function doInstall(appId) {
+  STATE.progress[appId] = { status: 'installing', action: 'install' };
+  STATE.logs[appId] = [];
+  renderGrid();
+  if (STATE.openAppId === appId) renderModal();
+  try { await window.pywebview.api.install(appId); } catch (e) {}
+}
+
+async function doUninstall(appId) {
+  const app = STATE.apps.find(a => a.id === appId);
+  const ok = confirm(tr('confirm_uninstall', { name: app ? app.name : appId }));
+  if (!ok) return;
+  STATE.progress[appId] = { status: 'installing', action: 'uninstall' };
+  STATE.logs[appId] = [];
+  renderGrid();
+  if (STATE.openAppId === appId) renderModal();
+  try { await window.pywebview.api.uninstall(appId); } catch (e) {}
+}
+
+async function doLaunch(appId) {
+  try { await window.pywebview.api.launch(appId); } catch (e) {}
+}
+
+function onBackendEvent(packet) {
+  const appId = packet.appId;
+  if (packet.event === 'log') {
+    if (!STATE.logs[appId]) STATE.logs[appId] = [];
+    STATE.logs[appId].push(packet.message);
+    if (STATE.openAppId === appId) renderModal();
+  } else if (packet.event === 'finish') {
+    const status = packet.external ? 'external' : (packet.ok ? 'done' : 'error');
+    STATE.progress[appId] = { status: status, message: packet.message, action: packet.action };
+    if (packet.ok && !packet.external) {
+      if (packet.action === 'install') STATE.installedIds.add(appId);
+      if (packet.action === 'uninstall') STATE.installedIds.delete(appId);
+    }
+    renderGrid();
+    if (STATE.openAppId === appId) renderModal();
+    ensurePolling();
+  }
+}
+
+function ensurePolling() {
+  const anyPending = Object.values(STATE.progress).some(p => p.status === 'installing' || p.status === 'external');
+  if (!anyPending || pollTimer) return;
+  pollTimer = setInterval(async () => {
+    try {
+      const raw = await window.pywebview.api.refresh_installed();
+      const data = JSON.parse(raw);
+      STATE.installedIds = new Set(data.installed);
+      for (const id of Object.keys(STATE.progress)) {
+        const p = STATE.progress[id];
+        if (p.status === 'external' && STATE.installedIds.has(id)) STATE.progress[id] = { status: 'done' };
+      }
+      renderGrid();
+      if (STATE.openAppId) renderModal();
+    } catch (e) {}
+    const stillPending = Object.values(STATE.progress).some(p => p.status === 'installing' || p.status === 'external');
+    if (!stillPending) { clearInterval(pollTimer); pollTimer = null; }
+  }, 4000);
+}
+
+async function init() {
+  const raw = await window.pywebview.api.list();
+  const data = JSON.parse(raw);
+  T = data.strings;
+  STATE.apps = data.apps;
+  STATE.installedIds = new Set(data.installed);
+  STATE.lang = data.lang;
+  STATE.hasFlatpak = data.has_flatpak;
+  STATE.hasAurHelper = data.has_aur_helper;
+  STATE.category = data.default_category || 'all';
+  setup();
+
+  document.getElementById('search').addEventListener('input', (e) => {
+    STATE.query = e.target.value;
+    renderGrid();
+  });
+  document.getElementById('refreshBtn').addEventListener('click', async (e) => {
+    e.currentTarget.classList.add('spin');
+    setTimeout(() => e.currentTarget.classList.remove('spin'), 650);
+    try {
+      const r2 = await window.pywebview.api.refresh_installed();
+      const d2 = JSON.parse(r2);
+      STATE.installedIds = new Set(d2.installed);
+      renderGrid();
+      if (STATE.openAppId) renderModal();
+    } catch (err) {}
+  });
+  document.getElementById('modalOverlay').addEventListener('click', (e) => {
+    if (e.target.id === 'modalOverlay') closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && STATE.openAppId) closeModal();
+  });
+}
+
+window.addEventListener('pywebviewready', init);
+window.avalosStore = { onBackendEvent: onBackendEvent };
+</script>
+</body>
+</html>"""
+
+
+def main():
+    html = (_build_html()
+            .replace("LANG_PLACEHOLDER", LANG)
+            .replace("TITLE_PLACEHOLDER", T["title"].split("— ", 1)[-1]))
+
+    # Mismo fix que avalos-wallpaper (BUG-012): sin esto, GTK usa "python3"
+    # como app_id en Wayland y una window rule (class = "avalos-store")
+    # nunca matchearía, así que la ventana no abriría flotante/centrada.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-store")
+    except Exception:
+        pass
+
+    api = StoreAPI()
+    win = webview.create_window(
+        title            = T["title"],
+        html             = html,
+        js_api           = api,
+        width            = 1200,
+        height           = 780,
+        min_size         = (900, 600),
+        resizable        = True,
+        background_color = "#1a1b26",
+    )
+    api.window = win
+
+    try:
+        webview.start(debug=False)
+    except Exception as e:
+        print(f"ERROR al iniciar pywebview: {e}")
+        print("Asegúrate de que webkit2gtk-4.1 esté instalado:")
+        print("  pacman -S webkit2gtk-4.1 python-gobject")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
