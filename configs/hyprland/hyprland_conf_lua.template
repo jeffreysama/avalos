@@ -17,6 +17,17 @@ hl.monitor({
                           -- sin detección de HiDPI). "auto" iguala al live.
 })
 
+-- Carga la config de salidas guardada por nwg-displays (Apply → Keep).
+-- Sin esto, nwg-displays escribe monitors.lua pero Hyprland nunca lo lee:
+-- la única regla real es el fallback output="" de arriba, así que
+-- cualquier refresh/resolución que elijas en nwg-displays se revierte
+-- solo en el próximo reload. Una regla de output específico (ej.
+-- HDMI-A-1) le gana sola al fallback "" — no hace falta borrar el
+-- bloque de arriba. pcall porque si el archivo no existe todavía
+-- (nwg-displays nunca corrido) un require() pelado tronaría el resto
+-- de este config.
+pcall(require, "monitors")
+
 -- ── Variables de entorno ──────────────────────────────────────────
 hl.env("XCURSOR_SIZE",                        "24")
 hl.env("XCURSOR_THEME",                       "capitaine-cursors-dark")
@@ -255,3 +266,15 @@ hl.window_rule({
 -- Atajos para abrir las apps de AvalOS directo, sin pasar por rofi
 hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
 hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+
+-- ALT_L específico (no ALT a secas): S ya está pisado por SUPER+SHIFT+S
+-- (captura de pantalla) y por SUPER+CTRL+S (avalos-settings, arriba) —
+-- ALT_L como tercer modificador evita chocar con cualquiera de los dos.
+-- Sintaxis "SUPER + ALT_L" confirmada contra el ejemplo oficial en
+-- wiki.hypr.land/Configuring/Basics/Binds (ahí usan exactamente
+-- hl.bind("SUPER + ALT_L", ...) / "SUPER + CTRL_L" para distinguir
+-- modificador izquierdo). Si en tu build no distingue izquierda de
+-- derecha (hay reportes sueltos de esto en el foro de Hyprland),
+-- cambiá ALT_L por ALT a secas — sigue sin chocar con nada de arriba.
+hl.bind(mod .. " + ALT_L + S", hl.dsp.exec_cmd("avalos-store"))
+hl.bind(mod .. " + ALT_L + U", hl.dsp.exec_cmd("avalos-update"))

@@ -14,6 +14,17 @@ hl.monitor({
     scale    = "auto",
 })
 
+-- Carga la config de salidas guardada por nwg-displays (Apply → Keep).
+-- Sin esto, nwg-displays escribe monitors.lua pero Hyprland nunca lo lee:
+-- la única regla real es el fallback output="" de arriba, así que
+-- cualquier refresh/resolución que elijas en nwg-displays se revierte
+-- solo en el próximo reload. Una regla de output específico (ej.
+-- HDMI-A-1) le gana sola al fallback "" — no hace falta borrar el
+-- bloque de arriba. pcall porque si el archivo no existe todavía
+-- (nwg-displays nunca corrido) un require() pelado tronaría el resto
+-- de este config.
+pcall(require, "monitors")
+
 -- ── Variables de entorno ──────────────────────────────────────────
 -- NOTA: Si usas uwsm como lanzador, mueve QT_*, GDK_*, MOZ_* y
 -- ELECTRON_* a ~/.config/uwsm/env en lugar de aquí.
