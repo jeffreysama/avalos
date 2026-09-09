@@ -164,6 +164,18 @@ hl.bind(mod .. " + V",
 hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
 hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
 
+-- ALT_L específico (no ALT a secas): S ya está pisado por SUPER+SHIFT+S
+-- (captura de pantalla) y por SUPER+CTRL+S (avalos-settings, arriba) —
+-- ALT_L como tercer modificador evita chocar con cualquiera de los dos.
+-- Sintaxis "SUPER + ALT_L" confirmada contra el ejemplo oficial en
+-- wiki.hypr.land/Configuring/Basics/Binds (ahí usan exactamente
+-- hl.bind("SUPER + ALT_L", ...) / "SUPER + CTRL_L" para distinguir
+-- modificador izquierdo). Si en tu build no distingue izquierda de
+-- derecha (hay reportes sueltos de esto en el foro de Hyprland),
+-- cambiá ALT_L por ALT a secas — sigue sin chocar con nada de arriba.
+hl.bind(mod .. " + ALT_L + S", hl.dsp.exec_cmd("avalos-store"))
+hl.bind(mod .. " + ALT_L + U", hl.dsp.exec_cmd("avalos-update"))
+
 -- Gaming
 hl.bind(mod .. " + S",        hl.dsp.exec_cmd("steam"))
 hl.bind(mod .. " + P",        hl.dsp.exec_cmd("flatpak run com.heroicgameslauncher.hgl"))
@@ -182,7 +194,7 @@ hl.bind(mod .. " + SHIFT + L",
 
 -- Powermenu (con fallback a poweroff si el script no existe)
 hl.bind(mod .. " + SHIFT + E",
-    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh"))
+    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
 
 -- Foco — flechas y HJKL
 -- FIX: hl.dsp.focus.move(...) no existe en la API real — 'focus' es una
@@ -292,4 +304,16 @@ hl.window_rule({
     float  = true,
     center = true,
     size   = { 1000, 700 },
+})
+hl.window_rule({
+    match  = { class = "avalos-update" },
+    float  = true,
+    center = true,
+    size   = { 760, 720 },
+})
+hl.window_rule({
+    match  = { class = "avalos-store" },
+    float  = true,
+    center = true,
+    size   = { 1200, 780 },
 })
