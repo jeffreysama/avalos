@@ -37,15 +37,13 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 
 AvalOS ISOs are fully functional and ready for use.
 
-> **Important**: The automatic installer is currently not working.  
-> Please use the **manual installation** method.
 
 ### Quick steps
 
 1. Download the latest ISO from the [Releases](https://github.com/jeffreysama/avalos/releases) page.
 2. Flash it to a USB drive (Ventoy, Rufus, `dd`, or the included USB maker scripts).
 3. Boot from the USB.
-4. Follow the complete guide:
+4. Follow the complete guide, OR do a manual instalation
 
 **→ [Manual Installation Guide](docs/INSTALL.md)**
 
@@ -57,8 +55,8 @@ The manual guide produces an installation that is functionally identical to what
 
 AvalOS is under active development.
 
-- ISOs work correctly for **manual installation**
-- Automatic installer is not working currently while it is being fixed
+- ISOs are fully usable and AvalOS is now installable via auto install
+- Automatic installer is working correctly now!
 - Only AMD and Intel GPUs are supported at this time
 
 ---
