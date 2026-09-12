@@ -80,6 +80,14 @@ class InstallSession:
         self._mirror_choice: str | None = None
         self._lock = threading.Lock()
 
+        # Handoff ui/ → core/install.py: ui.api.InstallerAPI.start_installation()
+        # arma acá el InstallContext ya validado y llama self._config_ready.set().
+        # El orquestador espera _config_ready y recién ahí lee pending_context.
+        # No se importa InstallContext en este archivo — mismo patrón que
+        # "webview.Window" arriba: type hint como string, sin crear una
+        # dependencia de import real entre session.py y context.py.
+        self.pending_context: "InstallContext | None" = None
+
     # ── Puente JS (bajo nivel, no llamar directo desde fuera) ────────────
     def _js(self, code: str):
         if self.window and not self._closed:
@@ -100,11 +108,12 @@ class InstallSession:
     def status(self, msg: str): self._jsc("pyStatus", msg)
     def label(self, txt: str): self._jsc("pyStatusLabel", txt)
 
-    # ── Señales específicas que _run_instalacion manda directo por _jsc
-    # en el monolito (nunca tuvieron wrapper propio ahí). Se agregan acá
-    # a medida que se van necesitando durante la extracción de cada paso
-    # — no se adivinaron todas de una vez, se confirman contra el código
-    # real de cada sección según se extrae.
+    # ── Señales específicas que el monolito manda directo por _jsc (desde
+    # _run_instalacion o desde InstaladorAPI, ej. on_ready) y que nunca
+    # tuvieron wrapper propio ahí. Se agregan acá a medida que se van
+    # necesitando durante la extracción de cada paso/módulo — no se
+    # adivinaron todas de una vez, se confirman contra el código real
+    # según se extrae.
     def error_step(self, msg: str): self._jsc("pyErrorPaso", msg)
     def error_fatal(self, msg: str): self._jsc("pyErrorFatal", msg)
     def badges(self, net_ok: bool | None, uefi: bool): self._jsc("pyBadges", net_ok, uefi)
@@ -114,6 +123,18 @@ class InstallSession:
     def countdown_cancel(self): self._jsc("pyCerrarCountdown")
     def mirror_dialog(self, detail: str): self._jsc("pyMirrorDialog", detail)
     def install_complete(self, summary_html: str): self._jsc("pyInstalacionCompleta", summary_html)
+
+    def render_disks(self, disks: list[dict]):
+        """Usado por ui.api.InstallerAPI.on_ready(). El original hace
+        json.dumps(discos) ANTES de pasarlo a _jsc — que a su vez vuelve a
+        codificar cada argumento — a propósito: el JS de pyRenderDiscos
+        espera recibir un string y lo parsea él mismo (JSON.parse) del
+        lado JS, no un array ya materializado. Se preserva ese doble
+        encoding tal cual, no es un bug."""
+        self._jsc("pyRenderDiscos", json.dumps(disks, ensure_ascii=False))
+
+    def start_timer(self): self._jsc("pyStartTimer")
+    def stop_timer(self): self._jsc("pyStopTimer")
 
     def t(self, key: str, **kwargs) -> str:
         """Traduce 'key' al idioma elegido por el usuario (self._lang) y
