@@ -216,11 +216,42 @@ jobs:
                "$AIROOTFS/usr/share/avalos/installer/skill_instalar_usb.py"
             cp scripts/translations.py \
                "$AIROOTFS/usr/share/avalos/installer/translations.py"
-            printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24zIC91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlci9za2lsbF9pbnN0YWxhcl91c2IucHkgIiRAIgo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install"
-            chmod 755 "$AIROOTFS/usr/local/bin/avalos-install"
-            echo "Instalador copiado"
+
+            # avalos-install-old: el instalador monolitico original, de
+            # respaldo. Wrapper identico al que "avalos-install" usaba
+            # hasta esta sesion -- ver git blame de este archivo para el
+            # historial exacto si hace falta.
+            printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24zIC91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlci9za2lsbF9pbnN0YWxhcl91c2IucHkgIiRAIgo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install-old"
+            chmod 755 "$AIROOTFS/usr/local/bin/avalos-install-old"
+            echo "Instalador legado copiado (avalos-install-old)"
           else
-            echo "[WARN] scripts/skill_instalar_usb.py o scripts/translations.py no encontrados — live sin instalador grafico"
+            echo "[WARN] scripts/skill_instalar_usb.py o scripts/translations.py no encontrados — sin instalador legado"
+          fi
+
+          # avalos_installer/: paquete modular nuevo. "avalos-install" (el
+          # comando principal, lo que arranca el live por defecto —
+          # ver customize_airootfs.sh) ahora apunta acá. Ver
+          # ESTADO_MODULARIZACION_AVALOS_v2.md para el detalle completo de
+          # que se extrajo y como se probo. avalos-install-old (arriba)
+          # queda como fallback exacto del comportamiento anterior por si
+          # este paquete nuevo tiene algun problema no detectado en las
+          # pruebas con mocks — ninguno de los dos se elimina.
+          if [[ -d "scripts/avalos_installer" ]]; then
+            mkdir -p "$AIROOTFS/usr/share/avalos/installer"
+            cp -r scripts/avalos_installer \
+               "$AIROOTFS/usr/share/avalos/installer/avalos_installer"
+            # Nunca empaquetar bytecode cacheado -- es especifico de la
+            # version de Python/arquitectura de donde se genero, no debe
+            # viajar en el ISO (ni debio haber viajado en el repo, pero
+            # eso se limpia aparte).
+            find "$AIROOTFS/usr/share/avalos/installer/avalos_installer" \
+                 -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+            printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24zIC1tIGF2YWxvc19pbnN0YWxsZXIgIiRAIgo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install"
+            chmod 755 "$AIROOTFS/usr/local/bin/avalos-install"
+            echo "Instalador modular copiado (avalos-install)"
+          else
+            echo "[WARN] scripts/avalos_installer/ no encontrado — sin instalador modular, avalos-install no existira"
           fi
 
           [[ -f "configs/hyprland/hyprpaper.conf" ]] && \

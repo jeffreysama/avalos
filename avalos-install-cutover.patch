@@ -1,0 +1,164 @@
+diff --git a/.github/workflows/build-iso.yml b/.github/workflows/build-iso.yml
+index 0b55849..830322f 100644
+--- a/.github/workflows/build-iso.yml
++++ b/.github/workflows/build-iso.yml
+@@ -216,11 +216,42 @@ jobs:
+                "$AIROOTFS/usr/share/avalos/installer/skill_instalar_usb.py"
+             cp scripts/translations.py \
+                "$AIROOTFS/usr/share/avalos/installer/translations.py"
+-            printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24zIC91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlci9za2lsbF9pbnN0YWxhcl91c2IucHkgIiRAIgo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install"
++
++            # avalos-install-old: el instalador monolitico original, de
++            # respaldo. Wrapper identico al que "avalos-install" usaba
++            # hasta esta sesion -- ver git blame de este archivo para el
++            # historial exacto si hace falta.
++            printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24zIC91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlci9za2lsbF9pbnN0YWxhcl91c2IucHkgIiRAIgo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install-old"
++            chmod 755 "$AIROOTFS/usr/local/bin/avalos-install-old"
++            echo "Instalador legado copiado (avalos-install-old)"
++          else
++            echo "[WARN] scripts/skill_instalar_usb.py o scripts/translations.py no encontrados — sin instalador legado"
++          fi
++
++          # avalos_installer/: paquete modular nuevo. "avalos-install" (el
++          # comando principal, lo que arranca el live por defecto —
++          # ver customize_airootfs.sh) ahora apunta acá. Ver
++          # ESTADO_MODULARIZACION_AVALOS_v2.md para el detalle completo de
++          # que se extrajo y como se probo. avalos-install-old (arriba)
++          # queda como fallback exacto del comportamiento anterior por si
++          # este paquete nuevo tiene algun problema no detectado en las
++          # pruebas con mocks — ninguno de los dos se elimina.
++          if [[ -d "scripts/avalos_installer" ]]; then
++            mkdir -p "$AIROOTFS/usr/share/avalos/installer"
++            cp -r scripts/avalos_installer \
++               "$AIROOTFS/usr/share/avalos/installer/avalos_installer"
++            # Nunca empaquetar bytecode cacheado -- es especifico de la
++            # version de Python/arquitectura de donde se genero, no debe
++            # viajar en el ISO (ni debio haber viajado en el repo, pero
++            # eso se limpia aparte).
++            find "$AIROOTFS/usr/share/avalos/installer/avalos_installer" \
++                 -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
++
++            printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24zIC1tIGF2YWxvc19pbnN0YWxsZXIgIiRAIgo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install"
+             chmod 755 "$AIROOTFS/usr/local/bin/avalos-install"
+-            echo "Instalador copiado"
++            echo "Instalador modular copiado (avalos-install)"
+           else
+-            echo "[WARN] scripts/skill_instalar_usb.py o scripts/translations.py no encontrados — live sin instalador grafico"
++            echo "[WARN] scripts/avalos_installer/ no encontrado — sin instalador modular, avalos-install no existira"
+           fi
+ 
+           [[ -f "configs/hyprland/hyprpaper.conf" ]] && \
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..3bbe7b6
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,3 @@
++__pycache__/
++*.pyc
++*.pyo
+diff --git a/scripts/avalos_installer/__main__.py b/scripts/avalos_installer/__main__.py
+new file mode 100644
+index 0000000..1c2d52f
+--- /dev/null
++++ b/scripts/avalos_installer/__main__.py
+@@ -0,0 +1,99 @@
++"""
++avalos_installer/__main__.py — punto de entrada del instalador modular.
++
++Permite correr el paquete con `python3 -m avalos_installer`. Réplica
++fiel del bloque `if __name__ == "__main__":` de skill_instalar_usb.py
++(líneas 5051-5108): mismo chequeo de root con el mismo mensaje, mismas
++tres variables de entorno de WebKit, mismo GLib.set_prgname("avalos-install")
++envuelto en try/except, misma geometría de ventana (960×640,
++min_size 800×540, background #1a1b26), mismo patrón de guard con
++_lock/_thread_started antes de lanzar el hilo al cargar la ventana, mismo
++manejo de excepción si pywebview/webkit2gtk-4.1 no está instalado.
++
++Única diferencia real respecto al original: el target del hilo es
++core.install.run_installation en vez de VentanaInstalador._run_instalacion,
++y el bridge es ui.api.InstallerAPI en vez de InstaladorAPI — misma forma,
++implementación modular. También se ajustó el texto del mensaje de "sin
++root" para reflejar que el comando real ahora es `avalos-install` (el
++wrapper de build-iso.yml ya resuelve el `python3 -m avalos_installer` por
++dentro), no `python avalos-install` como decía el original.
++
++NO PROBADO CON PYWEBVIEW REAL: este sandbox no tiene GTK/webkit2gtk-4.1
++ni servidor gráfico, así que esto se verificó por lectura línea por línea
++contra el main() original (que sí corre en producción), no por ejecución.
++La prueba real es la que J. va a hacer con la ISO en hardware de verdad.
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++import threading
++
++import webview
++
++from avalos_installer.core.install import run_installation
++from avalos_installer.core.session import InstallSession
++from avalos_installer.ui.api import InstallerAPI
++from avalos_installer.ui.html import build_html
++
++
++def main() -> None:
++    if os.geteuid() != 0:
++        print("╔═══════════════════════════════════════════════════╗")
++        print("║  AvalOS Installer necesita privilegios de root.   ║")
++        print("╠═══════════════════════════════════════════════════╣")
++        print("║  Ejecuta con:  sudo avalos-install                ║")
++        print("║  O como root:  avalos-install                     ║")
++        print("╚═══════════════════════════════════════════════════╝")
++        sys.exit(1)
++
++    os.environ["WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS"] = "1"
++    os.environ["WEBKIT_DISABLE_COMPOSITING_MODE"] = "1"
++    os.environ["WEBKIT_DISABLE_DMABUF_RENDERER"] = "1"
++
++    session = InstallSession()
++    api = InstallerAPI(session)
++    html = build_html()
++
++    try:
++        from gi.repository import GLib
++        GLib.set_prgname("avalos-install")
++    except Exception:
++        pass
++
++    win = webview.create_window(
++        title="AvalOS — Instalador",
++        html=html,
++        js_api=api,
++        width=960,
++        height=640,
++        min_size=(800, 540),
++        resizable=True,
++        background_color="#1a1b26",
++    )
++    session.window = win
++    win.events.closed += session.on_close
++
++    def _on_loaded():
++        with session._lock:
++            if session._thread_started:
++                return
++            session._thread_started = True
++            session._config_ready.clear()
++        t = threading.Thread(target=run_installation, args=(session,), daemon=True)
++        t.start()
++
++    win.events.loaded += _on_loaded
++
++    try:
++        webview.start(debug=os.environ.get("AVALOS_DEBUG") == "1")
++    except Exception as e:
++        print(f"ERROR al iniciar pywebview: {e}")
++        print("Asegúrate de que webkit2gtk-4.1 esté instalado:")
++        print("  pacman -S webkit2gtk-4.1 python-gobject")
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
