@@ -165,14 +165,22 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
         # container, skipping EFI variable modifications" -- SIN marcarlo
         # como error (bootctl sigue devolviendo 0). O sea: esta llamada
         # probablemente instala los archivos de systemd-boot bien, pero es
-        # muy probable que NO cree la entrada NVRAM "Linux Boot Manager",
-        # y el chequeo de rc de abajo no lo va a detectar porque rc SI da
-        # 0. El fix documentado en ArchWiki es usar 'arch-chroot -S' para
-        # este comando puntual -- no se aplico acá todavía porque
-        # session.run_chroot() no expone esa opción y cambiar su firma es
-        # una decisión de diseño más grande que una extracción fiel. Se
-        # deja intacto (igual que el monolito) a propósito.
-        rc, _ = session.run_chroot(["bootctl", "install", "--esp-path=/boot/efi"])
+        # muy probable que NO cree la entrada NVRAM "Linux Boot Manager".
+        # FIX (aplicado): arch-chroot -S pone a bootctl en modo systemd real
+        # (via systemd-run/nspawn), donde SI puede tocar variables EFI. Pero
+        # -S es un flag relativamente nuevo de arch-install-scripts (agregado
+        # en algun punto de 2025) -- hay al menos un reporte real (foro de
+        # Arch, oct. 2025) de 'invalid option' en un archiso mas viejo que
+        # todavia no lo tenia. Por eso el intento con -S va primero, y si
+        # arch-chroot mismo lo rechaza (no bootctl -- arch-chroot), se
+        # reintenta sin el flag: mismo comportamiento que antes de este fix,
+        # nunca peor.
+        rc, out = session.run_chroot(
+            ["bootctl", "install", "--esp-path=/boot/efi"], systemd_mode=True
+        )
+        if rc != 0 and "invalid option" in out.lower():
+            session.log(session.t("log-bootctl-no-systemd-mode"), "warn")
+            rc, out = session.run_chroot(["bootctl", "install", "--esp-path=/boot/efi"])
         if rc != 0:
             session.step("grub", "error")
             session.error_step(session.t("err-bootctl-failed"))

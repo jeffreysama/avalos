@@ -211,8 +211,23 @@ class InstallSession:
                     pass
             return -3, ""
 
-    def run_chroot(self, cmd: list[str], timeout: int = 300) -> tuple[int, str]:
-        return self.run_cmd(["arch-chroot", str(MOUNT_ROOT)] + cmd, timeout=timeout)
+    def run_chroot(self, cmd: list[str], timeout: int = 300,
+                    systemd_mode: bool = False) -> tuple[int, str]:
+        """systemd_mode=True agrega '-S' a arch-chroot (modo systemd real,
+        via systemd-run/nspawn en vez de un chroot+namespace plano). Hace
+        falta para que bootctl no se abstenga de tocar variables EFI
+        dentro del chroot (ver system/bootloader.py, rama sd-boot) — sin
+        esto bootctl detecta que corre en un namespace de PID y se salta
+        la creación de la entrada NVRAM en silencio, con rc=0 igual.
+
+        NO usar systemd_mode=True como default general: -S es un flag
+        relativamente nuevo de arch-install-scripts (agregado en algún
+        punto de 2025) y hay reportes de 'invalid option' en versiones
+        de archiso más viejas — el llamador debe estar preparado para
+        reintentar sin systemd_mode si esto falla por esa razón
+        específica (ver el patrón en install_bootloader)."""
+        cmd_prefix = ["arch-chroot"] + (["-S"] if systemd_mode else []) + [str(MOUNT_ROOT)]
+        return self.run_cmd(cmd_prefix + cmd, timeout=timeout)
 
     def run_chroot_stdin(self, stdin_data: str, cmd: list[str], timeout: int = 60) -> tuple[int, str]:
         """Ejecuta un comando en chroot pasando datos sensibles por stdin (ej: chpasswd)."""
