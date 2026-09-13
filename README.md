@@ -43,7 +43,7 @@ AvalOS ISOs are fully functional and ready for use.
 1. Download the latest ISO from the [Releases](https://github.com/jeffreysama/avalos/releases) page.
 2. Flash it to a USB drive (Ventoy, Rufus, `dd`, or the included USB maker scripts).
 3. Boot from the USB.
-4. Follow the complete guide, OR do a manual instalation
+4. Follow all the steps from auto installer and wait the system to be downloaded on your disk, OR do a manual installation
 
 **→ [Manual Installation Guide](docs/INSTALL.md)**
 
