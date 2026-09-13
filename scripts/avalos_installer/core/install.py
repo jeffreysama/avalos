@@ -21,15 +21,10 @@ _config_ready ya quedó seteado la primera vez, el wait() de una segunda
 corrida vuelve verdadero de inmediato, sin bloquear ni pedir el wizard
 de nuevo.
 
-PASO "aur" — INTENCIONALMENTE PENDIENTE: system/aur.py todavía no existe,
-a pedido explícito de J. ("pospuesto para el final de todo, no tocar
-hasta que lo pida" — ver ESTADO_MODULARIZACION_AVALOS.md § 4). Acá el
-paso "aur" se marca con step(...,"skip") y un mensaje claro, y el
-progreso avanza igual (para no romper el cálculo de porcentaje sobre 16
-pasos), pero NO se instala yay ni paquetes AUR ni la config de gaming
-(gamemode.ini/MangoHud.conf/flatpak) que en el original vive dentro de
-ese mismo bloque, condicionada a que yay haya bootstrapeado bien — eso
-se construye junto con system/aur.py cuando se pida.
+PASO "aur" — ya implementado (system/aur.py, agregado después de las
+pruebas en hardware real de la ISO base): yay/AUR + los extras de
+gaming (gamemode.ini/MangoHud.conf/flatpak) que en el original viven
+condicionados a que yay haya bootstrapeado bien.
 
 Ningún cambio de lógica respecto al original en ningún otro paso,
 incluida una asimetría real que tiene el original entre qué returns
@@ -52,6 +47,7 @@ from avalos_installer.hardware.detection import (
 )
 from avalos_installer.network.connectivity import check_internet
 from avalos_installer.network.mirrors import optimize_mirrors, sync_time
+from avalos_installer.system.aur import install_aur
 from avalos_installer.system.bootloader import install_bootloader
 from avalos_installer.system.fstab import generate_fstab
 from avalos_installer.system.locale import configure_locale
@@ -313,17 +309,8 @@ def run_installation(session: InstallSession) -> None:
         # silencio entre "user" y "aur", sin avanzar().
         configure_repos(session)
 
-        # ── aur — INTENCIONALMENTE PENDIENTE, ver docstring del módulo ──
-        session.step(
-            "aur", "skip",
-            "Pendiente — system/aur.py todavía no implementado a pedido explícito",
-        )
-        session.log(
-            "AUR/yay pospuesto a propósito (ver ESTADO_MODULARIZACION_AVALOS.md § 4) — "
-            "no se instalan paquetes AUR ni la config de gaming (gamemode/MangoHud/flatpak) "
-            "en esta corrida.",
-            "warn",
-        )
+        # ── aur ───────────────────────────────────────────────────────
+        install_aur(session, ctx)
         avanzar()
 
         # ── hypr ──────────────────────────────────────────────────────
