@@ -201,31 +201,19 @@ HaltCommand=/usr/bin/systemctl poweroff
 RebootCommand=/usr/bin/systemctl reboot
 """)
 
-    session.write_file("usr/share/wayland-sessions/hyprland.desktop", """\
-[Desktop Entry]
-Name=Hyprland
-Comment=An intelligent dynamic tiling Wayland compositor
-Exec=Hyprland
-Type=Application
-""")
-
-    # Sesion administrada por uwsm (Universal Wayland Session Manager):
-    # sin esto, SDDM ejecuta el binario Hyprland pelado (arriba) y
-    # Hyprland tira el warning "started without start-hyprland" -- desde
-    # la 0.5x lo recomendado es siempre uwsm (session/env/autostart via
-    # systemd, apagado limpio). "--" separa flags de uwsm del target;
-    # "hyprland.desktop" (arriba) queda intacto como lo que uwsm resuelve
-    # para saber que binario correr -- confirmado contra log real de
-    # sddm (bbs.archlinux.org/viewtopic.php?id=307539): Session
-    # ".../hyprland-uwsm.desktop" selected, command: "uwsm start --
-    # hyprland.desktop".
-    session.write_file("usr/share/wayland-sessions/hyprland-uwsm.desktop", """\
-[Desktop Entry]
-Name=Hyprland (uwsm)
-Comment=An intelligent dynamic tiling Wayland compositor
-Exec=uwsm start -- hyprland.desktop
-Type=Application
-""")
+    # FIX: antes escribíamos hyprland.desktop y hyprland-uwsm.desktop acá a
+    # mano, copiados de un log de foro puntual (ver git blame). El paquete
+    # oficial 'hyprland' de Arch YA instala esos dos archivos exactos en
+    # usr/share/wayland-sessions/ (confirmado contra el listado real del
+    # paquete), mantenidos por los propios desarrolladores de Hyprland —
+    # sobreescribirlos con una copia nuestra los deja desactualizados apenas
+    # upstream cambia el invocado correcto de uwsm (que de hecho ya cambió:
+    # el ArchWiki actual dice que uwsm "ya no se recomienda, se considera
+    # experimental", justo lo contrario de lo que decía nuestro comentario
+    # viejo). Confirmado en hardware real (Sept. 2026): con nuestra copia,
+    # el warning "Hyprland was started without start-hyprland" salía tanto
+    # en la sesión plana como en la de uwsm — dejar de pisar los archivos
+    # del paquete es la corrección real, no un ajuste al contenido.
 
     _gtk_fallback = """\
 [Settings]

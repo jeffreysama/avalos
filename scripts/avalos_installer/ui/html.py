@@ -486,10 +486,29 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
   background: rgba(158,206,106,.14); border: 1px solid var(--tn-green); color: var(--tn-green);
 }
 #btn-reboot:hover { background: rgba(158,206,106,.26); }
+#btn-view-log {
+  background: rgba(122,162,247,.14); border: 1px solid var(--tn-blue); color: var(--tn-blue);
+}
+#btn-view-log:hover { background: rgba(122,162,247,.26); }
 #btn-close-done {
   background: var(--tn-surface); border: 1px solid var(--tn-border); color: var(--tn-dim);
 }
 #btn-close-done:hover { color: var(--tn-text); border-color: var(--tn-white); }
+
+/* Botón flotante "← Volver" — solo visible mientras se está viendo el log
+   después de haber cerrado el overlay de "instalación completada" (ver
+   funciones verLog()/volverADone() en el bloque de JavaScript de más
+   abajo). display:none es el estado normal; JS le agrega .show cuando
+   corresponde. */
+#btn-back-to-done {
+  display: none; position: fixed; top: 16px; right: 16px; z-index: 50;
+  padding: 8px 18px; font-family: var(--font-ui); font-size: 11.5px; font-weight: 600;
+  border-radius: var(--r); cursor: pointer; transition: all var(--trans); letter-spacing: .5px;
+  background: var(--tn-surface); border: 1px solid var(--tn-green); color: var(--tn-green);
+  box-shadow: 0 2px 16px rgba(0,0,0,.35);
+}
+#btn-back-to-done.show { display: block; }
+#btn-back-to-done:hover { background: rgba(158,206,106,.14); }
 </style>
 <script>
 (function () {
@@ -933,10 +952,15 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     <div id="done-info"></div>
     <div class="done-btns">
       <button id="btn-reboot" onclick="window.pywebview.api.reboot_system()" data-i18n="btn-reboot">⟳ Reiniciar ahora</button>
+      <button id="btn-view-log" onclick="verLog()" data-i18n="btn-view-log">📋 Ver log</button>
       <button id="btn-close-done" onclick="window.pywebview.api.close()" data-i18n="btn-close">Cerrar</button>
     </div>
   </div>
 </div>
+
+<!-- Botón flotante para volver a la pantalla de "instalación completada"
+     después de haber elegido "Ver log" — normalmente oculto (ver CSS). -->
+<button id="btn-back-to-done" onclick="volverADone()" data-i18n="btn-back-to-done">← Volver</button>
 
 <script>
 'use strict';
@@ -1710,6 +1734,21 @@ function pyInstalacionCompleta(info) {
   if (info) document.getElementById('done-info').innerHTML = info;
   document.getElementById('ov-done').classList.add('show');
 }
+
+// "Ver log": esconde el overlay de done (el log siempre estuvo detrás,
+// nunca se destruye, ver #log-wrap más arriba) y muestra el botón
+// flotante para volver. No llama a close() en ningún momento -- a
+// diferencia del botón "Cerrar", esto no termina el proceso.
+function verLog() {
+  document.getElementById('ov-done').classList.remove('show');
+  document.getElementById('btn-back-to-done').classList.add('show');
+}
+
+function volverADone() {
+  document.getElementById('btn-back-to-done').classList.remove('show');
+  document.getElementById('ov-done').classList.add('show');
+}
+
 
 function pyMirrorDialog(detalle) {
   document.getElementById('mirror-detalle').textContent = detalle || '';
