@@ -11,7 +11,12 @@
 -- ── Monitor ───────────────────────────────────────────────────────
 hl.monitor({
     output   = "",
-    mode     = "preferred",
+    mode     = "highrr",    -- FIX: "preferred" no es "el Hz más alto" — el EDID
+                             -- de muchos monitores marca 60Hz como su modo
+                             -- preferido aunque soporten más. "highrr" fuerza el
+                             -- refresh rate más alto disponible (confirmado en
+                             -- wiki.hypr.land/Configuring/Core/Monitors/Modes,
+                             -- espejo del fix en hyprland.lua del live).
     position = "auto",
     scale    = "auto",   -- FIX: el .conf anterior tenía "1" (escala fija,
                           -- sin detección de HiDPI). "auto" iguala al live.

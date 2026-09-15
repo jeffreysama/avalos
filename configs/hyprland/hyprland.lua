@@ -9,7 +9,11 @@
 -- ── Monitor ───────────────────────────────────────────────────────
 hl.monitor({
     output   = "",          -- "" = cualquier monitor disponible
-    mode     = "preferred",
+    mode     = "highrr",    -- FIX: "preferred" no es "el Hz más alto" — el EDID
+                             -- de muchos monitores marca 60Hz como su modo
+                             -- preferido aunque soporten más. "highrr" fuerza el
+                             -- refresh rate más alto disponible (confirmado en
+                             -- wiki.hypr.land/Configuring/Core/Monitors/Modes).
     position = "auto",
     scale    = "auto",
 })

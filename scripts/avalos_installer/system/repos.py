@@ -52,6 +52,23 @@ def configure_repos(session: InstallSession) -> None:
         existing = pac_path.read_text(encoding="utf-8") if pac_path.exists() else ""
         to_append = ""
 
+        # FIX: sin 'Architecture' descomentada, CUALQUIER pacman dentro del
+        # chroot (yay/makepkg incluido) falla con "mirror ... contains the
+        # '$arch' variable, but no 'Architecture' is defined" contra
+        # cualquier mirror, real o no. pacstrap nunca lo expone porque corre
+        # con el pacman.conf temporal del host (Architecture ya fijo ahí);
+        # el pacman.conf de fábrica que termina en el target trae esta
+        # línea comentada, y nada más en el flujo la toca.
+        arch_fixed = re.sub(
+            r'^#\s*Architecture\s*=\s*auto\s*$',
+            "Architecture = auto",
+            existing,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        arch_changed = arch_fixed != existing
+        existing = arch_fixed
+
         if "[avalos]" not in existing:
             # La llave vive en el keyring del LIVE (host), no del chroot —
             # por eso este export usa session.run_cmd (host), y recién el
@@ -83,7 +100,7 @@ def configure_repos(session: InstallSession) -> None:
             else:
                 existing = existing_new
 
-        if to_append:
+        if to_append or arch_changed:
             pac_path.write_text(existing + to_append, encoding="utf-8")
         session.log("  repos [avalos] + [multilib] → pacman.conf", "ok")
     except OSError as e:

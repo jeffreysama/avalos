@@ -74,6 +74,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ Critical error",
         "done-title":        "AvalOS installed successfully",
         "done-desc":         "Remove the USB drive and reboot. SDDM will ask you to log in — select Hyprland.",
+        "btn-view-log":      "📋 View Log",
+        "btn-back-to-done":  "← Back",
 
         # Validation messages
         "val-select-disk":   "Select a destination disk",
@@ -477,6 +479,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ Error crítico",
         "done-title":        "AvalOS instalado correctamente",
         "done-desc":         "Retira el USB y reinicia el equipo. SDDM te pedirá iniciar sesión — selecciona Hyprland.",
+        "btn-view-log":      "📋 Ver log",
+        "btn-back-to-done":  "← Volver",
 
         # Mensajes de validación
         "val-select-disk":   "Selecciona un disco de destino",
@@ -877,6 +881,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ 严重错误",
         "done-title":        "AvalOS 安装成功",
         "done-desc":         "请取出 USB 设备并重启电脑。SDDM 将提示登录 — 请选择 Hyprland。",
+        "btn-view-log":      "📋 查看日志",
+        "btn-back-to-done":  "← 返回",
 
         # 验证消息
         "val-select-disk":   "请选择目标磁盘",
@@ -1281,6 +1287,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ 重大なエラー",
         "done-title":        "AvalOS のインストールが完了しました",
         "done-desc":         "USB ドライブを取り外して再起動してください。SDDM でログインを求められたら、Hyprland を選択してください。",
+        "btn-view-log":      "📋 ログを表示",
+        "btn-back-to-done":  "← 戻る",
 
         # Validation messages
         "val-select-disk":   "インストール先ディスクを選択してください",
