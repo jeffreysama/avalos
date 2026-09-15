@@ -51,23 +51,42 @@ def configure_repos(session: InstallSession) -> None:
     try:
         existing = pac_path.read_text(encoding="utf-8") if pac_path.exists() else ""
         to_append = ""
+        base_changed = False
 
-        # FIX: sin 'Architecture' descomentada, CUALQUIER pacman dentro del
-        # chroot (yay/makepkg incluido) falla con "mirror ... contains the
-        # '$arch' variable, but no 'Architecture' is defined" contra
-        # cualquier mirror, real o no. pacstrap nunca lo expone porque corre
-        # con el pacman.conf temporal del host (Architecture ya fijo ahí);
-        # el pacman.conf de fábrica que termina en el target trae esta
-        # línea comentada, y nada más en el flujo la toca.
-        arch_fixed = re.sub(
-            r'^#\s*Architecture\s*=\s*auto\s*$',
-            "Architecture = auto",
-            existing,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        arch_changed = arch_fixed != existing
-        existing = arch_fixed
+        # FIX: en al menos una instalación real, el pacman.conf que quedó
+        # en el target no tenía ni [options] ni [core]/[extra] — nada más
+        # que lo que esta misma función agrega. El comentario de arriba
+        # asume que siempre llega el pacman.conf de fábrica completo (vía
+        # el paquete 'pacman'); en la práctica no se puede dar por hecho.
+        # Sin 'Architecture' definida, pacman revienta hasta en 'pacman -Q'
+        # local, contra cualquier mirror con $arch en la URL, real o no.
+        # Causa de fondo (por qué pacstrap dejó esto incompleto) todavía
+        # sin confirmar — esto reconstruye una base mínima válida si hace
+        # falta, en vez de asumir que ya está.
+        if "[options]" not in existing:
+            existing = (
+                "[options]\n"
+                "Architecture = auto\n"
+                "SigLevel = Required DatabaseOptional\n"
+                "LocalFileSigLevel = Optional\n"
+                "\n"
+                "[core]\n"
+                "Include = /etc/pacman.d/mirrorlist\n"
+                "\n"
+                "[extra]\n"
+                "Include = /etc/pacman.d/mirrorlist\n"
+                "\n"
+            ) + existing
+            base_changed = True
+        elif re.search(r'^#\s*Architecture\s*=\s*auto\s*$', existing, flags=re.MULTILINE):
+            existing = re.sub(
+                r'^#\s*Architecture\s*=\s*auto\s*$',
+                "Architecture = auto",
+                existing,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            base_changed = True
 
         if "[avalos]" not in existing:
             # La llave vive en el keyring del LIVE (host), no del chroot —
@@ -100,7 +119,7 @@ def configure_repos(session: InstallSession) -> None:
             else:
                 existing = existing_new
 
-        if to_append or arch_changed:
+        if to_append or base_changed:
             pac_path.write_text(existing + to_append, encoding="utf-8")
         session.log("  repos [avalos] + [multilib] → pacman.conf", "ok")
     except OSError as e:

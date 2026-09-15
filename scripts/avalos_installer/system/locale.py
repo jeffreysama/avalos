@@ -58,6 +58,37 @@ def configure_locale(session: InstallSession, ctx: InstallContext, kernel_pkg: s
         locale_gen_path.parent.mkdir(parents=True, exist_ok=True)
         locale_gen_path.write_text("\n".join(extra_locales) + "\n")
 
+    # FIX: en al menos una instalación real, locale-gen falló para
+    # es_SV.UTF-8 puntualmente con "cannot open locale definition file
+    # `es_SV': No such file or directory", mientras en_US.UTF-8 sí
+    # generaba bien — faltaba el archivo fuente en
+    # /usr/share/i18n/locales/es_SV (parte del paquete glibc) en ESE
+    # chroot puntual. es_SV es un locale real y válido (está en
+    # SUPPORTED upstream de glibc), así que esto es extracción
+    # incompleta de glibc, no un locale inválido — causa de fondo
+    # todavía sin confirmar. Se verifica el archivo fuente ANTES de
+    # generar y, si falta, se reextrae SOLO usr/share/i18n/locales/
+    # desde el propio .pkg.tar.zst de glibc que ya está en la cache de
+    # pacstrap — más seguro que reinstalar glibc entero a mitad de
+    # instalación.
+    i18n_locales_dir = MOUNT_ROOT / "usr" / "share" / "i18n" / "locales"
+    missing_defs = []
+    for loc_entry in extra_locales:
+        base = loc_entry.split(".")[0]
+        if base not in missing_defs and not (i18n_locales_dir / base).exists():
+            missing_defs.append(base)
+    if missing_defs:
+        session.log(
+            f"  [WARN] faltan definiciones de locale en glibc: "
+            f"{', '.join(missing_defs)} — reextrayendo desde la cache de pacman",
+            "warn",
+        )
+        session.run_chroot([
+            "bash", "-c",
+            "f=(/var/cache/pacman/pkg/glibc-*.pkg.tar.zst); "
+            "[ -e \"${f[0]}\" ] && bsdtar -xf \"${f[0]}\" -C / usr/share/i18n/locales/"
+        ])
+
     # Antes esto se llamaba sin capturar rc/output: si locale-gen
     # fallaba (o generaba todo MENOS el locale pedido) quedaba en
     # silencio total -- nada en el log, nada en pantalla -- y recien
