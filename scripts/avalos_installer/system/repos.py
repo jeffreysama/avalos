@@ -102,24 +102,8 @@ def configure_repos(session: InstallSession) -> None:
             )
             base_changed = True
 
-        if "[avalos]" not in existing:
-            # La llave vive en el keyring del LIVE (host), no del chroot —
-            # por eso este export usa session.run_cmd (host), y recién el
-            # pacman-key de abajo usa session.run_chroot (target).
-            tmp = MOUNT_ROOT / "tmp" / "avalos.gpg"
-            rc, _ = session.run_cmd([
-                "bash", "-c",
-                f"gpg --homedir /etc/pacman.d/gnupg --armor --export "
-                f"{AVALOS_GPG_FINGERPRINT} > {tmp} 2>/dev/null",
-            ])
-            if rc == 0 and tmp.stat().st_size > 0:
-                session.run_chroot(["pacman-key", "--init"])
-                session.run_chroot(["pacman-key", "--add", "/tmp/avalos.gpg"])
-                session.run_chroot(["pacman-key", "--lsign-key", AVALOS_GPG_FINGERPRINT])
-                session.log(f"  clave GPG AvalOS ({AVALOS_GPG_FINGERPRINT}) importada al keyring", "ok")
-            else:
-                session.log("  [WARN] no se pudo exportar la clave GPG de AvalOS desde el live ISO", "warn")
-            tmp.unlink(missing_ok=True)
+        needs_avalos = "[avalos]" not in existing
+        if needs_avalos:
             to_append += avalos_repo_txt
 
         if "[multilib]" not in existing:
@@ -133,8 +117,44 @@ def configure_repos(session: InstallSession) -> None:
             else:
                 existing = existing_new
 
+        # FIX: pacman-key necesita que /etc/pacman.conf YA EXISTA en disco
+        # para correr — si se escribe recién al final de la función (como
+        # hacía el original), pacman-key --init/--add/--lsign-key revientan
+        # los TRES con "pacman configuration file '/etc/pacman.conf' not
+        # found" en TODAS las corridas, porque el archivo nunca llegó a
+        # existir antes de esas tres llamadas. Se escribe ACÁ, antes de
+        # tocar pacman-key para nada.
         if to_append or base_changed:
             pac_path.write_text(existing + to_append, encoding="utf-8")
+
+        if needs_avalos:
+            # La llave vive en el keyring del LIVE (host), no del chroot —
+            # por eso este export usa session.run_cmd (host), y recién el
+            # pacman-key de abajo usa session.run_chroot (target).
+            tmp = MOUNT_ROOT / "tmp" / "avalos.gpg"
+            rc, _ = session.run_cmd([
+                "bash", "-c",
+                f"gpg --homedir /etc/pacman.d/gnupg --armor --export "
+                f"{AVALOS_GPG_FINGERPRINT} > {tmp} 2>/dev/null",
+            ])
+            if rc == 0 and tmp.stat().st_size > 0:
+                # FIX: las tres llamadas no capturaban rc — si pacman-key
+                # fallaba (como pasaba siempre por el bug de arriba), el
+                # log decía "importada al keyring" igual, sin ninguna pista.
+                rc1, out1 = session.run_chroot(["pacman-key", "--init"])
+                rc2, out2 = session.run_chroot(["pacman-key", "--add", "/tmp/avalos.gpg"])
+                rc3, out3 = session.run_chroot(["pacman-key", "--lsign-key", AVALOS_GPG_FINGERPRINT])
+                if rc1 == 0 and rc2 == 0 and rc3 == 0:
+                    session.log(f"  clave GPG AvalOS ({AVALOS_GPG_FINGERPRINT}) importada al keyring", "ok")
+                else:
+                    session.log(
+                        f"  [WARN] pacman-key falló (init={rc1}, add={rc2}, lsign={rc3}) — "
+                        f"el repo [avalos] puede fallar por firma no confiable", "warn"
+                    )
+            else:
+                session.log("  [WARN] no se pudo exportar la clave GPG de AvalOS desde el live ISO", "warn")
+            tmp.unlink(missing_ok=True)
+
         session.log("  repos [avalos] + [multilib] → pacman.conf", "ok")
     except OSError as e:
         session.log(f"[WARN] pacman.conf: {e}", "warn")
