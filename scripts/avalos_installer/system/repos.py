@@ -78,6 +78,20 @@ def configure_repos(session: InstallSession) -> None:
                 "\n"
             ) + existing
             base_changed = True
+        elif not re.search(r'^#?\s*Architecture\s*=', existing, flags=re.MULTILINE):
+            # REVISIÓN EXTRA: el elif de abajo solo cubre "Architecture
+            # está pero comentada". Si [options] existe pero la línea
+            # Architecture no aparece en NINGUNA forma (ni comentada),
+            # ese caso quedaba sin cubrir — se insertaba nada y el bug
+            # seguía. Se inserta la línea recién creada, justo después
+            # del header [options].
+            existing = re.sub(
+                r'(\[options\]\s*\n)',
+                r'\1Architecture = auto\n',
+                existing,
+                count=1,
+            )
+            base_changed = True
         elif re.search(r'^#\s*Architecture\s*=\s*auto\s*$', existing, flags=re.MULTILINE):
             existing = re.sub(
                 r'^#\s*Architecture\s*=\s*auto\s*$',
