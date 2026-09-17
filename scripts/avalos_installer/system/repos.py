@@ -128,32 +128,34 @@ def configure_repos(session: InstallSession) -> None:
             pac_path.write_text(existing + to_append, encoding="utf-8")
 
         if needs_avalos:
-            # La llave vive en el keyring del LIVE (host), no del chroot —
-            # por eso este export usa session.run_cmd (host), y recién el
-            # pacman-key de abajo usa session.run_chroot (target).
-            tmp = MOUNT_ROOT / "tmp" / "avalos.gpg"
-            rc, _ = session.run_cmd([
+            # FIX: el archivo temporal en MOUNT_ROOT/tmp, leído después
+            # como /tmp/avalos.gpg DESDE DENTRO del chroot, asumía que
+            # ambas rutas son el mismo archivo real. En al menos una
+            # instalación real no lo fueron: pacman-key --add reportó
+            # "can't open '/tmp/avalos.gpg': No such file or directory"
+            # a pesar de que el archivo sí existía y se había verificado
+            # del lado host (rc==0 y tamaño > 0) un instante antes.
+            # Causa exacta sin confirmar — se elimina el archivo
+            # intermedio del todo en vez de seguir dependiendo de esa
+            # ruta compartida: un solo pipe que exporta del lado host
+            # y lo mete por stdin directo al pacman-key del CHROOT
+            # (arch-chroot reenvía stdin al proceso que ejecuta), sin
+            # ningún archivo de por medio.
+            rc1, out1 = session.run_chroot(["pacman-key", "--init"])
+            rc2, out2 = session.run_cmd([
                 "bash", "-c",
-                f"gpg --homedir /etc/pacman.d/gnupg --armor --export "
-                f"{AVALOS_GPG_FINGERPRINT} > {tmp} 2>/dev/null",
+                f"set -o pipefail; gpg --homedir /etc/pacman.d/gnupg --armor "
+                f"--export {AVALOS_GPG_FINGERPRINT} "
+                f"| arch-chroot {MOUNT_ROOT} pacman-key --add -",
             ])
-            if rc == 0 and tmp.stat().st_size > 0:
-                # FIX: las tres llamadas no capturaban rc — si pacman-key
-                # fallaba (como pasaba siempre por el bug de arriba), el
-                # log decía "importada al keyring" igual, sin ninguna pista.
-                rc1, out1 = session.run_chroot(["pacman-key", "--init"])
-                rc2, out2 = session.run_chroot(["pacman-key", "--add", "/tmp/avalos.gpg"])
-                rc3, out3 = session.run_chroot(["pacman-key", "--lsign-key", AVALOS_GPG_FINGERPRINT])
-                if rc1 == 0 and rc2 == 0 and rc3 == 0:
-                    session.log(f"  clave GPG AvalOS ({AVALOS_GPG_FINGERPRINT}) importada al keyring", "ok")
-                else:
-                    session.log(
-                        f"  [WARN] pacman-key falló (init={rc1}, add={rc2}, lsign={rc3}) — "
-                        f"el repo [avalos] puede fallar por firma no confiable", "warn"
-                    )
+            rc3, out3 = session.run_chroot(["pacman-key", "--lsign-key", AVALOS_GPG_FINGERPRINT])
+            if rc1 == 0 and rc2 == 0 and rc3 == 0:
+                session.log(f"  clave GPG AvalOS ({AVALOS_GPG_FINGERPRINT}) importada al keyring", "ok")
             else:
-                session.log("  [WARN] no se pudo exportar la clave GPG de AvalOS desde el live ISO", "warn")
-            tmp.unlink(missing_ok=True)
+                session.log(
+                    f"  [WARN] pacman-key falló (init={rc1}, add={rc2}, lsign={rc3}) — "
+                    f"el repo [avalos] puede fallar por firma no confiable", "warn"
+                )
 
         session.log("  repos [avalos] + [multilib] → pacman.conf", "ok")
     except OSError as e:
