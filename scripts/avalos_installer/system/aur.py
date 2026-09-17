@@ -45,92 +45,111 @@ def install_aur(session: InstallSession, ctx: InstallContext) -> None:
     except OSError:
         sudoers_tmp = None
 
-    yay_script = (
-        "set -euo pipefail; "
-        "TMPD=$(mktemp -d) && "
-        "git clone --depth=1 https://aur.archlinux.org/yay.git \"$TMPD/yay_build\" && "
-        "cd \"$TMPD/yay_build\" && "
-        "makepkg -si --noconfirm --needed && "
-        "rm -rf \"$TMPD\""
-    )
-    # Sin captura de output ni reintento, un solo corte de red durante
-    # el 'git clone' o durante la descarga de 'go' (makedepend de yay)
-    # tira todo el bootstrap sin dejar rastro de POR QUE -- rc se veía
-    # pero el output se descartaba (== "_"). Con todo lo que ya vimos
-    # de mirrors/red inestables en esta build, vale un reintento igual
-    # que el resto de la instalación.
-    rc, out_yay = "", ""
-    for attempt in range(2):
-        rc, out_yay = session.run_chroot(
-            ["sudo", "-H", "-u", ctx.username, "bash", "-c", yay_script], timeout=600
+    # SEGURIDAD: todo lo que sigue corre con sudo NOPASSWD activo para
+    # ctx.username. El original limpiaba este archivo con una sola línea
+    # secuencial al final de la función — si CUALQUIER cosa entre acá y
+    # ahí tira una excepción sin capturar (el write_text de MangoHud.conf
+    # más abajo no tenía try/except propio, a diferencia de gamemode.ini
+    # dos líneas arriba), esa línea de limpieza nunca se alcanza y el
+    # NOPASSWD queda para siempre en el sistema instalado: cualquier
+    # proceso corriendo como ese usuario tiene root sin contraseña, sin
+    # límite. Se envuelve todo en try/finally para que la limpieza corra
+    # pase lo que pase, y se le agrega su propio try/except a MangoHud.
+    try:
+        yay_script = (
+            "set -euo pipefail; "
+            "TMPD=$(mktemp -d) && "
+            "git clone --depth=1 https://aur.archlinux.org/yay.git \"$TMPD/yay_build\" && "
+            "cd \"$TMPD/yay_build\" && "
+            "makepkg -si --noconfirm --needed && "
+            "rm -rf \"$TMPD\""
         )
-        if rc == 0:
-            break
-        if attempt == 0:
-            session.log(session.t("log-yay-retry"), "warn")
-
-    if rc != 0:
-        session.log(session.t("log-yay-not-installed", out=out_yay.strip()[-500:]), "warn")
-        session.step("aur", "skip", session.t("step-yay-failed-label"))
-    else:
-        all_aur = HYPRLAND_AUR_PKGS + (GAMING_AUR_PKGS if ctx.install_gaming else [])
-        if all_aur:
-            rc_aur, out_aur = session.run_chroot(
-                ["sudo", "-H", "-u", ctx.username, "yay", "-S", "--noconfirm", "--needed"]
-                + all_aur, timeout=1800
+        # Sin captura de output ni reintento, un solo corte de red durante
+        # el 'git clone' o durante la descarga de 'go' (makedepend de yay)
+        # tira todo el bootstrap sin dejar rastro de POR QUE -- rc se veía
+        # pero el output se descartaba (== "_"). Con todo lo que ya vimos
+        # de mirrors/red inestables en esta build, vale un reintento igual
+        # que el resto de la instalación.
+        rc, out_yay = "", ""
+        for attempt in range(2):
+            rc, out_yay = session.run_chroot(
+                ["sudo", "-H", "-u", ctx.username, "bash", "-c", yay_script], timeout=600
             )
-            if rc_aur != 0:
-                session.log(
-                    session.t("log-aur-partial-fail", rc=rc_aur, out=out_aur.strip()[-500:]),
-                    "warn"
-                )
-                session.step("aur", "done", session.t("step-aur-count-warn", n=len(all_aur)))
-            else:
-                session.step("aur", "done", session.t("step-aur-count", n=len(all_aur)))
+            if rc == 0:
+                break
+            if attempt == 0:
+                session.log(session.t("log-yay-retry"), "warn")
+
+        if rc != 0:
+            session.log(session.t("log-yay-not-installed", out=out_yay.strip()[-500:]), "warn")
+            session.step("aur", "skip", session.t("step-yay-failed-label"))
         else:
-            session.step("aur", "done", session.t("step-aur-count-zero"))
+            all_aur = HYPRLAND_AUR_PKGS + (GAMING_AUR_PKGS if ctx.install_gaming else [])
+            if all_aur:
+                rc_aur, out_aur = session.run_chroot(
+                    ["sudo", "-H", "-u", ctx.username, "yay", "-S", "--noconfirm", "--needed"]
+                    + all_aur, timeout=1800
+                )
+                if rc_aur != 0:
+                    session.log(
+                        session.t("log-aur-partial-fail", rc=rc_aur, out=out_aur.strip()[-500:]),
+                        "warn"
+                    )
+                    session.step("aur", "done", session.t("step-aur-count-warn", n=len(all_aur)))
+                else:
+                    session.step("aur", "done", session.t("step-aur-count", n=len(all_aur)))
+            else:
+                session.step("aur", "done", session.t("step-aur-count-zero"))
 
-        if ctx.install_gaming:
-            session.run_chroot(["usermod", "-aG", "gamemode", ctx.username])
+            if ctx.install_gaming:
+                session.run_chroot(["usermod", "-aG", "gamemode", ctx.username])
 
-            gamemode_conf = (
-                "[general]\n"
-                "reaper_freq=5\n"
-                "defaultgov=performance\n"
-                "desiredgov=performance\n"
-                "softrealtime=auto\n"
-                "renice=-10\n\n"
-                "[gpu]\n"
-                "apply_gpu_optimisations=accept-responsibility\n"
-                "gpu_device=0\n"
-                "amd_performance_level=high\n\n"
-                "[filter]\n"
-                "whitelist=steam\nwhitelist=lutris\nwhitelist=heroic\n"
-            )
+                gamemode_conf = (
+                    "[general]\n"
+                    "reaper_freq=5\n"
+                    "defaultgov=performance\n"
+                    "desiredgov=performance\n"
+                    "softrealtime=auto\n"
+                    "renice=-10\n\n"
+                    "[gpu]\n"
+                    "apply_gpu_optimisations=accept-responsibility\n"
+                    "gpu_device=0\n"
+                    "amd_performance_level=high\n\n"
+                    "[filter]\n"
+                    "whitelist=steam\nwhitelist=lutris\nwhitelist=heroic\n"
+                )
+                try:
+                    gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
+                    gm_path.write_text(gamemode_conf, encoding="utf-8")
+                    session.log(session.t("log-gamemode-ini-ok"), "ok")
+                except OSError as e:
+                    session.log(f"[WARN] gamemode.ini: {e}", "warn")
+
+                mango_content = read_config("mangohud/MangoHud.conf")
+                if mango_content:
+                    try:
+                        mango_dir = MOUNT_ROOT / "etc" / "MangoHud"
+                        mango_dir.mkdir(parents=True, exist_ok=True)
+                        (mango_dir / "MangoHud.conf").write_text(mango_content, encoding="utf-8")
+                        session.log(session.t("log-mangohud-ok"), "ok")
+                    except OSError as e:
+                        session.log(f"[WARN] MangoHud.conf: {e}", "warn")
+
+                session.run_chroot(
+                    ["sudo", "-H", "-u", ctx.username, "flatpak", "remote-add",
+                     "--if-not-exists", "flathub",
+                     "https://dl.flathub.org/repo/flathub.flatpakrepo"],
+                    timeout=120
+                )
+                session.log(session.t("log-flathub-ok"), "ok")
+    finally:
+        if sudoers_tmp and sudoers_tmp.exists():
             try:
-                gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
-                gm_path.write_text(gamemode_conf, encoding="utf-8")
-                session.log(session.t("log-gamemode-ini-ok"), "ok")
+                sudoers_tmp.unlink()
             except OSError as e:
-                session.log(f"[WARN] gamemode.ini: {e}", "warn")
-
-            mango_content = read_config("mangohud/MangoHud.conf")
-            if mango_content:
-                mango_dir = MOUNT_ROOT / "etc" / "MangoHud"
-                mango_dir.mkdir(parents=True, exist_ok=True)
-                (mango_dir / "MangoHud.conf").write_text(mango_content, encoding="utf-8")
-                session.log(session.t("log-mangohud-ok"), "ok")
-
-            session.run_chroot(
-                ["sudo", "-H", "-u", ctx.username, "flatpak", "remote-add",
-                 "--if-not-exists", "flathub",
-                 "https://dl.flathub.org/repo/flathub.flatpakrepo"],
-                timeout=120
-            )
-            session.log(session.t("log-flathub-ok"), "ok")
-
-    if sudoers_tmp and sudoers_tmp.exists():
-        try:
-            sudoers_tmp.unlink()
-        except OSError:
-            pass
+                session.log(
+                    f"[WARN] no se pudo borrar el sudoers temporal de AUR "
+                    f"({sudoers_tmp}) — revisar a mano, queda NOPASSWD activo "
+                    f"para {ctx.username}: {e}",
+                    "err",
+                )
