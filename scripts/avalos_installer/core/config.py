@@ -17,6 +17,11 @@ MOUNT_ROOT = Path("/mnt/avalos_install")
 MOUNT_EFI = MOUNT_ROOT / "boot" / "efi"
 MOUNT_ISO = Path("/tmp/avalos_iso")
 
+# Compartida entre mount.py (montaje inicial de subvolúmenes) y
+# services.py (re-montaje de @snapshots tras crear la config de Snapper)
+# para que ambos usen exactamente las mismas opciones.
+BTRFS_MOUNT_OPTS = "compress=zstd,noatime,space_cache=v2"
+
 # ── Configs de AvalOS embebidas en el ISO/sistema instalado ──────────────
 AVALOS_CONFIGS = Path("/usr/share/avalos/configs")
 

@@ -50,10 +50,13 @@ def create_user(session: InstallSession, ctx: InstallContext) -> bool:
         session.clean_mounts()
         return False
 
-    sudoers = MOUNT_ROOT / "etc" / "sudoers.d" / "wheel"
-    sudoers.parent.mkdir(parents=True, exist_ok=True)
-    sudoers.write_text("%wheel ALL=(ALL:ALL) ALL\n")
-    sudoers.chmod(0o440)
+    try:
+        sudoers = MOUNT_ROOT / "etc" / "sudoers.d" / "wheel"
+        sudoers.parent.mkdir(parents=True, exist_ok=True)
+        sudoers.write_text("%wheel ALL=(ALL:ALL) ALL\n")
+        sudoers.chmod(0o440)
+    except OSError as e:
+        session.log(session.t("log-sudoers-wheel-fail", e=str(e)), "warn")
 
     session.step("user", "done", session.t("step-user-created-label", usuario=ctx.username))
     return True

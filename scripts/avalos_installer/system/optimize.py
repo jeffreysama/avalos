@@ -302,6 +302,37 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
     )
     session.log(session.t("log-io-scheduler", disco_tipo=disk_type), "ok")
 
+    # FIX: el bloque DNS-over-TLS vivía acá mismo, corriendo ANTES de
+    # create_user()/configure_repos()/install_aur() en el orden real del
+    # orquestador (configure_optimizations corre en la línea 291 de
+    # core/install.py, install_aur en la 313 — antes, no después). Pisa
+    # /etc/resolv.conf con un symlink a .../stub-resolv.conf, un archivo
+    # que systemd-resolved recién genera cuando el servicio ARRANCA de
+    # verdad — cosa que nunca pasa dentro de un chroot (systemctl enable
+    # ahí abajo solo arma el symlink de habilitación para el próximo
+    # boot real, no arranca nada). Resultado: desde acá en adelante,
+    # CUALQUIER resolución DNS dentro del chroot queda rota — incluido
+    # el 'git clone' de yay más adelante, que es exactamente el "Could
+    # not resolve host: aur.archlinux.org" que se está viendo. Se saca
+    # de acá y se llama aparte (ver enable_dns_over_tls) recién después
+    # de install_aur(), para que todo lo que necesita red dentro del
+    # chroot durante la instalación siga teniendo un resolv.conf que
+    # funciona.
+
+    session.log(
+        session.t("log-summary-cpu-gpu-disk", cpu_arch=cpu_arch,
+                   gpu_vendor=gpu_info["vendor"].upper(), gpu_model=gpu_info["model"],
+                   disco_tipo=disk_type.upper()),
+        "ok"
+    )
+
+
+def enable_dns_over_tls(session: InstallSession) -> None:
+    """Configura systemd-resolved con DNS-over-TLS para el sistema instalado.
+
+    Se llama DESPUÉS de install_aur() a propósito — ver el comentario
+    en configure_optimizations() de por qué no puede ir antes.
+    """
     resolved_conf = MOUNT_ROOT / "etc" / "systemd" / "resolved.conf"
     resolved_conf.write_text(
         "[Resolve]\n"
@@ -324,10 +355,3 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
         session.log(session.t("log-resolvconf-fail", e=e), "warn")
     session.run_chroot(["systemctl", "enable", "systemd-resolved"])
     session.log("  DNS-over-TLS: systemd-resolved (Cloudflare + Google + Quad9)", "ok")
-
-    session.log(
-        session.t("log-summary-cpu-gpu-disk", cpu_arch=cpu_arch,
-                   gpu_vendor=gpu_info["vendor"].upper(), gpu_model=gpu_info["model"],
-                   disco_tipo=disk_type.upper()),
-        "ok"
-    )

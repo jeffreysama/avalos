@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import shutil
 
-from avalos_installer.core.config import MOUNT_ROOT, MOUNT_EFI
+from avalos_installer.core.config import MOUNT_ROOT, MOUNT_EFI, BTRFS_MOUNT_OPTS
 from avalos_installer.core.context import InstallContext
 from avalos_installer.core.session import InstallSession
 
@@ -45,8 +45,7 @@ def mount_filesystems(session: InstallSession, ctx: InstallContext,
             session.clean_mounts()
             return False
     else:
-        btrfs_opts = "compress=zstd,noatime,space_cache=v2"
-        rc, _ = session.run_cmd(["mount", "-o", f"subvol=@,{btrfs_opts}", root_device, str(MOUNT_ROOT)])
+        rc, _ = session.run_cmd(["mount", "-o", f"subvol=@,{BTRFS_MOUNT_OPTS}", root_device, str(MOUNT_ROOT)])
         if rc != 0:
             session.step("mount", "error")
             session.error_step(session.t("err-mount-subvol-failed", dev_root=root_device))
@@ -62,7 +61,7 @@ def mount_filesystems(session: InstallSession, ctx: InstallContext,
         ]
         for sv_name, sv_path in subvol_mounts:
             sv_path.mkdir(parents=True, exist_ok=True)
-            sv_opts = f"subvol={sv_name},{btrfs_opts}"
+            sv_opts = f"subvol={sv_name},{BTRFS_MOUNT_OPTS}"
             if sv_name == "@tmp":
                 sv_opts += ",nodatacow"
             rc_sv, _ = session.run_cmd(["mount", "-o", sv_opts, root_device, str(sv_path)])

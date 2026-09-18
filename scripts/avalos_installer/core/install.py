@@ -52,7 +52,7 @@ from avalos_installer.system.bootloader import install_bootloader
 from avalos_installer.system.fstab import generate_fstab
 from avalos_installer.system.locale import configure_locale
 from avalos_installer.system.mount import check_disk_space, mount_filesystems
-from avalos_installer.system.optimize import configure_optimizations
+from avalos_installer.system.optimize import configure_optimizations, enable_dns_over_tls
 from avalos_installer.system.pacstrap import run_pacstrap
 from avalos_installer.system.partition import partition_and_format
 from avalos_installer.system.repos import configure_repos
@@ -312,6 +312,14 @@ def run_installation(session: InstallSession) -> None:
         # ── aur ───────────────────────────────────────────────────────
         install_aur(session, ctx)
         avanzar()
+
+        # FIX: DNS-over-TLS se movió acá (ver comentario en
+        # configure_optimizations) — antes corría antes de esta línea y
+        # dejaba /etc/resolv.conf apuntando a un stub que nunca se
+        # genera dentro de un chroot, rompiendo la resolución DNS para
+        # el resto de la instalación (el 'git clone' de yay, arriba,
+        # es justamente la primera operación de red que lo sufre).
+        enable_dns_over_tls(session)
 
         # ── hypr ──────────────────────────────────────────────────────
         session.step("hypr", "active")

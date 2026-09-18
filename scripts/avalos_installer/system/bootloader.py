@@ -195,13 +195,25 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
         root_uuid = uuid_out.strip() if rc_uuid == 0 and uuid_out.strip() else ""
 
         esp_entries_dir = MOUNT_ROOT / "boot" / "efi" / "AvalOS"
-        esp_entries_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            esp_entries_dir.mkdir(parents=True, exist_ok=True)
 
-        shutil.copy2(MOUNT_ROOT / f"boot/vmlinuz-{kernel_name}",
-                     esp_entries_dir / f"vmlinuz-{kernel_name}")
-        initrd_src = MOUNT_ROOT / f"boot/initramfs-{kernel_name}.img"
-        if initrd_src.exists():
-            shutil.copy2(initrd_src, esp_entries_dir / f"initramfs-{kernel_name}.img")
+            shutil.copy2(MOUNT_ROOT / f"boot/vmlinuz-{kernel_name}",
+                         esp_entries_dir / f"vmlinuz-{kernel_name}")
+            initrd_src = MOUNT_ROOT / f"boot/initramfs-{kernel_name}.img"
+            if initrd_src.exists():
+                shutil.copy2(initrd_src, esp_entries_dir / f"initramfs-{kernel_name}.img")
+        except OSError as e:
+            # FIX: shutil.copy2 sin try/except -- si el glob de vmlinuz_files
+            # no encontró nada (kernel_name cae al fallback "linux", que
+            # puede no existir como archivo real), esto tiraba una excepción
+            # sin capturar a mitad de la instalación del bootloader, en vez
+            # de un fallo prolijo como el resto de esta función (step
+            # "error" + error_step + clean_mounts + return False).
+            session.step("grub", "error")
+            session.error_step(session.t("err-sdboot-kernel-copy-failed", e=str(e)))
+            session.clean_mounts()
+            return False
 
         ucode_copied = False
         ucode_name = ""

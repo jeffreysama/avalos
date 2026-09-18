@@ -184,7 +184,18 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
                 else:
                     created.append(sv)
 
-            session.run_cmd(["umount", btrfs_tmp])
+            rc_um, out_um = session.run_cmd(["umount", btrfs_tmp])
+            if rc_um != 0:
+                # No es fatal (los subvolúmenes ya están creados en disco,
+                # que es lo que importa) pero si /tmp/btrfs_setup queda
+                # montado, ese mismo dispositivo sigue "ocupado" más
+                # adelante — mejor un warning visible acá que un "target
+                # is busy" sin explicación al desmontar todo al final de
+                # la instalación.
+                session.log(
+                    session.t("log-btrfs-tmp-umount-fail", out=out_um.strip()[-200:]),
+                    "warn",
+                )
             if created:
                 session.log(session.t("log-subvols-created", subvols=", ".join(created)), "ok")
 
@@ -319,7 +330,12 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
                 if rc_sv != 0:
                     session.log(session.t("log-subvol-create-fail", sv=sv), "warn")
 
-            session.run_cmd(["umount", btrfs_tmp])
+            rc_um, out_um = session.run_cmd(["umount", btrfs_tmp])
+            if rc_um != 0:
+                session.log(
+                    session.t("log-btrfs-tmp-umount-fail", out=out_um.strip()[-200:]),
+                    "warn",
+                )
             session.log(session.t("log-subvols-created", subvols=", ".join(subvols)), "ok")
 
         if uefi and ctx.usb_mode:
