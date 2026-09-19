@@ -1,9 +1,9 @@
 # ════════════════════════════════════════════════════════════════════════════
 #  AvalOS — Módulo de internacionalización (i18n)
-#  Idiomas: English (en) · Español (es) · 中文简体 (zh)
+#  Idiomas: English (en) · Español (es) · 中文简体 (zh) · 日本語 (ja)
 #
 #  Añadir idioma: copiar el bloque "en", cambiar el código y traducir los values.
-#  Añadir string:  añadirlo en los TRES idiomas para mantener consistencia.
+#  Añadir string:  añadirlo en los CUATRO idiomas (en, es, zh, ja) para mantener consistencia.
 # ════════════════════════════════════════════════════════════════════════════
 
 TRANSLATIONS: dict[str, dict[str, str]] = {
@@ -284,6 +284,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-installing-scripts": "Installing AvalOS utility scripts…",
         "log-io-scheduler": "I/O scheduler set to {disco_tipo} profile",
         "log-kernel-available": "{kernel_pkg} found in repository",
+        "log-bootctl-no-systemd-mode": "arch-chroot rejected -S (older archiso) — retrying without systemd mode",
+        "log-file-live": "Install log (live RAM): {path}",
+        "log-file-usb-ok": "Log also being saved to the boot USB: {desc}",
+        "log-file-usb-none": "No writable partition found on the boot USB — the log stays in RAM and will be copied to the installed system",
+        "log-file-usb-ventoy-busy": "Ventoy detected: its data partition is busy (older Ventoy). Update Ventoy to 1.1.01+ or enable VTOY_LINUX_REMOUNT to save the log on the USB",
+        "log-file-target-ok": "Install log copied to the installed system: {path}",
+        "log-file-target-fail": "Could not copy the log to the installed system: {e}",
         "log-kernel-detected": "Kernel selected: {kernel_name}",
         "log-kernel-fallback-no-bore": "BORE not available for {cpu_arch} on {target} — using {alt}",
         "log-kernel-repo-query-error": "Could not query AvalOS kernel repo: {e}",
@@ -689,6 +696,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-installing-scripts": "Instalando scripts de utilidad de AvalOS…",
         "log-io-scheduler": "Planificador de E/S configurado para {disco_tipo}",
         "log-kernel-available": "{kernel_pkg} encontrado en el repositorio",
+        "log-bootctl-no-systemd-mode": "arch-chroot rechazó -S (archiso más viejo) — reintentando sin modo systemd",
+        "log-file-live": "Log de instalación (RAM del live): {path}",
+        "log-file-usb-ok": "Log también guardándose en la USB de arranque: {desc}",
+        "log-file-usb-none": "No se encontró una partición escribible en la USB de arranque — el log queda en RAM y se copiará al sistema instalado",
+        "log-file-usb-ventoy-busy": "Ventoy detectado: su partición de datos está ocupada (Ventoy viejo). Actualiza Ventoy a 1.1.01+ o activa VTOY_LINUX_REMOUNT para guardar el log en la USB",
+        "log-file-target-ok": "Log copiado al sistema instalado: {path}",
+        "log-file-target-fail": "No se pudo copiar el log al sistema instalado: {e}",
         "log-kernel-detected": "Kernel seleccionado: {kernel_name}",
         "log-kernel-fallback-no-bore": "BORE no disponible para {cpu_arch} en {target} — usando {alt}",
         "log-kernel-repo-query-error": "No se pudo consultar el repositorio de kernel AvalOS: {e}",
@@ -1093,6 +1107,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-installing-scripts": "正在安装 AvalOS 实用脚本…",
         "log-io-scheduler": "I/O 调度器已配置为 {disco_tipo} 模式",
         "log-kernel-available": "仓库中找到 {kernel_pkg}",
+        "log-bootctl-no-systemd-mode": "arch-chroot 不支持 -S（较旧的 archiso）— 正在不使用 systemd 模式重试",
+        "log-file-live": "安装日志（Live 内存）：{path}",
+        "log-file-usb-ok": "日志同时保存到启动 U 盘：{desc}",
+        "log-file-usb-none": "在启动 U 盘上未找到可写分区 — 日志仅保留在内存中，并将复制到已安装的系统",
+        "log-file-usb-ventoy-busy": "检测到 Ventoy：其数据分区被占用（旧版 Ventoy）。请升级到 1.1.01+ 或启用 VTOY_LINUX_REMOUNT，以便将日志保存到 U 盘",
+        "log-file-target-ok": "安装日志已复制到已安装的系统：{path}",
+        "log-file-target-fail": "无法将日志复制到已安装的系统：{e}",
         "log-kernel-detected": "已选择内核：{kernel_name}",
         "log-kernel-fallback-no-bore": "{target} 的 {cpu_arch} 不支持 BORE — 使用 {alt}",
         "log-kernel-repo-query-error": "无法查询 AvalOS 内核仓库：{e}",
@@ -1506,6 +1527,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "log-installing-scripts": "AvalOS ユーティリティスクリプトをインストール中…",
         "log-io-scheduler": "I/O スケジューラーを {disco_tipo} プロファイルに設定しました",
         "log-kernel-available": "{kernel_pkg} がリポジトリで見つかりました",
+        "log-bootctl-no-systemd-mode": "arch-chroot が -S を受け付けませんでした（古い archiso）— systemd モードなしで再試行します",
+        "log-file-live": "インストールログ（Live の RAM）：{path}",
+        "log-file-usb-ok": "ログは起動 USB にも保存されます：{desc}",
+        "log-file-usb-none": "起動 USB に書き込み可能なパーティションが見つかりません — ログは RAM に保持され、インストール先システムにコピーされます",
+        "log-file-usb-ventoy-busy": "Ventoy を検出：データパーティションが使用中です（古い Ventoy）。1.1.01 以上に更新するか VTOY_LINUX_REMOUNT を有効にして、ログを USB に保存してください",
+        "log-file-target-ok": "インストールログをインストール先にコピーしました：{path}",
+        "log-file-target-fail": "ログをインストール先にコピーできませんでした：{e}",
         "log-kernel-detected": "選択されたカーネル：{kernel_name}",
         "log-kernel-fallback-no-bore": "{target} 上の {cpu_arch} では BORE が利用できません — {alt} を使用します",
         "log-kernel-repo-query-error": "AvalOS カーネルリポジトリを確認できませんでした：{e}",

@@ -36,11 +36,13 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import translations
 
 from avalos_installer.core.config import MOUNT_ROOT, MOUNT_EFI, MOUNT_ISO
+from avalos_installer.core.logfile import InstallLog
 
 
 def output_indicates_gpg_error(output: str) -> bool:
@@ -65,6 +67,16 @@ class InstallSession:
     Esto es "cómo hacer las cosas", no "qué se eligió hacer"."""
 
     def __init__(self, window: "webview.Window | None" = None, lang: str = "en"):
+        # Log persistente (ver core/logfile.py): el archivo en RAM existe desde
+        # ya, así que hasta lo que pase antes de que cargue la UI queda
+        # registrado. La búsqueda de la USB de arranque corre en segundo
+        # plano para no demorar el arranque de la ventana.
+        self.logfile = InstallLog()
+        self._usb_thread = threading.Thread(
+            target=self.logfile.attach_usb, name="avalos-usb-attach", daemon=True
+        )
+        self._usb_thread.start()
+
         self.window = window
         self._closed = False
         self._aborted = False
@@ -95,17 +107,26 @@ class InstallSession:
                 self.window.evaluate_js(code)
             except Exception as e:
                 print(f"[JS] {e}")
+                self.logfile.write("warn", f"[JS] {e} — {code[:80]}")
 
     def _jsc(self, func: str, *args):
         encoded = ", ".join(json.dumps(a, ensure_ascii=False) for a in args)
         self._js(f"{func}({encoded})")
 
     # ── API pública de logging/progreso hacia la UI ──────────────────────
-    def log(self, txt: str, cls: str = "info"): self._jsc("pyLog", txt, cls)
-    def step(self, id_: str, st: str, det: str = ""): self._jsc("pyStep", id_, st, det)
+    def log(self, txt: str, cls: str = "info"):
+        self.logfile.write(cls, txt)
+        self._jsc("pyLog", txt, cls)
+
+    def step(self, id_: str, st: str, det: str = ""):
+        self.logfile.write("state", f"{id_} → {st}" + (f" ({det})" if det else ""))
+        self._jsc("pyStep", id_, st, det)
+
     def progress(self, pct: int): self._jsc("pyProgress", pct)
     def info(self, id_: str, v: str, c: str = ""): self._jsc("pyInfo", id_, v, c)
-    def status(self, msg: str): self._jsc("pyStatus", msg)
+    def status(self, msg: str):
+        self.logfile.write("state", f"estado: {msg}")
+        self._jsc("pyStatus", msg)
     def label(self, txt: str): self._jsc("pyStatusLabel", txt)
 
     # ── Señales específicas que el monolito manda directo por _jsc (desde
@@ -114,8 +135,15 @@ class InstallSession:
     # necesitando durante la extracción de cada paso/módulo — no se
     # adivinaron todas de una vez, se confirman contra el código real
     # según se extrae.
-    def error_step(self, msg: str): self._jsc("pyErrorPaso", msg)
-    def error_fatal(self, msg: str): self._jsc("pyErrorFatal", msg)
+    def error_step(self, msg: str):
+        self.logfile.write("err", f"ERROR DE PASO: {msg}")
+        self._jsc("pyErrorPaso", msg)
+        self.logfile.snapshot("error de paso", dmesg=True)
+
+    def error_fatal(self, msg: str):
+        self.logfile.write("err", f"ERROR FATAL: {msg}")
+        self._jsc("pyErrorFatal", msg)
+        self.logfile.snapshot("error fatal", dmesg=True)
     def badges(self, net_ok: bool | None, uefi: bool): self._jsc("pyBadges", net_ok, uefi)
     def countdown_start(self, dev: str, model: str, size_human: str):
         self._jsc("pyIniciarCountdown", dev, model, size_human)
@@ -154,11 +182,42 @@ class InstallSession:
         self._closed = True
         self._aborted = True
         self._config_ready.set()
+        self.finalize_log()
+
+    # ── Log persistente ──────────────────────────────────────────
+    def report_log_destinations(self):
+        """Avisa en el log de la UI dónde quedó guardado el log. Espera (acotado)
+        a que termine la búsqueda de la USB de arranque."""
+        th = getattr(self, "_usb_thread", None)
+        if th is not None:
+            th.join(timeout=20)
+        self.log(self.t("log-file-live", path=str(self.logfile.path)), "info")
+        if self.logfile.usb_desc:
+            self.log(self.t("log-file-usb-ok", desc=self.logfile.usb_desc), "ok")
+        else:
+            self.log(self.t("log-file-usb-none"), "warn")
+            if self.logfile.usb_hint == "ventoy-busy":
+                self.log(self.t("log-file-usb-ventoy-busy"), "warn")
+
+    def finalize_log(self):
+        """Volcado final a la USB y desmontaje de lo que montó el log. Idempotente."""
+        self.logfile.close()
 
     # ── Ejecución de comandos ─────────────────────────────────────────────
     def run_cmd(self, cmd: list[str], timeout: int = 300,
                 log_cls: str = "info",
                 pre_mkdir: str | None = None) -> tuple[int, str]:
+        """Corre un comando en el live, transmite su salida al log y deja el
+        código de retorno (y cuánto tardó) en el archivo de log — antes el
+        rc solo lo veía quien lo consultaba en el código."""
+        t0 = time.monotonic()
+        rc, out = self._run_cmd_raw(cmd, timeout=timeout, log_cls=log_cls, pre_mkdir=pre_mkdir)
+        self.logfile.write("rc", f"rc={rc} ({time.monotonic() - t0:.1f}s) {' '.join(map(str, cmd))[:160]}")
+        return rc, out
+
+    def _run_cmd_raw(self, cmd: list[str], timeout: int = 300,
+                     log_cls: str = "info",
+                     pre_mkdir: str | None = None) -> tuple[int, str]:
         if pre_mkdir:
             Path(pre_mkdir).mkdir(parents=True, exist_ok=True)
         self.log(f"$ {' '.join(cmd)}", "cmd")
@@ -237,6 +296,7 @@ class InstallSession:
                 full_cmd, input=stdin_data, capture_output=True, text=True, timeout=timeout,
             )
             out = (proc.stdout or "") + (proc.stderr or "")
+            self.logfile.write("rc", f"rc={proc.returncode} [stdin] {' '.join(map(str, cmd))[:80]}")
             return proc.returncode, out.strip()
         except subprocess.TimeoutExpired:
             self.log(self.t("log-timeout-cmd", timeout=timeout, cmd0=cmd[0]), "err")
@@ -247,6 +307,15 @@ class InstallSession:
 
     def clean_mounts(self):
         self.log(self.t("log-cleaning-mounts"), "warn")
+        # El log viaja con el sistema: se copia a /var/log/avalos-install.log
+        # del destino justo antes de desmontarlo. Este método también corre en
+        # cada camino de error, así que un fallo a mitad de instalación deja
+        # su log en el disco (si llegó a montarse).
+        ok, info = self.logfile.copy_to_target(MOUNT_ROOT)
+        if ok:
+            self.log(self.t("log-file-target-ok", path=info), "ok")
+        elif info != "no montado":
+            self.log(self.t("log-file-target-fail", e=info), "warn")
         mount_points = [
             str(MOUNT_EFI),
             str(MOUNT_ROOT / "boot"),

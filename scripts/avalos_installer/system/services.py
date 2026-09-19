@@ -77,26 +77,43 @@ def configure_services(session: InstallSession, ctx: InstallContext) -> None:
         # FIX (documentado en wiki.archlinux.org/title/Snapper): con un
         # layout de subvolúmenes @-prefijados como este, @snapshots ya
         # queda montado en /.snapshots desde el particionado —
-        # 'create-config' SIEMPRE falla ahí, porque intenta crear su
-        # PROPIO subvolumen en ese mismo path y btrfs no deja crear un
-        # subvolumen donde ya hay uno montado (errno 17, File exists).
-        # El propio archinstall tuvo este bug hasta la 3.0.5. La
-        # secuencia que pide la wiki: desmontar el @snapshots
-        # pre-creado, dejar que Snapper cree el suyo (path vacío, ahí
-        # sí funciona), borrar ESE, y volver a montar el @snapshots
-        # persistente de siempre en su lugar.
+        # 'create-config' SIEMPRE falla ahí con errno 17 ("creating btrfs
+        # subvolume .snapshots failed since it already exists"): intenta
+        # crear su PROPIO subvolumen en ese path y el nombre ya está
+        # ocupado. El propio archinstall tuvo este bug hasta la 3.0.5.
+        # Secuencia completa:
+        #   umount /.snapshots -> rm -r /.snapshots -> create-config
+        #   -> btrfs subvolume delete /.snapshots -> mkdir /.snapshots
+        #   -> mount del @snapshots persistente de siempre.
+        # La versión anterior solo hacía umount + remount: faltaban el
+        # rm -r (el directorio vacío que queda como punto de montaje sigue
+        # ocupando el nombre, así que create-config fallaba igual) y el
+        # mkdir (delete se lleva el directorio y mount no lo crea: el
+        # re-montaje fallaba siempre).
         snap_mount = MOUNT_ROOT / ".snapshots"
         root_dev = ""
         was_mounted = False
         if snap_mount.exists():
+            # --mountpoint (no --target): solo matchea si /.snapshots ES un
+            # punto de montaje. Con --target, si no lo fuera, findmnt
+            # devolvería el montaje padre (@) y se intentaría desmontar
+            # algo que no corresponde.
             rc_find, out_find = session.run_cmd(
-                ["findmnt", "-n", "-o", "SOURCE", "--target", str(snap_mount)]
+                ["findmnt", "-n", "-o", "SOURCE", "--mountpoint", str(snap_mount)]
             )
             root_dev = out_find.strip().split("[")[0].strip()
             if rc_find == 0 and root_dev:
                 rc_um, _ = session.run_cmd(["umount", str(snap_mount)])
                 was_mounted = (rc_um == 0)
-            if not was_mounted:
+            if was_mounted:
+                try:
+                    snap_mount.rmdir()  # vacío: es solo el punto de montaje
+                except OSError as e:
+                    session.log(
+                        f"[WARN] no se pudo borrar el punto de montaje {snap_mount} "
+                        f"({e}) — create-config va a fallar con errno 17", "warn"
+                    )
+            else:
                 session.log(
                     f"[WARN] no se pudo desmontar {snap_mount} antes de Snapper "
                     f"(o no se identificó el dispositivo) — create-config puede "
@@ -107,29 +124,27 @@ def configure_services(session: InstallSession, ctx: InstallContext) -> None:
             ["snapper", "--no-dbus", "-c", "root", "create-config", "/"]
         )
 
-        if was_mounted and rc_snap == 0:
-            # El .snapshots que create-config acaba de crear es un
-            # subvolumen nuevo y vacío (Snapper ya generó su config
-            # apuntando a este path como carpeta normal) — se descarta
-            # y se remonta el @snapshots persistente en su lugar, con
-            # las mismas opciones que el resto de los subvolúmenes.
-            session.run_cmd(["btrfs", "subvolume", "delete", str(snap_mount)])
-            rc_rm, _ = session.run_cmd(
+        if was_mounted:
+            # El .snapshots que dejó create-config es un subvolumen nuevo y
+            # vacío (si falló, puede no existir) — se descarta y se vuelve
+            # a montar el @snapshots persistente con las mismas opciones
+            # que el resto de los subvolúmenes. Esto corre también si
+            # create-config falló, para no dejar el sistema sin @snapshots.
+            if snap_mount.exists():
+                session.run_cmd(["btrfs", "subvolume", "delete", str(snap_mount)])
+            try:
+                snap_mount.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                session.log(f"[WARN] no se pudo recrear {snap_mount}: {e}", "warn")
+            rc_rm, out_rm = session.run_cmd(
                 ["mount", "-o", f"subvol=@snapshots,{BTRFS_MOUNT_OPTS}", root_dev, str(snap_mount)]
             )
             if rc_rm != 0:
                 session.log(
-                    f"[WARN] Snapper quedó configurado pero no se pudo re-montar "
-                    f"el @snapshots persistente en {snap_mount} — puede haber "
-                    f"quedado sin ese subvolumen", "err"
+                    f"[WARN] no se pudo re-montar el @snapshots persistente en "
+                    f"{snap_mount} — puede haber quedado sin ese subvolumen: "
+                    f"{out_rm.strip()[-160:]}", "err"
                 )
-        elif was_mounted and rc_snap != 0:
-            # create-config falló por otra razón (no por el conflicto de
-            # arriba, que ya se evitó) -- restaurar el montaje original
-            # igual, para no dejar el sistema sin @snapshots por nada.
-            session.run_cmd(
-                ["mount", "-o", f"subvol=@snapshots,{BTRFS_MOUNT_OPTS}", root_dev, str(snap_mount)]
-            )
 
         if rc_snap != 0:
             # No fatal: Snapper es un extra (snapshots), no algo de lo

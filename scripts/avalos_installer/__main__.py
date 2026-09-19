@@ -53,6 +53,7 @@ def main() -> None:
     os.environ["WEBKIT_DISABLE_DMABUF_RENDERER"] = "1"
 
     session = InstallSession()
+    session.logfile.install_hooks()   # excepciones sin capturar → archivo de log
     api = InstallerAPI(session)
     html = build_html()
 

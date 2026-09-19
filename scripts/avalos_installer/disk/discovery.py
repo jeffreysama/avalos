@@ -30,6 +30,19 @@ _GUID_EFI_SYSTEM_PARTITION = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 
 
 def detect_boot_disk() -> str:
+    # FIX: en el live de archiso "/" es un overlay ("airootfs"), no un bloque:
+    # la lógica de abajo devolvía "airootfs" y el disco de arranque (la USB)
+    # nunca se marcaba como es_arranque — ni la UI lo bloqueaba ni el chequeo
+    # de install.py lo rechazaba. El medio real sale de /run/archiso/bootmnt
+    # (ver disk/bootmedium.py: dd, Ventoy, copytoram). Si no se puede
+    # determinar (ej. VM con la ISO como CD-ROM) se sigue con lo de siempre.
+    try:
+        from avalos_installer.disk.bootmedium import boot_disks
+        names = boot_disks()
+        if names:
+            return names[0]
+    except Exception as e:
+        print(f"[WARN] detect_boot_disk: bootmedium falló: {e}", file=sys.stderr)
     rc, out, _ = run_command(["findmnt", "-n", "-o", "SOURCE", "/"])
     if rc == 0 and out:
         dev = out.strip()

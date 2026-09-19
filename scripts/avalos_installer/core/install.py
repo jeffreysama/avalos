@@ -96,6 +96,11 @@ def run_installation(session: InstallSession) -> None:
         session._installing = False
         return
 
+    # El log jamás debe llevar la contraseña (aunque se colara en alguna línea)
+    # y se avisa en la UI dónde queda guardado (RAM del live / USB de arranque).
+    session.logfile.add_secret(ctx.password)
+    session.report_log_destinations()
+
     session.info("user", ctx.username, "ok")
     session.info("modo", "USB (ext4 noatime)" if ctx.usb_mode else session.t("info-modo-pc"), "ok")
     session.info(
@@ -378,3 +383,4 @@ def run_installation(session: InstallSession) -> None:
             except OSError as e:
                 session.log(session.t("log-cleanup-sudoers-fail", e=e), "warn")
         session.stop_timer()
+        session.finalize_log()
