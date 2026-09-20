@@ -43,6 +43,7 @@ import translations
 
 from avalos_installer.core.config import MOUNT_ROOT, MOUNT_EFI, MOUNT_ISO
 from avalos_installer.core.logfile import InstallLog
+from avalos_installer.core.runner import kill_all, run_streaming
 
 
 def output_indicates_gpg_error(output: str) -> bool:
@@ -120,6 +121,8 @@ class InstallSession:
 
     def step(self, id_: str, st: str, det: str = ""):
         self.logfile.write("state", f"{id_} → {st}" + (f" ({det})" if det else ""))
+        if id_ == "mount" and st == "done":
+            self.logfile.set_target_root(MOUNT_ROOT)   # espejo del log en el disco destino
         self._jsc("pyStep", id_, st, det)
 
     def progress(self, pct: int): self._jsc("pyProgress", pct)
@@ -182,6 +185,7 @@ class InstallSession:
         self._closed = True
         self._aborted = True
         self._config_ready.set()
+        kill_all()                        # cada comando corre en su propia sesión: no reciben Ctrl+C solos
         self.finalize_log()
 
     # ── Log persistente ──────────────────────────────────────────
@@ -218,57 +222,41 @@ class InstallSession:
     def _run_cmd_raw(self, cmd: list[str], timeout: int = 300,
                      log_cls: str = "info",
                      pre_mkdir: str | None = None) -> tuple[int, str]:
+        """Ejecuta `cmd` en streaming (ver core/runner.py: timeout y Cancelar
+        reales sobre todo el árbol de procesos, stdin=/dev/null, sin terminal
+        de control). Devuelve (rc, salida); -2 timeout, -99 cancelado, -3
+        excepción — igual que antes."""
         if pre_mkdir:
             Path(pre_mkdir).mkdir(parents=True, exist_ok=True)
+        cmd = [str(c) for c in cmd]
         self.log(f"$ {' '.join(cmd)}", "cmd")
-        output: list[str] = []
-        proc: "subprocess.Popen[str] | None" = None
-        _timed_out = False
 
-        def _kill_on_timeout():
-            nonlocal _timed_out
-            _timed_out = True
-            if proc is not None:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+        def _idle(secs: int, leaf: str, tree: list[str]) -> None:
+            self.log(self.t("log-cmd-idle", secs=secs, proc=leaf), "warn")
+            for ln in tree:
+                self.logfile.diag(f"árbol: {ln}")
+
+        def _kill(reason: str, tree: list[str]) -> None:
+            self.logfile.diag(f"árbol de procesos justo antes de matarlo ({reason}):")
+            for ln in tree:
+                self.logfile.diag(f"árbol: {ln}")
 
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT, text=True, bufsize=1)
-            if proc.stdout is None:
-                return -1, "No stdout"
-
-            timer = threading.Timer(timeout, _kill_on_timeout)
-            timer.start()
-            try:
-                for line in proc.stdout:
-                    line = line.rstrip('\n')
-                    if line:
-                        self.log(line, log_cls)
-                        output.append(line)
-                    if self._aborted:
-                        proc.kill()
-                        proc.wait()
-                        return -99, "\n".join(output)
-                proc.wait(timeout=5)
-            finally:
-                timer.cancel()
-
-            if _timed_out:
-                self.log(self.t("log-timeout-proc", timeout=timeout), "err")
-                return -2, "\n".join(output)
-
-            return proc.returncode, "\n".join(output)
+            res = run_streaming(
+                cmd, timeout,
+                on_line=lambda ln: self.log(ln, log_cls),
+                should_abort=lambda: self._aborted,
+                on_idle=_idle, on_kill=_kill,
+            )
         except Exception as e:
             self.log(self.t("log-exception", e=e), "err")
-            if proc is not None:
-                try:
-                    proc.kill(); proc.wait()
-                except Exception:
-                    pass
             return -3, ""
+        if res.status == "aborted":
+            return -99, res.output
+        if res.status == "timeout":
+            self.log(self.t("log-timeout-proc", timeout=timeout), "err")
+            return -2, res.output
+        return res.rc, res.output
 
     def run_chroot(self, cmd: list[str], timeout: int = 300,
                     systemd_mode: bool = False) -> tuple[int, str]:
@@ -311,6 +299,7 @@ class InstallSession:
         # del destino justo antes de desmontarlo. Este método también corre en
         # cada camino de error, así que un fallo a mitad de instalación deja
         # su log en el disco (si llegó a montarse).
+        self.logfile.stop_target_mirror()
         ok, info = self.logfile.copy_to_target(MOUNT_ROOT)
         if ok:
             self.log(self.t("log-file-target-ok", path=info), "ok")

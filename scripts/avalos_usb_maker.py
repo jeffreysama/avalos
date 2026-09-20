@@ -54,7 +54,11 @@ import webview  # type: ignore
 # ══════════════════════════════════════════════════════════════════════════════
 
 MIN_USB_GB       = 8            # AvalOS ISO pesa ~2 GB + espacio extra
-VENTOY_VERSION   = "1.0.99"    # fallback — se detecta la última desde GitHub si hay red
+VENTOY_VERSION   = "1.1.17"    # fallback — se detecta la última desde GitHub si hay red.
+                               # >= 1.1.01: el remount de Linux viene activado por defecto; con
+                               # versiones anteriores (ej. 1.0.99) la partición de datos no se puede
+                               # montar desde el live ("device busy") y el instalador no puede
+                               # guardar su log en la USB.
 VENTOY_API_URL   = "https://api.github.com/repos/ventoy/Ventoy/releases/latest"
 VENTOY_FALLBACK  = f"https://github.com/ventoy/Ventoy/releases/download/v{VENTOY_VERSION}/ventoy-{VENTOY_VERSION}-windows.zip"
 # El instalador gráfico va DENTRO del ISO (lo bundlea build-avalos-iso.sh).
@@ -82,7 +86,7 @@ echo "════════════════════════�
 INSTALLED="/usr/local/bin/avalos-install"
 if [ -f "$INSTALLED" ]; then
     echo "[OK] Usando instalador del sistema: $INSTALLED"
-    exec sudo python "$INSTALLED"
+    exec sudo "$INSTALLED"
 fi
 
 # 2. Buscar skill_instalar_usb.py en la partición Ventoy (respaldo)

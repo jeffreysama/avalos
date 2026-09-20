@@ -144,7 +144,11 @@ def configure_repos(session: InstallSession) -> None:
             rc1, out1 = session.run_chroot(["pacman-key", "--init"])
             rc2, out2 = session.run_cmd([
                 "bash", "-c",
-                f"set -o pipefail; gpg --homedir /etc/pacman.d/gnupg --armor "
+                # --no-permission-warning: este gpg corre en el LIVE y el keyring de la
+                # ISO trae /etc/pacman.d/gnupg con permisos que gpg considera "unsafe"
+                # ("gpg: WARNING: unsafe permissions on homedir"). Es solo un aviso —solo
+                # lee y exporta una clave pública—, pero ensuciaba el log de instalación.
+                f"set -o pipefail; gpg --no-permission-warning --homedir /etc/pacman.d/gnupg --armor "
                 f"--export {AVALOS_GPG_FINGERPRINT} "
                 f"| arch-chroot {MOUNT_ROOT} pacman-key --add -",
             ])

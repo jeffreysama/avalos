@@ -23,6 +23,20 @@ from pathlib import Path
 
 import translations
 
+# Log persistente + ejecutor robusto: viven en el paquete avalos_installer (en la ISO,
+# el wrapper avalos-install-old pone su carpeta en PYTHONPATH). Si el paquete no está
+# —ej. este script suelto en un pendrive— el legado sigue funcionando como siempre,
+# sin log en archivo y con su ejecutor original.
+try :
+    from avalos_installer .core .logfile import InstallLog as _InstallLog
+except Exception :
+    _InstallLog =None
+try :
+    from avalos_installer .core .runner import run_streaming as _run_streaming ,kill_all as _kill_all
+except Exception :
+    _run_streaming =None
+    _kill_all =None
+
 try :
     import webview
 except ImportError :
@@ -2563,14 +2577,76 @@ class VentanaInstalador :
         self ._mirror_choice :str |None =None
         self ._lock =threading .Lock ()
 
+        # Log persistente (ver avalos_installer/core/logfile.py): archivo en RAM desde ya,
+        # espejo en la USB de arranque y en el disco destino. La búsqueda de la USB corre
+        # en segundo plano para no demorar la ventana.
+        self ._logfile =None
+        self ._usb_thread =None
+        if _InstallLog is not None :
+            try :
+                self ._logfile =_InstallLog (variant ="legado (skill_instalar_usb.py)")
+                self ._usb_thread =threading .Thread (
+                target =self ._logfile .attach_usb ,name ="avalos-usb-attach",daemon =True
+                )
+                self ._usb_thread .start ()
+            except Exception as e :
+                print (f"[WARN] log persistente no disponible: {e }")
+                self ._logfile =None
+
     def _js (self ,code :str ):
         if self .window and not self ._cerrado :
             try :
                 self .window .evaluate_js (code )
             except Exception as e :
                 print (f"[JS] {e }")
+                if self ._logfile is not None :
+                    self ._logfile .write ("warn",f"[JS] {e } — {code [:80 ]}")
+
+    def _registrar_log (self ,func :str ,args :tuple )->None :
+        """Copia al archivo de log lo que se manda a la UI (pyLog, pyStep, pyStatus,
+        errores). Con un solo gancho en _jsc quedan cubiertos los ~40 sitios que
+        llaman a pyErrorPaso/pyErrorFatal directamente."""
+        lf =self ._logfile
+        if lf is None :
+            return
+        try :
+            if func =="pyLog"and args :
+                lf .write (args [1 ]if len (args )>1 else "info",args [0 ])
+            elif func =="pyStep"and len (args )>=2 :
+                det =f" ({args [2 ]})"if len (args )>2 and args [2 ]else ""
+                lf .write ("state",f"{args [0 ]} → {args [1 ]}{det }")
+                if args [0 ]=="mount"and args [1 ]=="done":
+                    lf .set_target_root (MOUNT_ROOT )
+            elif func =="pyStatus"and args :
+                lf .write ("state",f"estado: {args [0 ]}")
+            elif func in ("pyErrorPaso","pyErrorFatal")and args :
+                pref ="ERROR FATAL: "if func =="pyErrorFatal"else "ERROR DE PASO: "
+                lf .write ("err",pref +str (args [0 ]))
+                lf .snapshot ("error",dmesg =True )
+        except Exception :
+            pass
+
+    def _reportar_destinos_log (self ):
+        """Avisa en la UI dónde queda el log (RAM / USB de arranque)."""
+        lf =self ._logfile
+        if lf is None :
+            return
+        if self ._usb_thread is not None :
+            self ._usb_thread .join (timeout =20 )
+        self ._log (self ._t ("log-file-live",path =str (lf .path )),"info")
+        if lf .usb_desc :
+            self ._log (self ._t ("log-file-usb-ok",desc =lf .usb_desc ),"ok")
+        else :
+            self ._log (self ._t ("log-file-usb-none"),"warn")
+            if lf .usb_hint =="ventoy-busy":
+                self ._log (self ._t ("log-file-usb-ventoy-busy"),"warn")
+
+    def _finalizar_log (self ):
+        if self ._logfile is not None :
+            self ._logfile .close ()
 
     def _jsc (self ,func :str ,*args ):
+        self ._registrar_log (func ,args )
         encoded =", ".join (json .dumps (a ,ensure_ascii =False )for a in args )
         self ._js (f"{func }({encoded })")
 
@@ -2600,8 +2676,64 @@ class VentanaInstalador :
         self ._cerrado =True
         self ._abortado =True
         self ._config_lista .set ()
+        if _kill_all is not None :
+            _kill_all ()
+        self ._finalizar_log ()
 
     def _run_cmd (self ,cmd :list [str ],timeout :int =300 ,
+    log_cls :str ="info",
+    pre_mkdir :str |None =None )->tuple [int ,str ]:
+        """Corre un comando en el live. Usa el ejecutor robusto compartido
+        (avalos_installer/core/runner.py): timeout y Cancelar reales sobre todo el
+        árbol de procesos, stdin=/dev/null y sin terminal de control — el ejecutor
+        original se colgaba para siempre si un nieto (sudo → makepkg → sudo pacman)
+        quedaba esperando algo en silencio. Deja rc y duración en el archivo de log."""
+        t0 =time .monotonic ()
+        if _run_streaming is None :
+            rc ,out =self ._run_cmd_original (cmd ,timeout ,log_cls ,pre_mkdir )
+        else :
+            rc ,out =self ._run_cmd_robusto (cmd ,timeout ,log_cls ,pre_mkdir )
+        if self ._logfile is not None :
+            self ._logfile .write ("rc",f"rc={rc } ({time .monotonic ()-t0 :.1f}s) {' '.join (map (str ,cmd ))[:160 ]}")
+        return rc ,out
+
+    def _run_cmd_robusto (self ,cmd :list [str ],timeout :int ,log_cls :str ,
+    pre_mkdir :str |None )->tuple [int ,str ]:
+        if pre_mkdir :
+            Path (pre_mkdir ).mkdir (parents =True ,exist_ok =True )
+        cmd =[str (c )for c in cmd ]
+        self ._log (f"$ {' '.join (cmd )}","cmd")
+
+        def _idle (secs :int ,leaf :str ,tree :list [str ])->None :
+            self ._log (self ._t ("log-cmd-idle",secs =secs ,proc =leaf ),"warn")
+            if self ._logfile is not None :
+                for ln in tree :
+                    self ._logfile .diag (f"árbol: {ln }")
+
+        def _kill (motivo :str ,tree :list [str ])->None :
+            if self ._logfile is not None :
+                self ._logfile .diag (f"árbol de procesos justo antes de matarlo ({motivo }):")
+                for ln in tree :
+                    self ._logfile .diag (f"árbol: {ln }")
+
+        try :
+            res =_run_streaming (
+            cmd ,timeout ,
+            on_line =lambda ln :self ._log (ln ,log_cls ),
+            should_abort =lambda :self ._abortado ,
+            on_idle =_idle ,on_kill =_kill ,
+            )
+        except Exception as e :
+            self ._log (self ._t ("log-exception",e =e ),"err")
+            return -3 ,""
+        if res .status =="aborted":
+            return -99 ,res .output
+        if res .status =="timeout":
+            self ._log (self ._t ("log-timeout-proc",timeout =timeout ),"err")
+            return -2 ,res .output
+        return res .rc ,res .output
+
+    def _run_cmd_original (self ,cmd :list [str ],timeout :int =300 ,
     log_cls :str ="info",
     pre_mkdir :str |None =None )->tuple [int ,str ]:
         if pre_mkdir :
@@ -2696,6 +2828,15 @@ class VentanaInstalador :
 
     def _limpiar_montajes (self ):
         self ._log (self ._t ("log-cleaning-mounts"),"warn")
+        # El log viaja con el sistema: /var/log/avalos-install.log del destino, justo antes de
+        # desmontarlo. Este método también corre en cada camino de error.
+        if self ._logfile is not None :
+            self ._logfile .stop_target_mirror ()
+            _ok ,_info =self ._logfile .copy_to_target (MOUNT_ROOT )
+            if _ok :
+                self ._log (self ._t ("log-file-target-ok",path =_info ),"ok")
+            elif _info !="no montado":
+                self ._log (self ._t ("log-file-target-fail",e =_info ),"warn")
         puntos =[
 
         str (MOUNT_EFI ),
@@ -3348,6 +3489,11 @@ WantedBy=multi-user.target
         passw =self ._password
         hostname =self ._hostname
         timezone =self ._timezone
+
+        # El log jamás debe llevar la contraseña (aunque se colara en alguna línea)
+        if self ._logfile is not None :
+            self ._logfile .add_secret (passw )
+        self ._reportar_destinos_log ()
 
         self ._install_gaming =getattr (self ,'_install_gaming',False )
         self ._install_bore =getattr (self ,'_install_bore',False )
@@ -4858,15 +5004,29 @@ DISTRIB_DESCRIPTION="AvalOS"
             self ._status (self ._t ("status-installing-aur"))
             self ._log ("\n── yay + AUR ──\n","step")
 
-            sudoers_tmp =MOUNT_ROOT /"etc"/"sudoers.d"/"99-aur-build"
+            # FIX (cuelgue en "installing missing dependencies"): sudo lee sudoers.d en orden
+            # alfabético y GANA LA ÚLTIMA regla que coincide. El archivo persistente de wheel se
+            # llama "wheel" ('%wheel ALL=(ALL:ALL) ALL', pide contraseña) y ordena DESPUÉS de
+            # "99-aur-build", así que le ganaba: makepkg → 'sudo pacman -S go' pedía una
+            # contraseña que nadie iba a escribir. Este nombre ordena después de todo; la línea
+            # Defaults quita además el prompt para este usuario sea cual sea el orden.
+            sudoers_tmp =MOUNT_ROOT /"etc"/"sudoers.d"/"zz-avalos-aur-build"
             try :
-                sudoers_tmp .write_text (f"{usuario } ALL=(ALL:ALL) NOPASSWD: ALL\n")
+                sudoers_tmp .write_text (
+                f"Defaults:{usuario } !authenticate\n"
+                f"{usuario } ALL=(ALL:ALL) NOPASSWD: ALL\n"
+                )
                 sudoers_tmp .chmod (0o440 )
             except OSError :
                 sudoers_tmp =None
 
+            rc_sudo ,out_sudo =self ._run_chroot (["sudo","-H","-u",usuario ,"sudo","-n","true"],timeout =30 )
+            if rc_sudo !=0 :
+                self ._log (self ._t ("log-aur-sudo-preflight-fail",out =out_sudo .strip ()[-200 :]),"warn")
+
             yay_script =(
             "set -euo pipefail; "
+            "export GIT_TERMINAL_PROMPT=0; "
             "TMPD=$(mktemp -d) && "
             "git clone --depth=1 https://aur.archlinux.org/yay.git \"$TMPD/yay_build\" && "
             "cd \"$TMPD/yay_build\" && "
@@ -4996,14 +5156,16 @@ DISTRIB_DESCRIPTION="AvalOS"
         finally :
             self ._instalando =False
 
-            _sudoers_guard =MOUNT_ROOT /"etc"/"sudoers.d"/"99-aur-build"
-            if _sudoers_guard .exists ():
-                try :
-                    _sudoers_guard .unlink ()
-                    self ._log (self ._t ("log-cleanup-sudoers-ok"),"ok")
-                except OSError as _e :
-                    self ._log (self ._t ("log-cleanup-sudoers-fail",e =_e ),"warn")
+            for _nombre_sudoers in ("zz-avalos-aur-build","99-aur-build"):
+                _sudoers_guard =MOUNT_ROOT /"etc"/"sudoers.d"/_nombre_sudoers
+                if _sudoers_guard .exists ():
+                    try :
+                        _sudoers_guard .unlink ()
+                        self ._log (self ._t ("log-cleanup-sudoers-ok"),"ok")
+                    except OSError as _e :
+                        self ._log (self ._t ("log-cleanup-sudoers-fail",e =_e ),"warn")
             self ._jsc ("pyStopTimer")
+            self ._finalizar_log ()
 
 def _build_html ()->str :
 
@@ -5064,6 +5226,8 @@ if __name__ =="__main__":
     os .environ ["WEBKIT_DISABLE_DMABUF_RENDERER"]="1"
 
     vent =VentanaInstalador ()
+    if vent ._logfile is not None :
+        vent ._logfile .install_hooks ()
     api =InstaladorAPI (vent )
 
     html =_build_html ()

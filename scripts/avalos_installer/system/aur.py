@@ -38,9 +38,23 @@ def install_aur(session: InstallSession, ctx: InstallContext) -> None:
     session.status(session.t("status-installing-aur"))
     session.log("\n── yay + AUR ──\n", "step")
 
-    sudoers_tmp = MOUNT_ROOT / "etc" / "sudoers.d" / "99-aur-build"
+    # FIX (cuelgue de 85 min en "installing missing dependencies"): sudo lee
+    # /etc/sudoers.d/ en orden alfabético y GANA LA ÚLTIMA regla que
+    # coincide. El archivo persistente del grupo wheel (users.py) se llama
+    # "wheel" ('%wheel ALL=(ALL:ALL) ALL', pide contraseña) y ordena DESPUÉS
+    # de "99-aur-build" ('w' > '9'), así que le ganaba: el usuario recién
+    # creado está en wheel y makepkg → 'sudo pacman -S go' terminaba pidiendo
+    # una contraseña que nadie iba a escribir (el prompt salía en la terminal
+    # desde la que se lanzó el instalador, nunca en el log). Probado con sudo
+    # 1.9.15: wheel + 99-aur-build → "sudo: a password is required"; con este
+    # nombre, que ordena después de todo, rc=0. La línea Defaults quita
+    # además el prompt para este usuario sea cual sea el orden.
+    sudoers_tmp = MOUNT_ROOT / "etc" / "sudoers.d" / "zz-avalos-aur-build"
     try:
-        sudoers_tmp.write_text(f"{ctx.username} ALL=(ALL:ALL) NOPASSWD: ALL\n")
+        sudoers_tmp.write_text(
+            f"Defaults:{ctx.username} !authenticate\n"
+            f"{ctx.username} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        )
         sudoers_tmp.chmod(0o440)
     except OSError:
         sudoers_tmp = None
@@ -56,8 +70,17 @@ def install_aur(session: InstallSession, ctx: InstallContext) -> None:
     # límite. Se envuelve todo en try/finally para que la limpieza corra
     # pase lo que pase, y se le agrega su propio try/except a MangoHud.
     try:
+        # Comprobación previa (10 s en vez de un cuelgue de minutos): si sudo
+        # sin contraseña no funciona, makepkg va a fallar exactamente igual.
+        rc_sudo, out_sudo = session.run_chroot(
+            ["sudo", "-H", "-u", ctx.username, "sudo", "-n", "true"], timeout=30
+        )
+        if rc_sudo != 0:
+            session.log(session.t("log-aur-sudo-preflight-fail", out=out_sudo.strip()[-200:]), "warn")
+
         yay_script = (
             "set -euo pipefail; "
+            "export GIT_TERMINAL_PROMPT=0; "
             "TMPD=$(mktemp -d) && "
             "git clone --depth=1 https://aur.archlinux.org/yay.git \"$TMPD/yay_build\" && "
             "cd \"$TMPD/yay_build\" && "

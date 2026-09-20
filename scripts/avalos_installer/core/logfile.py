@@ -22,8 +22,11 @@ hilo de instalación):
      OJO Ventoy: antes de la 1.1.01 su partición de datos NO se puede
      montar desde el live (device busy, restricción de device-mapper);
      si pasa, queda un aviso en el log (usb_hint = "ventoy-busy").
-  3. El sistema instalado: /var/log/avalos-install.log, copiado justo antes
-     de desmontar (session.clean_mounts) — incluido el camino de error.
+  3. El sistema instalado: /var/log/avalos-install.log. Desde que termina el
+     paso "mount" se espeja cada ~20 s (con fsync) — es el canal que
+     sobrevive a un cuelgue o a un aborto aunque la USB no se pueda escribir
+     (Ventoy viejo) — y se copia una última vez justo antes de desmontar
+     (session.clean_mounts), incluido el camino de error.
 
 Además captura excepciones sin capturar (hilo principal y de instalación) y
 los WARNING/ERROR de `logging` (pywebview), y tacha las contraseñas que se
@@ -39,6 +42,7 @@ import platform
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +64,7 @@ _VENTOY_MOUNTS = ("/run/mnt/ventoy", "/mnt/ventoy", "/ventoy")
 _USB_MAX_BYTES = 8 * 1024 * 1024      # tope del archivo en la USB
 _USB_MIN_FREE = 4 * 1024 * 1024       # espacio libre mínimo para elegir una partición
 _SYNC_INTERVAL = 2.0                  # segundos entre volcados a la USB
+_TARGET_INTERVAL = 20.0               # segundos entre copias al sistema instalado
 _TRUNC_MSG = (
     "\n[LOG TRUNCADO EN LA USB: se alcanzó el límite de tamaño — el log completo "
     "sigue en /tmp/avalos-install.log y en /var/log/avalos-install.log del "
@@ -94,6 +99,24 @@ def _write_all(fh, data: bytes) -> None:
         mv = mv[n:]
 
 
+def _os_release() -> dict[str, str]:
+    """Campos de /etc/os-release (archiso agrega IMAGE_ID / IMAGE_VERSION: dicen
+    qué ISO estaba corriendo — clave para saber si un log viene de una
+    build con o sin cierto arreglo)."""
+    for p in ("/etc/os-release", "/usr/lib/os-release"):
+        try:
+            text = Path(p).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        out: dict[str, str] = {}
+        for ln in text.splitlines():
+            if "=" in ln and not ln.lstrip().startswith("#"):
+                k, _, v = ln.partition("=")
+                out[k.strip()] = v.strip().strip('"')
+        return out
+    return {}
+
+
 class _LogBridge(logging.Handler):
     """Reenvía WARNING/ERROR del módulo logging (pywebview, GTK...) al log."""
 
@@ -112,8 +135,10 @@ class _LogBridge(logging.Handler):
 
 
 class InstallLog:
-    def __init__(self, path: Path = LIVE_LOG, usb_mount_dir: Path = USB_MOUNT_DIR, run=None):
+    def __init__(self, path: Path = LIVE_LOG, usb_mount_dir: Path = USB_MOUNT_DIR, run=None,
+                 variant: str = "modular (avalos_installer)"):
         self.path = Path(path)
+        self._variant = variant
         self._usb_mount_dir = Path(usb_mount_dir)
         self._run = run or _sh
 
@@ -139,6 +164,12 @@ class InstallLog:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+        # Espejo en el sistema instalado (ver set_target_root)
+        self._target_root: Path | None = None
+        self._target_lock = threading.RLock()
+        self._target_size = -1                # bytes del log ya copiados al destino
+        self._target_err = False
+
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._start = self.path.stat().st_size if self.path.exists() else 0
@@ -147,6 +178,8 @@ class InstallLog:
             self._start = 0
             print(f"[WARN] logfile: no se pudo abrir {self.path}: {e}", file=sys.stderr)
         self._write_header()
+        self._thread = threading.Thread(target=self._sync_loop, name="avalos-log-sync", daemon=True)
+        self._thread.start()
 
     # ── Escritura ────────────────────────────────────────────────────
     def add_secret(self, value) -> None:
@@ -193,10 +226,13 @@ class InstallLog:
 
     def _write_header(self) -> None:
         efi = "UEFI" if Path("/sys/firmware/efi").exists() else "BIOS"
+        osr = _os_release()
+        image = osr.get("IMAGE_VERSION") or osr.get("BUILD_ID") or "?"
         self._emit([
             "=" * 72,
             "AvalOS installer — log de instalación",
             f"Inicio: {datetime.now():%Y-%m-%d %H:%M:%S} (reloj del live: puede no ser la hora real)",
+            f"Instalador: {self._variant} · imagen {osr.get('IMAGE_ID', '?')} {image}",
             f"Kernel {os.uname().release} · Python {platform.python_version()} · arranque {efi}",
             "=" * 72,
         ])
@@ -248,22 +284,58 @@ class InstallLog:
         """Copia el log de esta sesión a <mount_root>/var/log/avalos-install.log.
         Devuelve (ok, detalle). Si mount_root no está montado no hace nada
         (detalle 'no montado')."""
-        try:
-            if not os.path.ismount(mount_root):
-                return False, "no montado"
-            with self._lock:
-                if self._fh is not None:
-                    self._fh.flush()
-            with open(self.path, "rb") as src:
-                src.seek(self._start)
-                data = src.read()
-            dest = Path(mount_root) / TARGET_LOG_REL
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
-            dest.chmod(0o644)
-            return True, "/" + str(TARGET_LOG_REL)
-        except OSError as e:
-            return False, str(e)
+        with self._target_lock:               # serializa con el espejo periódico
+            try:
+                if not os.path.ismount(mount_root):
+                    return False, "no montado"
+                with self._lock:
+                    if self._fh is not None:
+                        self._fh.flush()
+                with open(self.path, "rb") as src:
+                    src.seek(self._start)
+                    data = src.read()
+                dest = Path(mount_root) / TARGET_LOG_REL
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with open(dest, "wb") as out:
+                    out.write(data)
+                    out.flush()
+                    os.fsync(out.fileno())
+                dest.chmod(0o644)
+                self._target_size = len(data)
+                return True, "/" + str(TARGET_LOG_REL)
+            except OSError as e:
+                return False, str(e)
+
+    def set_target_root(self, mount_root: Path) -> None:
+        """Activa el espejo periódico en <mount_root>/var/log/avalos-install.log
+        (se llama al terminar el paso 'mount': antes, /var/log puede quedar
+        tapado por el montaje de su subvolumen). Es el canal que sobrevive a
+        un cuelgue o a un aborto aunque la USB no se pueda escribir."""
+        with self._target_lock:
+            self._target_root = Path(mount_root)
+            self._target_size = -1
+            self._target_err = False
+        self.diag(f"LOG: espejo activo en el sistema instalado ({mount_root}/{TARGET_LOG_REL})")
+
+    def stop_target_mirror(self) -> None:
+        """Detiene el espejo (clean_mounts lo llama antes de desmontar)."""
+        with self._target_lock:
+            self._target_root = None
+
+    def _mirror_target(self) -> None:
+        with self._target_lock:
+            root = self._target_root
+            if root is None:
+                return
+            try:
+                if self.path.stat().st_size - self._start == self._target_size:
+                    return                    # nada nuevo desde la última copia
+            except OSError:
+                return
+            ok, info = self.copy_to_target(root)
+            if not ok and info != "no montado" and not self._target_err:
+                self._target_err = True
+                self.diag(f"LOG: no se pudo espejar el log en el sistema instalado: {info}")
 
     # ── USB de arranque ──────────────────────────────────────────────
     def attach_usb(self) -> bool:
@@ -393,14 +465,16 @@ class InstallLog:
             self.usb_desc = f"{desc} → {USB_LOG_DIRNAME}/{p.name}"
         self.diag(f"USB-LOG: activo → {p}")
         self.sync_usb()
-        self._thread = threading.Thread(target=self._sync_loop, name="avalos-usb-log", daemon=True)
-        self._thread.start()
         return True
 
     def _sync_loop(self) -> None:
+        last_target = time.monotonic()
         while not self._stop.wait(_SYNC_INTERVAL):
-            if self._dirty:
+            if self._dirty and self._usb_fh is not None:
                 self.sync_usb()
+            if self._target_root is not None and time.monotonic() - last_target >= _TARGET_INTERVAL:
+                last_target = time.monotonic()
+                self._mirror_target()
 
     def sync_usb(self) -> None:
         """Vuelca a la USB lo escrito desde la última vez (con fsync). El
@@ -479,6 +553,8 @@ class InstallLog:
             self._closed = True
         self.write("info", f"Fin del log — {datetime.now():%Y-%m-%d %H:%M:%S}")
         self._stop.set()
+        self._mirror_target()                 # si el destino sigue montado, una última copia
+        self.stop_target_mirror()
         try:
             t = threading.Thread(target=self._close_usb, name="avalos-usb-close", daemon=True)
             t.start()
