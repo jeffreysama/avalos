@@ -19,9 +19,16 @@ hilo de instalación):
      montadas (ej. /run/mnt/ventoy), remontándolas rw si hace falta; y
      luego las que no estén montadas (la de datos de Ventoy primero). Se
      saltan iso9660 (solo lectura) y VTOYEFI (el arranque de Ventoy).
-     OJO Ventoy: antes de la 1.1.01 su partición de datos NO se puede
-     montar desde el live (device busy, restricción de device-mapper);
-     si pasa, queda un aviso en el log (usb_hint = "ventoy-busy").
+     OJO Ventoy: con la ISO cargada por device-mapper (/dev/mapper/ventoy),
+     Ventoy RESERVA EN EXCLUSIVA su partición de datos y un mount normal falla
+     ("mount: ... fsconfig() failed: /dev/sda1: Can't open blockdev", visto en
+     una instalación real; util-linux más viejo dice "already mounted or mount
+     point busy"). Se reintenta a través de un dispositivo loop
+     (`mount -o loop,rw`): el loop abre el bloque SIN exclusividad y lo que
+     se monta es el loop, así que la reserva no estorba (probado con una
+     reserva O_EXCL real: escribe, desmonta, el loop se autolibera y los
+     datos quedan en la partición). Si tampoco así, queda un aviso en el log
+     (usb_hint = "ventoy-busy").
   3. El sistema instalado: /var/log/avalos-install.log. Desde que termina el
      paso "mount" se espeja cada ~20 s (con fsync) — es el canal que
      sobrevive a un cuelgue o a un aborto aunque la USB no se pueda escribir
@@ -39,6 +46,7 @@ import atexit
 import logging
 import os
 import platform
+import re
 import subprocess
 import sys
 import threading
@@ -60,6 +68,8 @@ _WRITABLE_FS = {
 }
 _SKIP_LABELS = {"vtoyefi"}            # partición de arranque de Ventoy: no se toca
 _VENTOY_MOUNTS = ("/run/mnt/ventoy", "/mnt/ventoy", "/ventoy")
+# Salidas de `mount` cuando el bloque está reservado por otro (Ventoy/device-mapper)
+_CLAIMED_RE = re.compile(r"busy|blockdev|already mounted", re.IGNORECASE)
 
 _USB_MAX_BYTES = 8 * 1024 * 1024      # tope del archivo en la USB
 _USB_MIN_FREE = 4 * 1024 * 1024       # espacio libre mínimo para elegir una partición
@@ -420,24 +430,39 @@ class InstallLog:
                 return False
             mp = self._usb_mount_dir
             mp.mkdir(parents=True, exist_ok=True)
-            out = ""
-            ok = False
-            for fstype in (["ntfs3", None] if fs in ("ntfs", "ntfs3") else [None]):
-                cmd = ["mount"] + (["-t", fstype] if fstype else []) + ["-o", "rw", path, str(mp)]
-                rc, out = self._run(cmd, 30)
-                if rc == 0:
-                    ok = True
-                    break
-            self.diag(f"USB-LOG: mount {path} ({fs}, '{label}') → {'OK' if ok else out[-160:]}")
+            ok, out, via_loop = self._mount_partition(path, fs, mp)
+            how = "OK (vía loop)" if ok and via_loop else "OK" if ok else out[-160:]
+            self.diag(f"USB-LOG: mount {path} ({fs}, '{label}') → {how}")
             if not ok:
-                if "busy" in out.lower() and (is_ventoy or label.lower() == "ventoy"):
+                if _CLAIMED_RE.search(out) and (is_ventoy or label.lower() == "ventoy"):
                     self.usb_hint = "ventoy-busy"
                 continue
             self._usb_mounted_here = mp
-            if self._open_usb_file(mp, f"{path} ({label or fs})"):
+            if self._open_usb_file(mp, f"{path} ({label or fs}{', vía loop' if via_loop else ''})"):
                 return True
             self._umount_ours()
         return False
+
+    def _mount_partition(self, path: str, fs: str, mp: Path) -> tuple[bool, str, bool]:
+        """Monta `path` en `mp` con escritura. Devuelve (ok, salida del último
+        intento, si fue vía loop). Si el mount normal falla porque el bloque
+        está reservado en exclusiva (Ventoy lo reserva con device-mapper), se
+        reintenta con `-o loop`: el loop abre el bloque sin exclusividad y lo
+        que se monta es el loop (autoclear: se libera solo al desmontar)."""
+        types = ["ntfs3", None] if fs in ("ntfs", "ntfs3") else [None]
+        out = ""
+        for via_loop in (False, True):
+            for fstype in types:
+                cmd = ["mount"] + (["-t", fstype] if fstype else []) + \
+                      ["-o", "loop,rw" if via_loop else "rw", path, str(mp)]
+                rc, out = self._run(cmd, 30)
+                if rc == 0:
+                    return True, out, via_loop
+            if not via_loop:
+                if not _CLAIMED_RE.search(out):
+                    return False, out, False          # otro motivo: el loop no ayuda
+                self.diag(f"USB-LOG: {path} está reservado en exclusiva ({out[-100:]}) — reintento vía loop")
+        return False, out, True
 
     def _open_usb_file(self, mp: Path, desc: str) -> bool:
         if self._closed:
