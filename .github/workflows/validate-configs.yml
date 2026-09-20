@@ -1,0 +1,37 @@
+name: Validar configs
+
+# Feedback rápido en cada push/PR (la misma comprobación es una compuerta dentro de
+# build-iso.yml). Un error de configuración —p. ej. una propiedad CSS que GTK no
+# conoce, que hace que waybar no arranque— rompe ESTE job en vez de llegar a la ISO.
+
+on:
+  push:
+    paths:
+      - "configs/**"
+      - "assets/avalos.txt"
+      - "scripts/**"
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - "configs/**"
+      - "assets/avalos.txt"
+      - "scripts/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validar configs con los parsers reales
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Instalar parsers (GTK3, Lua, desktop-file-utils)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            python3-gi gir1.2-gtk-3.0 lua5.4 desktop-file-utils python3-yaml
+
+      - name: Validar
+        run: /usr/bin/python3 scripts/validate_configs.py --strict

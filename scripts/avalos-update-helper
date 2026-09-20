@@ -448,6 +448,9 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("configs/rofi/powermenu.sh", "/usr/share/avalos/configs/rofi/powermenu.sh", 0o644),
         ("configs/mangohud/MangoHud.conf", "/usr/share/avalos/configs/mangohud/MangoHud.conf", 0o644),
         ("configs/fastfetch/config.jsonc", "/usr/share/avalos/configs/fastfetch/config.jsonc", 0o644),
+        # El logo vive en /etc/fastfetch (no bajo /usr/share/avalos/configs): sin esta línea una
+        # corrección del logo nunca llegaba a los sistemas ya instalados.
+        ("configs/fastfetch/avalos.txt", "/etc/fastfetch/avalos.txt", 0o644),
         ("configs/gtk/settings.ini", "/usr/share/avalos/configs/gtk/settings.ini", 0o644),
         ("configs/sddm/Main.qml", "/usr/share/avalos/configs/sddm/Main.qml", 0o644),
         ("configs/sddm/metadata.desktop", "/usr/share/avalos/configs/sddm/metadata.desktop", 0o644),

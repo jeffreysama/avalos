@@ -6,16 +6,15 @@
   border: none;
   border-radius: 0;
   min-height: 0;
-  /* NOTA (comentario corregido): box-sizing NO está en la lista oficial de
-   * propiedades CSS soportadas por GTK (docs.gtk.org/gtk3/css-properties.html
-   * — sección "Box properties" solo lista min-width, min-height, margin
-   * (cada lado) y padding (cada lado)). GTK ignora esta línea silenciosamente
-   * (las propiedades desconocidas no rompen el resto del CSS), así que no
-   * causa daño, pero tampoco previene el desborde de módulos con padding
-   * como se afirmaba — eso se controla con min-height/padding ajustados
-   * directamente en cada módulo. Se deja la línea por si una versión futura
-   * de GTK la soporta. */
-  box-sizing: border-box;
+  /* NO agregar acá box-sizing (ni ninguna otra propiedad de CSS "web"):
+   * Waybar carga este archivo con el parser CSS de GTK3 y, ante UNA sola
+   * propiedad o pseudo-clase desconocida, devuelve error y la barra NO
+   * ARRANCA ("style.css:18:12'box-sizing' is not a valid property name").
+   * Una versión anterior de este comentario decía que GTK la ignoraba en
+   * silencio: era falso. Lista de propiedades soportadas:
+   * docs.gtk.org/gtk3/css-properties.html — scripts/validate_configs.py
+   * (y el workflow validate-configs) validan este archivo con el parser
+   * real de GTK antes de cada build. */
 }
 
 window#waybar {
@@ -77,11 +76,15 @@ tooltip label {
 #window {
   color: #7dcfff;
   padding: 0 8px;
-  /* BUG-7 FIX: cuando no hay ventana activa el módulo queda vacío pero
-   * sigue ocupando padding y border visible. opacity: 0 lo oculta. */
 }
 
-#window:empty {
+/* BUG-7 FIX: cuando no hay ventana activa el módulo queda vacío pero sigue
+ * ocupando padding. opacity: 0 lo oculta.
+ * Selector documentado por Waybar para hyprland/window: cuando el workspace
+ * no tiene ventanas la barra recibe la clase "empty" (man waybar-hyprland-
+ * window). NO usar "#window:empty": ":empty" no es una pseudo-clase válida
+ * en GTK3 ("Invalid name of pseudo-class") y hace fallar todo el CSS. */
+window#waybar.empty #window {
   opacity: 0;
   padding: 0;
 }

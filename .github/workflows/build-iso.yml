@@ -52,6 +52,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Compuerta: no se genera una ISO con configs rotas. Valida con los parsers
+      # reales (el CSS de waybar con el parser de GTK3 —una propiedad inválida y la
+      # barra no arranca—, Lua, JSONC, .desktop...) y comprueba que el logo de
+      # fastfetch sale del repo. Local: python3 scripts/validate_configs.py --strict
+      # (el resto de los chequeos corre en el workflow validate-configs.yml)
+      - name: Validar configs (parsers reales)
+        run: |
+          pacman -S --noconfirm --needed gtk3 python-gobject lua
+          python3 scripts/validate_configs.py --strict --only css,json,lua,logo
+
       - name: Configurar repo [avalos] en pacman
         env:
           GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
@@ -290,8 +300,18 @@ jobs:
 
           mkdir -p "$AIROOTFS/etc/fastfetch" "$AIROOTFS/root/.config/fastfetch"
 
-          printf '%s' "aW1wb3J0IHN5cywgb3MsIHRleHR3cmFwCkEgPSBzeXMuYXJndlsxXQpkZWYgdyhwLCBjLCByYXc9RmFsc2UpOgogICAgb3MubWFrZWRpcnMob3MucGF0aC5kaXJuYW1lKHApLCBleGlzdF9vaz1UcnVlKQogICAgdHh0ID0gYyBpZiByYXcgZWxzZSB0ZXh0d3JhcC5kZWRlbnQoYykubHN0cmlwKCdcbicpCiAgICB3aXRoIG9wZW4ocCwgJ3cnKSBhcyBmOgogICAgICAgIGYud3JpdGUodHh0KQp3KGYie0F9L2V0Yy9mYXN0ZmV0Y2gvYXZhbG9zLnR4dCIsCiAgIiQxICAgICAgICAgICAgICAgICAgICAgICAgICBcdTAyOGNcbiIKICAiJDEgICAgICAgICAgICAgICAgICAgICAgICAgLyNcXFxuIgogICIkMSAgICAgICAgICAgICAgICAgICAgICAgIC8jJDJAJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgICAgICAgICAgIC8jJDJAJDMkJCQyQCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgIF9fXyAgIC8jJDMkJCQyQCQxXHUwMjhjJDJAJDMkJCQxI1xcICAgIF9fX1xuIgogICIkMSAgICAgICAgICAgICAgICBcXCQ0JiYkMVxcIC8jJDMkJCQyQCQxLyQzJCQkMVxcJDJAJDEjI1xcICAvJDQmJiQxL1xuIgogICIkMSAgICAgICAgICAgICAgICAgXFwkNCYmJDFcXCMkMyQkJDJAJDEvJDMkJCQkJCQkMVxcJDJAJDEjI1xcLyQ0JiYkMS9cbiIKICAiJDEgICAgICAgICAgICAgICAgICBcXCQ0JiYkMVxcJDJAJDEvJDMkJCQkJDFcdTAyOGMkMyQkJCQkMVxcJDJAJDMkJCQxI1xcJDQmJDEvXG4iCiAgIiQxICAgICAgICAgICAgICAgICAgL1xcJDQmJiQxXFwkMyQkJCQkMS8gXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgICAvIyQzJCQkMVxcJDQmJiQxXFwvICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgIC8jJDMkJCQyQCQxL1xcJDQmJiQxXFwgICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxI1xcXG4iCiAgIiQxICAgICAgICAgICAgICAgLyMkMyQkJDJAJDEvJDMkJCQkJDFcXCQ0JiYkMVxcICAvJDQmJDFcXCQzJCQkJCQxXFwkMkAkMyQkJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgIC8jJDMkJCQyQCQxLyQzJCQkJCQxLyBcXCQ0JiYkMVxcLyQ0JiYkMS9cXCQzJCQkJCQxXFwkMkAkMyQkJDEjXFxcbiIKICAiJDEgICAgICAgICAgICAgLyMkMyQkJDJAJDEvJDMkJCQkJDEvICAgXFwkNCYmJiYkMS8gIFxcJDMkJCQkJDFcXCQyQCQzJCQkMSNcXFxuIgogICIkMSAgICAgICAgICAgICBcXCMkMyQkJDEvJDMkJCQkJDEvICAgICBcXCQ0JiYkMS8gICAgXFwkMyQkJCQkMVxcJDJAJDMkJCQxL1xuIgogICIkMSAgICAgICAgICAgICAgXFwvX18vICAgICAgIFxcLyAgICAgIFxcX19cXC9cbiIsCiAgcmF3PVRydWUpCnByaW50KCJGYXN0ZmV0Y2ggbG9nbyBPSyIpCg==" | base64 -d > /tmp/pylogoonly.py
-          python3 /tmp/pylogoonly.py "$AIROOTFS"
+          # Logo: la fuente de verdad es configs/fastfetch/avalos.txt (misma política que
+          # config.jsonc, abajo). Antes se generaba SIEMPRE con un script base64 embebido con
+          # otra versión del logo (4 colores), así que editar el archivo del repo no cambiaba
+          # nada en la ISO: fastfetch mostraba colores distintos a los del logo oficial.
+          if [[ -f "configs/fastfetch/avalos.txt" ]]; then
+            cp configs/fastfetch/avalos.txt "$AIROOTFS/etc/fastfetch/avalos.txt"
+            echo "fastfetch logo: usando versión del repo (configs/fastfetch/avalos.txt)"
+          else
+            echo "fastfetch logo: repo no encontrado — usando versión base64 (respaldo)"
+            printf '%s' "aW1wb3J0IHN5cywgb3MKQSA9IHN5cy5hcmd2WzFdCkxPR08gPSAnICAgICAgICAgICAgICAgICAgICAgJDHKjCAgICAgXG4gICAgICAgICAgICAgICAgICAgICQxLyNcXCAgICAgXG4gICAgICAgICAgICAgICAgICAgJDEvI0AjXFwgICAgIFxuICAgICAgICAgICAgICAgICAgJDEvI0AkJEAjXFwgICAgIFxuICAgICAgICAgICAkMl9fXyAgICQxLyMkJEDKjEAkJCNcXCAgICAkMl9fXyAgICAgXG4gICAgICAgICAgICQyXFwmJlxcICQxLyMkJEAvJCRcXEAjI1xcICAkMi8mJi8gICAgIFxuICAgICAgICAgICAgJDJcXCYmXFwkMSMkJEAvJCQkJCQkXFxAIyNcXCQyLyYmLyAgICAgXG4gICAgICAgICAgICAgJDJcXCYmXFwkMUAvJCQkJMqMJCQkJFxcQCQkI1xcJDImLyAgICAgXG4gICAgICAgICAgICAgJDEvJDJcXCQyJiZcXCQxJCQkJC8gXFwkJCQkXFxAJCQjXFwgICAgIFxuICAgICAgICAgICAgLyQxIyQkJDJcXCQyJiZcXCQxLyAgICQxXFwkJCQkXFxAJCQjXFwgICAgIFxuICAgICAgICAgICAvJDEjJCRALyQyXFwmJlxcICAgICQxXFwkJCQkXFxAJCQjXFwgICAgIFxuICAgICAgICAgIC8kMSMkJEAvJCQkJCQyXFwmJlxcICAvJiQxXFwkJCQkXFxAJCQjXFwgICAgIFxuICAgICAgICAgLyQxIyQkQC8kJCQkLyAkMlxcJiZcXC8mJi8kMVxcJCQkJFxcQCQkI1xcICAgICBcbiAgICAgICAgLyQxIyQkQC8kJCQkLyAgICQyXFwmJiYmLyAgJDFcXCQkJCRcXEAkJCNcXCAgICAgXG4gICAgICAgIFxcJDEjJCQvJCQkJC8gICAgICQyXFwmJi8gICAgJDFcXCQkJCRcXEAkJC8gICAgIFxuICAgICAgICAgXFwvX18vICAgICAgICQyXFwvICAgICAgJDFcXF9fXFwvICAgICBcbicKb3MubWFrZWRpcnMoZiJ7QX0vZXRjL2Zhc3RmZXRjaCIsIGV4aXN0X29rPVRydWUpCndpdGggb3BlbihmIntBfS9ldGMvZmFzdGZldGNoL2F2YWxvcy50eHQiLCAidyIpIGFzIGY6CiAgICBmLndyaXRlKExPR08pCnByaW50KCJGYXN0ZmV0Y2ggbG9nbyBPSyAocmVzcGFsZG8pIikK" | base64 -d > /tmp/pylogoonly.py
+            python3 /tmp/pylogoonly.py "$AIROOTFS"
+          fi
 
           if [[ -f "configs/fastfetch/config.jsonc" ]]; then
             cp configs/fastfetch/config.jsonc "$AIROOTFS/etc/fastfetch/config.jsonc"
