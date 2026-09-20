@@ -434,6 +434,8 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("configs/avalos-update.policy", "/usr/share/polkit-1/actions/com.avalos.update.policy", 0o644),
         ("configs/avalos-store.policy", "/usr/share/polkit-1/actions/com.avalos.store.policy", 0o644),
         ("configs/avalos-store.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-store.svg", 0o644),
+        ("configs/avalos-update.desktop", "/usr/share/applications/avalos-update.desktop", 0o644),
+        ("configs/avalos-update.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-update.svg", 0o644),
         ("configs/hyprland/hyprland_conf_lua.template", "/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template", 0o644),
         ("configs/hyprland/hyprpaper.conf", "/usr/share/avalos/configs/hyprland/hyprpaper.conf", 0o644),
         ("configs/hyprland/hypridle.conf", "/usr/share/avalos/configs/hyprland/hypridle.conf", 0o644),

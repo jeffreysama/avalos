@@ -99,8 +99,9 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
     session.log(session.t("log-gpu-env-installed"), "ok")
 
     session.log(session.t("log-installing-scripts"), "info")
-    for _script_name in ("avalos-settings", "avalos-wallpaper", "avalos-about",
-                         "avalos-update", "avalos-update-helper", "avalos-store"):
+    _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
+                       "avalos-update", "avalos-update-helper", "avalos-store")
+    for _script_name in _avalos_scripts:
         _content = read_config(f"scripts/{_script_name}")
         if _content:
             _script_path = _bin_dir / _script_name
@@ -109,6 +110,12 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
             session.log(session.t("log-script-installed", script=_script_name), "ok")
         else:
             session.log(session.t("log-script-missing", script=_script_name), "warn")
+
+    # Comprobación final: si algún script no quedó en /usr/local/bin, que el log lo diga
+    # con nombre en vez de que "no se instaló" se descubra al buscar la app.
+    _scripts_faltantes = [n for n in _avalos_scripts if not (_bin_dir / n).is_file()]
+    if _scripts_faltantes:
+        session.log(session.t("log-scripts-incomplete", names=", ".join(_scripts_faltantes)), "err")
 
     # avalos-store necesita su catálogo de apps aparte — no es un script
     # ejecutable, es data, así que va directo a configs/ (sin el prefijo
@@ -136,6 +143,16 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
         session.log(session.t("log-store-desktop-installed"), "ok")
     else:
         session.log(session.t("log-store-desktop-missing"), "warn")
+
+    # avalos-update no tenía entrada de escritorio: el script se instalaba en
+    # /usr/local/bin pero no aparecía en rofi (drun) ni en ningún menú, así que
+    # para el usuario "no estaba instalado".
+    _content = read_config("avalos-update.desktop")
+    if _content:
+        (_apps_dir / "avalos-update.desktop").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-update-desktop-installed"), "ok")
+    else:
+        session.log(session.t("log-update-desktop-missing"), "warn")
 
     # avalos-update necesita pkexec para elevar avalos-update-helper (ver
     # avalos-update.policy) — polkitd + hyprpolkitagent ya corren en el
@@ -186,6 +203,13 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
         session.log(session.t("log-store-icon-installed"), "ok")
     else:
         session.log(session.t("log-store-icon-missing"), "warn")
+
+    _content = read_config("avalos-update.svg")
+    if _content:
+        (_icon_dir / "avalos-update.svg").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-update-icon-installed"), "ok")
+    else:
+        session.log(session.t("log-update-icon-missing"), "warn")
 
     (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
         datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),

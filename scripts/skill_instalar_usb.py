@@ -2987,6 +2987,14 @@ class VentanaInstalador :
         else :
             self ._log (self ._t ("log-store-desktop-missing"),"warn")
 
+        # avalos-update no tenía entrada de escritorio (ver optimize.py del instalador modular).
+        _contenido =_leer_config ("avalos-update.desktop")
+        if _contenido :
+            (_apps_dir /"avalos-update.desktop").write_text (_contenido ,encoding ="utf-8")
+            self ._log (self ._t ("log-update-desktop-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-update-desktop-missing"),"warn")
+
         # avalos-update necesita pkexec para elevar avalos-update-helper (ver
         # avalos-update.policy) — polkitd + hyprpolkitagent ya corren en el
         # sistema instalado (servicios habilitados / exec-once de Hyprland),
@@ -3036,6 +3044,13 @@ class VentanaInstalador :
             self ._log (self ._t ("log-store-icon-installed"),"ok")
         else :
             self ._log (self ._t ("log-store-icon-missing"),"warn")
+
+        _contenido =_leer_config ("avalos-update.svg")
+        if _contenido :
+            (_icon_dir /"avalos-update.svg").write_text (_contenido ,encoding ="utf-8")
+            self ._log (self ._t ("log-update-icon-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-update-icon-missing"),"warn")
 
         (MOUNT_ROOT /"etc"/"avalos-install-date").write_text (
         datetime .datetime .now ().strftime ("%Y-%m-%d %H:%M"),

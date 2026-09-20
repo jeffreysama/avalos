@@ -339,10 +339,16 @@ def fetch_aur_info(pkg):
 #      instale por pacman/AUR), se trae de la API pública de Flathub y se
 #      cachea en disco para no repetir la descarga cada vez que se abre
 #      la Store.
-#   3. Si nada de eso aplica (típicamente AUR sin equivalente en Flathub),
-#      el frontend cae de vuelta al emoji — igual que COSMIC Store se
-#      queda sin ícono decente para paquetes que ni AppStream ni Flatpak
-#      conocen.
+#   3. Sin red (o Flathub sin respuesta) y sin AppStream —típicamente AUR,
+#      que no tiene equivalente en Flathub ni metadata AppStream— se busca
+#      en el TEMA DE ÍCONOS instalado (Papirus, en el paquete
+#      papirus-icon-theme del instalador): trae íconos de miles de apps SIN
+#      necesidad de tenerlas instaladas, a diferencia de hicolor, que solo
+#      tiene lo que ya se instaló. Se busca por app["icon_name"] (opcional,
+#      en el catálogo) y luego por exec, package e id.
+#   4. Solo si tampoco hay eso, el frontend cae al emoji. Antes este paso
+#      era el 3 y pasaba con casi todo lo que no estaba instalado y no tenía
+#      flathub_id (Edge, Unity Hub, Postman, CoreCtrl, Btrfs Assistant...).
 ICON_CACHE_DIR = Path.home() / ".cache" / "avalos-store" / "icons"
 FLATHUB_APPSTREAM_URL = "https://flathub.org/api/v2/appstream/"
 
@@ -354,6 +360,15 @@ _HICOLOR_ROOTS = (
     Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "icons" / "hicolor",
 )
 _PIXMAP_ROOTS = (Path("/usr/share/pixmaps"),)
+
+# Tema de íconos instalado (papirus-icon-theme). Layout: <size>/apps/<nombre>.svg
+# (varios son symlinks a otro nombre dentro de la misma carpeta; Path.is_file()
+# los sigue). Papirus trae 16/22/24/32/48/64: se prefiere el más grande.
+_THEME_ROOTS = (
+    Path("/usr/share/icons/Papirus"),
+    Path("/usr/share/icons/Papirus-Dark"),
+)
+_THEME_SIZES = ("64x64", "48x48", "32x32")
 
 
 _DESKTOP_APPS_DIRS = (
@@ -462,6 +477,20 @@ def _appstream_icon_path(pkgname):
     return None
 
 
+def _theme_icon_path(app):
+    """Ícono del tema instalado para `app`, o None. Nombres a probar, en orden:
+    icon_name (campo opcional del catálogo), exec, package, id."""
+    names = [n for n in dict.fromkeys([app.get("icon_name"), app.get("exec"), app.get("package"), app.get("id")]) if n]
+    for name in names:
+        for root in _THEME_ROOTS:
+            for size in _THEME_SIZES:
+                for ext in ("svg", "png"):
+                    candidate = root / size / "apps" / f"{name}.{ext}"
+                    if candidate.is_file():
+                        return candidate
+    return None
+
+
 def _local_icon_path(app):
     if app.get("source") == "flatpak":
         icon_name = app["package"]
@@ -566,6 +595,20 @@ def resolve_icon(app, installed_ids):
 
     if flathub_id:
         data_uri = _fetch_flathub_icon(app["id"], flathub_id)
+        if data_uri:
+            return data_uri
+        # Sin red (o Flathub sin respuesta): AppStream local antes de rendirse.
+        if app["id"] not in installed_ids and app.get("source") in ("pacman", "aur"):
+            appstream_path = _appstream_icon_path(app["package"])
+            if appstream_path:
+                data_uri = _file_to_data_uri(appstream_path)
+                if data_uri:
+                    return data_uri
+
+    # Último recurso ANTES del emoji: el tema de íconos instalado (ver arriba).
+    theme_path = _theme_icon_path(app)
+    if theme_path:
+        data_uri = _file_to_data_uri(theme_path)
         if data_uri:
             return data_uri
 

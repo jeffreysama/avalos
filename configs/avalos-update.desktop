@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AvalOS Update
+Name[es]=AvalOS Actualizaciones
+Name[zh_CN]=AvalOS 系统更新
+Name[ja]=AvalOS アップデート
+Comment=Update system packages, the kernel, AUR, Flatpak and AvalOS itself
+Comment[es]=Actualiza los paquetes del sistema, el kernel, AUR, Flatpak y AvalOS
+Comment[zh_CN]=更新系统软件包、内核、AUR、Flatpak 以及 AvalOS 本身
+Comment[ja]=システムパッケージ、カーネル、AUR、Flatpak、AvalOS を更新
+Exec=avalos-update
+Icon=avalos-update
+Terminal=false
+NoDisplay=false
+StartupNotify=true
+StartupWMClass=avalos-update
+Categories=System;PackageManager;Settings;
+Keywords=update;upgrade;actualizar;actualizaciones;kernel;pacman;aur;flatpak;sistema;

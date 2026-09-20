@@ -168,17 +168,16 @@ hl.bind(mod .. " + V",
 hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
 hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
 
--- ALT_L específico (no ALT a secas): S ya está pisado por SUPER+SHIFT+S
--- (captura de pantalla) y por SUPER+CTRL+S (avalos-settings, arriba) —
--- ALT_L como tercer modificador evita chocar con cualquiera de los dos.
--- Sintaxis "SUPER + ALT_L" confirmada contra el ejemplo oficial en
--- wiki.hypr.land/Configuring/Basics/Binds (ahí usan exactamente
--- hl.bind("SUPER + ALT_L", ...) / "SUPER + CTRL_L" para distinguir
--- modificador izquierdo). Si en tu build no distingue izquierda de
--- derecha (hay reportes sueltos de esto en el foro de Hyprland),
--- cambiá ALT_L por ALT a secas — sigue sin chocar con nada de arriba.
-hl.bind(mod .. " + ALT_L + S", hl.dsp.exec_cmd("avalos-store"))
-hl.bind(mod .. " + ALT_L + U", hl.dsp.exec_cmd("avalos-update"))
+-- SUPER + ALT + S / U. Hyprland compara el conjunto EXACTO de modificadores, así
+-- que SUPER+ALT+S no choca con SUPER+SHIFT+S (captura) ni con SUPER+CTRL+S
+-- (avalos-settings, arriba).
+-- NO usar "ALT_L" acá: en un bind, ALT_L es el nombre de una TECLA (sirve para
+-- bindear la tecla Alt sola, con { release = true } — ver wiki.hypr.land/
+-- Configuring/Basics/Binds), no un modificador. Los modificadores válidos son
+-- SUPER, SHIFT, CTRL y ALT; "SUPER + ALT_L + S" nunca disparaba, y por eso estos
+-- dos atajos no funcionaban. scripts/validate_app_consistency.py lo detecta.
+hl.bind(mod .. " + ALT + S", hl.dsp.exec_cmd("avalos-store"))
+hl.bind(mod .. " + ALT + U", hl.dsp.exec_cmd("avalos-update"))
 
 -- Gaming
 hl.bind(mod .. " + S",        hl.dsp.exec_cmd("steam"))
