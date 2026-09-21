@@ -3,11 +3,10 @@ network/connectivity.py — chequeo de conectividad del instalador de AvalOS.
 
 Extraído de skill_instalar_usb.py (líneas 532-539). Sin cambios de lógica.
 
-NOTA: esto es solo el chequeo binario "hay internet sí/no" que ya existía.
-El diagnóstico más fino (distinguir "sin internet" de "repo/mirror caído",
-Tier 2 de la lista de oportunidades) todavía no existe en el monolito —
-va a vivir aquí cuando lo construyamos, no es una extracción sino una
-función nueva.
+NOTA: esto es solo el chequeo binario "hay internet sí/no" (ping) que ya existía y
+que el instalador ya NO usa: el paso "net" y la comprobación previa del equipo usan
+el diagnóstico por capas de network/diagnose.py (sin enlace / sin IP / sin salida /
+DNS / portal cautivo / hora / mirrors caídos). Se deja por compatibilidad.
 """
 
 from __future__ import annotations

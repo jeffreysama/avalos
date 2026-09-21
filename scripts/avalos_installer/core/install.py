@@ -37,6 +37,8 @@ por prolijidad.
 """
 from __future__ import annotations
 
+import time
+
 from avalos_installer.core.config import MOUNT_ROOT
 from avalos_installer.core.prereqs import TOOL_TO_PACKAGE, check_tools
 from avalos_installer.core.session import InstallSession, output_indicates_gpg_error
@@ -45,7 +47,7 @@ from avalos_installer.disk.discovery import MIN_DISK_GB, detect_target_disk_type
 from avalos_installer.hardware.detection import (
     detect_cpu_arch_level, detect_gpu, detect_microcode, is_uefi,
 )
-from avalos_installer.network.connectivity import check_internet
+from avalos_installer.network.diagnose import diagnose_network
 from avalos_installer.network.mirrors import optimize_mirrors, sync_time
 from avalos_installer.system.aur import install_aur
 from avalos_installer.system.bootloader import install_bootloader
@@ -189,12 +191,31 @@ def run_installation(session: InstallSession) -> None:
         # ── net ───────────────────────────────────────────────────────
         session.step("net", "active")
         session.status(session.t("status-checking-internet"))
-        net_ok = check_internet()
+        # Diagnóstico por capas (network/diagnose.py) en vez de un ping a 8.8.8.8: distingue sin
+        # enlace / sin IP / sin salida / DNS / portal cautivo / hora / mirrors caídos, y el error le
+        # dice al usuario QUÉ hacer. Un primer fallo se reintenta una vez: el DHCP o la asociación
+        # Wi-Fi pueden estar terminando de levantar.
+        diag = diagnose_network()
+        if not diag.usable:
+            session.log(session.t(f"pf-net-{diag.verdict}", **diag.text_params()), "warn")
+            time.sleep(3)
+            diag = diagnose_network()
+        for ln in diag.lines():
+            session.logfile.diag(f"net: {ln}")
+        net_ok = diag.usable
         session.badges(net_ok, uefi)
         if not net_ok:
+            hint_key = ("pf-hint-net-no_link_wifi" if diag.verdict == "no_link" and diag.has_wifi
+                        else f"pf-hint-net-{diag.verdict}")
             session.step("net", "error", session.t("step-net-down"))
-            session.error_step(session.t("err-no-internet"))
+            session.error_step(session.t(
+                "err-net-diagnosis",
+                reason=session.t(f"pf-net-{diag.verdict}", **diag.text_params()),
+                hint=session.t(hint_key),
+            ))
             return
+        if diag.verdict != "ok":               # usable pero degradado: se avisa y se sigue
+            session.log(session.t(f"pf-net-{diag.verdict}", **diag.text_params()), "warn")
         session.step("net", "done", session.t("step-net-up"))
         avanzar()
 

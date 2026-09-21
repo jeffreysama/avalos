@@ -156,6 +156,63 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
 #disk-list {
   flex: 1; overflow-y: auto; padding: 8px;
 }
+/* ── Comprobación previa del equipo (pantalla de bienvenida) ── */
+.pf-panel {
+  width: min(780px, 92vw); margin: 2px 0 4px; padding: 8px 14px 10px; text-align: left;
+  font-family: var(--font-ui);
+  background: var(--tn-surface); border: 1px solid var(--tn-border); border-radius: var(--r);
+}
+.pf-head {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;
+  font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--tn-dim);
+}
+.pf-retry {
+  font-family: var(--font-ui);
+  background: transparent; border: 1px solid var(--tn-border); color: var(--tn-blue);
+  border-radius: var(--r-sm); padding: 2px 10px; font-size: 12px; cursor: pointer;
+}
+.pf-retry:hover { border-color: var(--tn-blue); }
+.pf-list { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow-y: auto; }
+.pf-row { display: flex; gap: 10px; align-items: baseline; padding: 2px 0; font-size: 12.5px; line-height: 1.35; }
+.pf-ic { width: 16px; flex: none; text-align: center; }
+.pf-l { width: 92px; flex: none; color: var(--tn-dim); }
+.pf-d { flex: 1; min-width: 0; color: var(--tn-text); word-break: break-word; }
+.pf-h { display: block; margin-top: 1px; font-size: 11.5px; color: var(--tn-yellow); }
+.pf-ok .pf-ic { color: var(--tn-green); }
+.pf-warn .pf-ic { color: var(--tn-yellow); }
+.pf-fail .pf-ic { color: var(--tn-red); }
+.pf-info .pf-ic { color: var(--tn-cyan); }
+.pf-fail .pf-d { color: var(--tn-red); }
+.pf-fail .pf-h { color: var(--tn-orange); }
+.pf-note { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--tn-border); font-size: 12px; min-height: 16px; }
+.pf-note-ok { color: var(--tn-green); }
+.pf-note-warn { color: var(--tn-yellow); }
+.pf-note-fail { color: var(--tn-red); }
+.pf-note-run { color: var(--tn-dim); animation: pf-pulse 1.2s ease-in-out infinite; }
+@keyframes pf-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.btn-primary:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+.btn-primary:disabled:hover { background: rgba(122,162,247,.12); box-shadow: none; }
+.pf-anyway {
+  background: transparent; border: none; color: var(--tn-dim); text-decoration: underline;
+  cursor: pointer; font-size: 12px; margin-top: 6px; font-family: var(--font-ui);
+}
+.pf-anyway:hover { color: var(--tn-text); }
+.pf-hidden { display: none; }
+/* La bienvenida ahora incluye la comprobación del equipo: en pantallas bajas se compacta y, si
+   aun así no cabe, se DESPLAZA en vez de cortar el botón. ::before/::after con margin:auto
+   centran el contenido cuando sobra espacio y se anulan cuando falta (justify-content:center,
+   en cambio, corta arriba y abajo lo que no entra y ese contenido queda inalcanzable). */
+#pg-welcome { justify-content: flex-start; overflow-y: auto; }
+#pg-welcome::before, #pg-welcome::after { content: ""; margin: auto; }
+/* El logo lleva width/height/margin en línea (110px, -8px): hace falta !important para achicarlo. */
+@media (max-height: 780px) {
+  #pg-welcome { gap: 14px; } .pf-list { max-height: 190px; }
+  #pg-welcome #avalos-logo { width: 88px !important; height: 88px !important; margin-bottom: 0 !important; }
+}
+@media (max-height: 660px) {
+  #pg-welcome { gap: 8px; } .pf-list { max-height: 120px; } .welcome-sub { display: none; }
+  #pg-welcome #avalos-logo { width: 64px !important; height: 64px !important; }
+}
 .disk-card {
   background: var(--tn-surface); border: 1px solid var(--tn-border);
   border-radius: var(--r-sm); padding: 9px 11px; margin-bottom: 6px;
@@ -630,7 +687,16 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
     <span class="badge badge-cyan">Tokyo Night</span>
     <span class="badge badge-blue">SDDM · PipeWire · AMD GPU</span>
   </div>
-  <button class="btn-primary" onclick="showPage('config')" data-i18n="btn-start">Comenzar instalación →</button>
+  <div id="pf-panel" class="pf-panel">
+    <div class="pf-head">
+      <span data-i18n="pf-title">Comprobación del equipo</span>
+      <button id="pf-retry" class="pf-retry" onclick="runPreflight()" data-i18n="pf-retry">↻ Reintentar</button>
+    </div>
+    <ul id="pf-list" class="pf-list"></ul>
+    <div id="pf-note" class="pf-note"></div>
+  </div>
+  <button id="btn-start" class="btn-primary" onclick="showPage('config')" data-i18n="btn-start">Comenzar instalación →</button>
+  <button id="btn-start-anyway" class="pf-anyway pf-hidden" onclick="showPage('config')" data-i18n="pf-anyway">Continuar de todos modos</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -1077,6 +1143,8 @@ function applyLang(code) {
   if (_ultimoDiscosJson) {
     pyRenderDiscos(_ultimoDiscosJson);
   }
+  // La comprobación previa guarda claves i18n: se vuelve a dibujar con el idioma nuevo.
+  if (_pfResult && !_pfRunning) renderPreflight(_pfResult);
 }
 
 function chooseLang(code) {
@@ -1085,6 +1153,9 @@ function chooseLang(code) {
     window.pywebview.api.set_language(code);
   }
   showPage('welcome');
+  // Comprobación previa: se corre al llegar a la bienvenida (y de nuevo con "Reintentar").
+  // Si ya hubo un resultado bueno solo se vuelve a dibujar (applyLang ya lo hizo).
+  if (!_pfResult || _pfResult.blocking || _pfResult.ok === false) runPreflight();
 }
 
 // REFUERZO: el keydown se registra ANTES que el delegado de click, a
@@ -1155,6 +1226,82 @@ function showPage(name) {
     }
     el.classList.toggle('active', p === name);
   });
+}
+
+// ═════════════════════════════════════════════
+//  COMPROBACIÓN PREVIA DEL EQUIPO (hardware/preflight.py)
+// ═════════════════════════════════════════════
+// Python devuelve CLAVES i18n + parámetros (no texto): acá se traducen con t() en el idioma
+// vigente, y el último resultado se guarda para re-renderizarlo si el usuario cambia de
+// idioma (applyLang). `var` a propósito: sin zona muerta temporal si applyLang corre antes.
+//
+// La comprobación es una AYUDA, no un candado: si falla o tarda de más, el botón de
+// comenzar queda habilitado; y ante un problema "bloqueante" se ofrece "continuar de todos
+// modos" por si fuera un falso positivo (el orquestador igual falla en el paso que
+// corresponda si el problema es real).
+var _pfResult = null;
+var _pfRunning = false;
+const PF_ICONS = { ok: '✔', warn: '⚠', fail: '✖', info: 'ℹ' };
+
+function pfSetGate(state) {            // 'running' | 'ok' | 'blocked' | 'error'
+  const btn = document.getElementById('btn-start');
+  const anyway = document.getElementById('btn-start-anyway');
+  if (btn) btn.disabled = (state === 'running' || state === 'blocked');
+  if (anyway) anyway.classList.toggle('pf-hidden', state !== 'blocked');
+}
+
+function renderPreflight(res) {
+  const list = document.getElementById('pf-list');
+  const note = document.getElementById('pf-note');
+  if (!list || !note || !res) return;
+  list.textContent = '';
+  // Lo que necesita atención va arriba (fail, warn, info, ok; orden estable): la lista tiene
+  // altura acotada y con scroll, y un bloqueo nunca debe quedar escondido abajo.
+  const SEV = { fail: 0, warn: 1, info: 2, ok: 3 };
+  const ordered = (res.checks || []).map(function (c, i) { return { c: c, i: i }; })
+    .sort(function (a, b) { return ((SEV[a.c.status] !== undefined ? SEV[a.c.status] : 2) - (SEV[b.c.status] !== undefined ? SEV[b.c.status] : 2)) || (a.i - b.i); })
+    .map(function (x) { return x.c; });
+  ordered.forEach(function (c) {
+    const li = document.createElement('li');
+    li.className = 'pf-row pf-' + c.status;
+    const ic = document.createElement('span'); ic.className = 'pf-ic'; ic.textContent = PF_ICONS[c.status] || 'ℹ';
+    const lb = document.createElement('span'); lb.className = 'pf-l';  lb.textContent = t(c.label);
+    const dt = document.createElement('span'); dt.className = 'pf-d';  dt.textContent = t(c.detail, c.params);
+    if (c.hint) {
+      const h = document.createElement('span'); h.className = 'pf-h'; h.textContent = t(c.hint, c.params);
+      dt.appendChild(h);
+    }
+    li.appendChild(ic); li.appendChild(lb); li.appendChild(dt);
+    list.appendChild(li);
+  });
+  const key = res.ok === false ? 'pf-failed' : res.blocking ? 'pf-blocked' : res.warnings ? 'pf-warnings' : 'pf-all-ok';
+  note.className = 'pf-note ' + (res.blocking ? 'pf-note-fail' : (res.ok === false || res.warnings) ? 'pf-note-warn' : 'pf-note-ok');
+  note.textContent = t(key);
+}
+
+async function runPreflight() {
+  if (_pfRunning) return;
+  const api = window.pywebview && window.pywebview.api;
+  if (!api || !api.run_preflight) { pfSetGate('error'); return; }   // fuera de pywebview: no bloquear
+  const list = document.getElementById('pf-list');
+  const note = document.getElementById('pf-note');
+  _pfRunning = true;
+  pfSetGate('running');
+  if (list) list.textContent = '';
+  if (note) { note.className = 'pf-note pf-note-run'; note.textContent = t('pf-running'); }
+  let res;
+  try {
+    res = await Promise.race([
+      api.run_preflight(),
+      new Promise(function (_, reject) { setTimeout(function () { reject(new Error('timeout')); }, 45000); }),
+    ]);
+  } catch (e) {
+    res = { ok: false, checks: [], blocking: false, warnings: 0 };
+  }
+  _pfRunning = false;
+  _pfResult = res;
+  renderPreflight(res);
+  pfSetGate(res.ok === false ? 'error' : res.blocking ? 'blocked' : 'ok');
 }
 
 // ══════════════════════════════════════════════════════════════════

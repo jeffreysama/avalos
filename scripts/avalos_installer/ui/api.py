@@ -102,6 +102,27 @@ class InstallerAPI:
         self.session.render_disks(disks)
         return True
 
+    def run_preflight(self) -> dict:
+        """Comprobación previa del equipo para la pantalla de bienvenida (ver
+        hardware/preflight.py). Devuelve CLAVES i18n + parámetros para que la UI
+        traduzca en el idioma vigente. No lanza: si algo falla devuelve ok=False y la
+        UI deja continuar (la comprobación es una ayuda, no un candado)."""
+        s = self.session
+        try:
+            from avalos_installer.hardware.preflight import report_lines, run_preflight, to_dict
+            from avalos_installer.network.diagnose import diagnose_network
+            diag = diagnose_network()
+            checks = run_preflight(s, diag)
+            s.logfile.diag("── preflight ──")
+            for ln in diag.lines():
+                s.logfile.diag(f"net: {ln}")
+            for ln in report_lines(checks):
+                s.logfile.diag(f"preflight: {ln}")
+            return {"ok": True, **to_dict(checks)}
+        except Exception as e:  # noqa: BLE001
+            s.logfile.write("err", f"preflight falló: {e!r}")
+            return {"ok": False, "checks": [], "blocking": False, "warnings": 0, "error": str(e)}
+
     def start_installation(self, username: str, password: str, hostname: str,
                             timezone: str, disk: str, bootloader: str, usb: bool,
                             locale: str = "", keymap: str = "", gaming: bool = False,
