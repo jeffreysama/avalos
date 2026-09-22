@@ -18,7 +18,7 @@
 #   segundo mecanismo de privilegio pisando al de flatpak).
 # ────────────────────────────────────────────────────────────────────
 from __future__ import annotations
-import argparse, os, pwd, subprocess, sys, time, urllib.request
+import argparse, ctypes, json, os, pwd, re, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 REPO_RAW = "https://raw.githubusercontent.com/jeffreysama/avalos/main"
@@ -428,6 +428,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("scripts/avalos-update", "/usr/local/bin/avalos-update", 0o755),
         ("scripts/avalos-update-helper", "/usr/local/bin/avalos-update-helper", 0o755),
         ("scripts/avalos-store", "/usr/local/bin/avalos-store", 0o755),
+        ("scripts/avalos-restore", "/usr/local/bin/avalos-restore", 0o755),
         ("configs/avalos-store-catalog.json", "/usr/local/bin/avalos-store-catalog.json", 0o644),
         ("configs/avalos-settings.desktop", "/usr/share/applications/avalos-settings.desktop", 0o644),
         ("configs/avalos-store.desktop", "/usr/share/applications/avalos-store.desktop", 0o644),
@@ -436,6 +437,8 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("configs/avalos-store.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-store.svg", 0o644),
         ("configs/avalos-update.desktop", "/usr/share/applications/avalos-update.desktop", 0o644),
         ("configs/avalos-update.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-update.svg", 0o644),
+        ("configs/avalos-restore.desktop", "/usr/share/applications/avalos-restore.desktop", 0o644),
+        ("configs/avalos-restore.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-restore.svg", 0o644),
         ("configs/hyprland/hyprland_conf_lua.template", "/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template", 0o644),
         ("configs/hyprland/hyprpaper.conf", "/usr/share/avalos/configs/hyprland/hyprpaper.conf", 0o644),
         ("configs/hyprland/hypridle.conf", "/usr/share/avalos/configs/hyprland/hypridle.conf", 0o644),
@@ -487,6 +490,310 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         _out("archivos de sistema de AvalOS sincronizados contra el repo.")
 
 
+# ── Restauración de un snapshot (one-click restore) ─────────────────────
+# AvalOS monta root con `subvol=@` explícito POR NOMBRE (ver el comentario
+# de core/fstab.py en el instalador: es a propósito, para que grub-btrfs
+# pueda arrancar una snapshot puntual desde el menú sin que systemd la pise
+# después con un subvolid= fijo del fstab). Esa misma decisión es la razón
+# por la que `snapper rollback` NO SIRVE ACÁ.
+#
+# rollback cambia el "subvolumen por defecto" del filesystem con el ioctl
+# BTRFS_IOC_DEFAULT_SUBVOL, y el kernel ignora ese valor por completo
+# cuando el mount especifica subvol= (o subvolid=) explícito — confirmado
+# por un PR de snapper/openSUSE (#1133, "rollback: support named-subvolume
+# btrfs layouts", mayo 2026, todavía sin mergear) que describe EXACTAMENTE
+# este caso: "snapper rollback currently has no effect on the next boot"
+# en sistemas con subvol= explícito en fstab. Con el layout de AvalOS,
+# correr `snapper rollback` reportaría éxito y no cambiaría nada al
+# reiniciar — silenciosamente. Por eso esto no lo usa ni por accidente.
+#
+# La técnica correcta para un layout montado POR NOMBRE es la que ese
+# mismo PR termina implementando de fondo (método "subvol-rename"): un
+# intercambio ATÓMICO de nombres entre el @ actual y un snapshot nuevo,
+# vía renameat2(2) con RENAME_EXCHANGE (Linux ≥3.15). Atómico = no hay
+# ninguna fracción de segundo en la que el nombre "@" no exista — si el
+# intercambio fuera dos renames sueltos (sacar el @ viejo, después poner
+# el nuevo), un corte de luz justo en el medio dejaría el filesystem sin
+# nada llamado "@", y el próximo arranque fallaría en el mount de root.
+# Python no expone renameat2 en el módulo os (ninguna versión lo hace
+# todavía), así que se llama vía ctypes contra libc — glibc lo trae como
+# símbolo directo desde 2.28 (2018), muy por debajo de cualquier glibc
+# que corra en un Arch de 2026.
+#
+# Secuencia de `restore` (nada de esto toca "@" hasta el último paso):
+#   1. snapshot de snapper del estado actual (red de seguridad extra,
+#      con nombre — no bloquea el resto si falla, igual que en `snapshot`)
+#   2. montar el subvolumen top-level (subvolid=5) del disco en un path
+#      temporal — @ y @snapshots son HERMANOS ahí, ninguno anidado en
+#      el otro (ver core/partition.py del instalador)
+#   3. crear una copia ESCRIBIBLE del snapshot elegido, con un nombre
+#      temporal — @ sigue intacto, esto es 100% reversible con solo
+#      borrar la copia
+#   4. renameat2(RENAME_EXCHANGE) intercambia esa copia con "@" — atómico,
+#      sin ventana insegura
+#   5. lo que antes era "@" (ahora con el nombre temporal) se renombra a
+#      un nombre de respaldo con fecha, para poder recuperarlo o borrarlo
+#      después (ver list-backups/delete-backup)
+#   6. desmontar el top-level
+# Nada de esto tiene efecto hasta el PRÓXIMO REINICIO: los procesos que ya
+# están corriendo siguen usando el @ viejo por su punto de montaje ya
+# abierto, sin importar qué nombre tenga ahora en el disco.
+_RENAME_EXCHANGE = 1 << 1
+_AT_FDCWD = -100
+RESTORE_BACKUP_PREFIX = "@.avalos-restore-backup-"
+RESTORE_INCOMING_NAME = "@.avalos-restore-incoming"
+_SNAPSHOTS_SUBVOL = "@snapshots"
+_BACKUP_NAME_RE = re.compile(r"^@\.avalos-restore-backup-\d{8}-\d{6}-\d{6}$")
+_TOP_MOUNT_BASE = Path("/run/avalos-restore")
+
+
+def _run(cmd: list[str], timeout: int = 20) -> tuple[int, str, str]:
+    """Como _stream, pero para consultas cortas y no interactivas
+    (findmnt/mount/umount de reconocimiento) donde hace falta el
+    resultado, no ir narrando línea por línea."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return -1, "", str(e)
+
+
+def _renameat2_exchange(a: Path, b: Path) -> None:
+    """Intercambia atómicamente los nombres `a` y `b` (deben compartir el
+    mismo directorio padre). Lanza OSError con un mensaje claro si el
+    kernel/libc no lo soportan — no existe una versión "casi atómica" de
+    respaldo acá: para esta operación puntual, un fallback en dos pasos
+    reintroduciría exactamente la ventana insegura que esto existe para
+    evitar, así que si renameat2 no está disponible se corta y se avisa,
+    en vez de degradar en silencio a algo menos seguro."""
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    if not hasattr(libc, "renameat2"):
+        raise OSError("esta libc no expone renameat2() (glibc < 2.28) — no se puede hacer el intercambio atómico.")
+    libc.renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    libc.renameat2.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    rc = libc.renameat2(_AT_FDCWD, os.fsencode(str(a)), _AT_FDCWD, os.fsencode(str(b)), _RENAME_EXCHANGE)
+    if rc != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), f"{a} <-> {b}")
+
+
+def _root_source_device() -> str:
+    """Dispositivo real detrás de / — mismo truco que ya usa este
+    instalador para .snapshots (findmnt -o SOURCE --mountpoint, NUNCA
+    --target, para no confundir con el punto de montaje padre). Corta acá
+    si root no está montado con subvol=@ explícito: este comando está
+    escrito para ESE layout exacto (el que genera el instalador de
+    AvalOS) y ninguno de los pasos de abajo es seguro asumir sobre otro."""
+    rc, out, err = _run(["findmnt", "-n", "-o", "SOURCE,OPTIONS", "--mountpoint", "/"])
+    if rc != 0 or not out.strip():
+        _fail(f"no se pudo identificar el dispositivo de / (findmnt: {(err or out).strip()}).")
+    device, _, opts = out.strip().partition(" ")
+    opts_list = opts.strip().split(",")
+    if "subvol=@" not in opts_list:
+        _fail(
+            "root no está montado con subvol=@ explícito — este no es el layout "
+            "que genera el instalador de AvalOS, y la restauración no está escrita "
+            "para otro. No se tocó nada."
+        )
+    return device.split("[")[0].strip()
+
+
+def _mount_top_level(device: str) -> Path:
+    _TOP_MOUNT_BASE.mkdir(parents=True, exist_ok=True)
+    top = _TOP_MOUNT_BASE / f"top-{os.getpid()}"
+    top.mkdir(parents=True, exist_ok=True)
+    rc, _, err = _run(["mount", "-o", "subvolid=5", device, str(top)])
+    if rc != 0:
+        try:
+            top.rmdir()
+        except OSError:
+            pass
+        _fail(f"no se pudo montar el subvolumen top-level de {device}: {err.strip()}")
+    return top
+
+
+def _unmount_top_level(top: Path) -> None:
+    rc, _, err = _run(["umount", str(top)])
+    if rc != 0:
+        _out(f"aviso: no se pudo desmontar {top} ({err.strip()}) — queda montado hasta el próximo reinicio, no afecta lo ya hecho.")
+        return
+    try:
+        top.rmdir()
+    except OSError:
+        pass
+
+
+def _restore_point_path(top: Path, number: int) -> Path:
+    """Ruta ABSOLUTA, bajo el top-level ya montado, del snapshot #N de
+    snapper. OJO: /.snapshots en el sistema instalado es el punto de
+    MONTAJE del subvolumen @snapshots — un HERMANO de @, no algo anidado
+    dentro de @ (ver core/partition.py: subvols = [@, @home, @snapshots,
+    ...], todos hijos directos del top-level). La ruta real es por lo
+    tanto <top>/@snapshots/<N>/snapshot — NUNCA <top>/@/.snapshots/..., que
+    ni existe a nivel de subvolumen."""
+    p = top / _SNAPSHOTS_SUBVOL / str(number) / "snapshot"
+    if not p.is_dir():
+        _fail(f"el snapshot #{number} no existe en {top / _SNAPSHOTS_SUBVOL} (¿número incorrecto, o snapper no está configurado?).")
+    return p
+
+
+def _parse_snapper_json(raw: str, config: str = "root") -> list[dict]:
+    """La forma exacta del JSON de `snapper --jsonout list` varía entre
+    versiones documentadas (algunas anidan bajo el nombre de la config,
+    ninguna referencia consultada muestra un ejemplo fijo) — en vez de
+    asumir una sola forma y devolver [] en silencio si es otra, prueba
+    varias formas razonables antes de rendirse."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        if isinstance(data.get(config), list):
+            return data[config]
+        if isinstance(data.get("snapshots"), list):
+            return data["snapshots"]
+        for v in data.values():
+            if isinstance(v, list):
+                return v
+    return []
+
+
+def _list_backups(top: Path) -> list[str]:
+    return sorted((p.name for p in top.iterdir() if _BACKUP_NAME_RE.match(p.name)), reverse=True)
+
+
+def cmd_list_restore_points(args: argparse.Namespace) -> None:
+    """Imprime, en una sola línea JSON por stdout (sin el prefijo '### '
+    que usa _out — esta es la única salida que el GUI necesita parsear,
+    no narrar), los snapshots de snapper 'root' más los respaldos que
+    hayan quedado de restauraciones anteriores."""
+    _require_root_via_pkexec()
+    rc, out, err = _run(["snapper", "--jsonout", "-c", "root", "list"])
+    points: list[dict] = []
+    snapper_ok = rc == 0
+    if snapper_ok:
+        for s in _parse_snapper_json(out):
+            try:
+                number = int(s["number"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if number <= 0:          # #0 es "estado actual", no un punto real al que volver
+                continue
+            points.append({
+                "number": number,
+                "date": s.get("date") or "",
+                "description": s.get("description") or "",
+                "type": s.get("type") or "",
+            })
+        points.sort(key=lambda p: p["number"], reverse=True)
+    else:
+        _out(f"aviso: 'snapper list' terminó con código {rc} ({(err or out).strip()[-200:]}) — ¿está configurado 'root'?")
+
+    device = _root_source_device()
+    top = _mount_top_level(device)
+    try:
+        backups = _list_backups(top)
+    finally:
+        _unmount_top_level(top)
+
+    print(json.dumps({"points": points, "backups": backups, "snapper_ok": snapper_ok}))
+
+
+def cmd_restore(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    number = args.number
+    if number <= 0:
+        _fail(f"número de snapshot inválido: {number}.")
+
+    device = _root_source_device()
+
+    _out("creando snapshot de seguridad del estado actual (por si hace falta deshacer esto)...")
+    rc = _stream(["snapper", "-c", "root", "create", "--description", f"avalos-restore: antes de restaurar a #{number}"])
+    if rc != 0:
+        _out(f"aviso: el snapshot de seguridad terminó con código {rc} — se continúa igual, esto no bloquea la restauración.")
+
+    _out(f"montando el subvolumen raíz de {device}...")
+    top = _mount_top_level(device)
+    try:
+        src = _restore_point_path(top, number)
+
+        incoming = top / RESTORE_INCOMING_NAME
+        if incoming.exists():
+            _fail(
+                f"ya existe {incoming} — probablemente quedó de un intento anterior que no "
+                f"terminó. Revisalo a mano (montá {device} con -o subvolid=5) antes de reintentar; "
+                f"por seguridad esto nunca lo pisa ni lo borra solo."
+            )
+
+        _out(f"creando copia escribible del snapshot #{number}...")
+        rc = _stream(["btrfs", "subvolume", "snapshot", str(src), str(incoming)])
+        if rc != 0:
+            _fail(f"no se pudo crear la copia del snapshot #{number} (código {rc}) — no se tocó nada más.", rc)
+
+        _out("haciendo el intercambio atómico (@ ↔ snapshot elegido)...")
+        live = top / "@"
+        try:
+            _renameat2_exchange(live, incoming)
+        except OSError as e:
+            _fail(
+                f"el intercambio atómico falló ({e}) — @ sigue siendo el original, nada cambió. "
+                f"La copia nueva queda en {incoming} por si querés revisarla a mano."
+            )
+
+        now = time.time()
+        ts = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{int((now % 1) * 1e6):06d}"
+        backup_name = f"{RESTORE_BACKUP_PREFIX}{ts}"
+        try:
+            incoming.rename(top / backup_name)
+            _out(f"estado anterior guardado como respaldo: {backup_name}")
+        except OSError as e:
+            _out(
+                f"aviso: la restauración YA SE HIZO (@ es el snapshot #{number}), pero no se pudo "
+                f"renombrar el respaldo del estado anterior ({e}) — queda como {incoming.name}, "
+                f"sin aparecer todavía en la lista de respaldos hasta que se renombre a mano."
+            )
+
+        _out(f"listo. Reiniciá para arrancar con el snapshot #{number} restaurado.")
+    finally:
+        _unmount_top_level(top)
+
+
+def cmd_list_backups(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    device = _root_source_device()
+    top = _mount_top_level(device)
+    try:
+        backups = _list_backups(top)
+    finally:
+        _unmount_top_level(top)
+    print(json.dumps({"backups": backups}))
+
+
+def cmd_delete_backup(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    name = args.name
+    if not _BACKUP_NAME_RE.match(name):
+        _fail(
+            f"'{name}' no tiene el formato de un respaldo de avalos-restore — por seguridad, "
+            f"esto nunca borra nada que no matchee exactamente '{RESTORE_BACKUP_PREFIX}AAAAMMDD-HHMMSS-ffffff'."
+        )
+    device = _root_source_device()
+    top = _mount_top_level(device)
+    try:
+        target = top / name
+        if not target.is_dir():
+            _fail(f"'{name}' no existe en {top}.")
+        rc = _stream(["btrfs", "subvolume", "delete", str(target)])
+        if rc != 0:
+            _fail(f"no se pudo borrar '{name}' (código {rc}).", rc)
+        _out(f"respaldo '{name}' eliminado.")
+    finally:
+        _unmount_top_level(top)
+
+
 # ── CLI ──────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -511,6 +818,20 @@ def main() -> None:
 
     p = sub.add_parser("sync-system-files", help="re-descargar scripts/policy/plantillas desde el repo")
     p.set_defaults(func=cmd_sync_system_files)
+
+    p = sub.add_parser("list-restore-points", help="listar snapshots disponibles para restaurar + respaldos de restauraciones previas")
+    p.set_defaults(func=cmd_list_restore_points)
+
+    p = sub.add_parser("restore", help="restaurar el sistema a un snapshot de snapper (requiere reiniciar después)")
+    p.add_argument("--number", required=True, type=int)
+    p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("list-backups", help="listar respaldos crudos dejados por restauraciones anteriores")
+    p.set_defaults(func=cmd_list_backups)
+
+    p = sub.add_parser("delete-backup", help="borrar un respaldo de una restauración anterior, para liberar espacio")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_delete_backup)
 
     args = ap.parse_args()
     args.func(args)

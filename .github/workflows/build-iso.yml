@@ -161,7 +161,7 @@ jobs:
           # Sin este paso, el instalador loguea "script missing" para los 6 y
           # ninguno queda en /usr/local/bin del sistema instalado.
           mkdir -p "$AIROOTFS/usr/share/avalos/configs/scripts"
-          for _s in avalos-settings avalos-wallpaper avalos-about avalos-store avalos-update avalos-update-helper; do
+          for _s in avalos-settings avalos-wallpaper avalos-about avalos-store avalos-update avalos-update-helper avalos-restore; do
             if [[ -f "scripts/$_s" ]]; then
               cp "scripts/$_s" "$AIROOTFS/usr/share/avalos/configs/scripts/$_s"
             else

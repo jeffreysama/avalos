@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AvalOS Restore
+Name[es]=AvalOS Restaurar
+Name[zh_CN]=AvalOS 还原
+Name[ja]=AvalOS 復元
+Comment=Restore the system to an earlier snapshot
+Comment[es]=Restaura el sistema a un snapshot anterior
+Comment[zh_CN]=将系统还原到较早的快照
+Comment[ja]=システムを以前のスナップショットに復元します
+Exec=avalos-restore
+Icon=avalos-restore
+Terminal=false
+NoDisplay=false
+StartupNotify=true
+StartupWMClass=avalos-restore
+Categories=System;PackageManager;Settings;
+Keywords=restore;rollback;snapshot;restaurar;restauración;instantánea;还原;回滚;快照;復元;スナップショット;

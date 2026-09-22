@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7aa2f7"/>
+      <stop offset="100%" stop-color="#bb9af7"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="#1a1b26"/>
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="url(#bg)" opacity="0.92"/>
+  <!-- arco antihorario "volver a un punto anterior", con punta de flecha -->
+  <path d="M75 32 A28 28 0 1 0 77 68" fill="none" stroke="#1a1b26" stroke-width="7" stroke-linecap="round" opacity="0.95"/>
+  <path d="M64 21 L77 23 L71 35 Z" fill="#1a1b26" opacity="0.95"/>
+  <!-- carátula de reloj: el punto en el tiempo al que se vuelve -->
+  <circle cx="50" cy="50" r="16" fill="#1a1b26" opacity="0.95"/>
+  <path d="M50 41 L50 51 L58 56" fill="none" stroke="url(#bg)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,580 @@
+#!/usr/bin/env python3
+# ── AvalOS — avalos-restore ─────────────────────────────────────────
+# Restaurar el sistema a un snapshot de snapper anterior, en unos pocos
+# clics. Corre SIN privilegios, igual que avalos-update — lo único que
+# toca root es avalos-update-helper vía pkexec (misma acción de polkit,
+# com.avalos.update.run-helper: no hace falta una .policy nueva).
+#
+# Por qué NO usa `snapper rollback`: AvalOS monta root con subvol=@
+# explícito por NOMBRE (ver core/fstab.py del instalador), y con ese
+# layout `snapper rollback` no tiene ningún efecto al reiniciar — el
+# ioctl que usa por dentro para cambiar el "subvolumen por defecto" del
+# filesystem se ignora cuando el mount especifica subvol= explícito. La
+# lógica real de la restauración (intercambio atómico de subvolúmenes
+# con renameat2) vive en avalos-update-helper — ver el comentario grande
+# ahí arriba de cmd_restore para el porqué completo, con la referencia
+# exacta.
+#
+# Requiere: python-pywebview, webkit2gtk-4.1, python-gobject (ya en
+# HYPRLAND_PKGS por avalos-wallpaper), btrfs-progs, snapper (ya
+# instalados por el instalador).
+import json
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import webview
+
+HELPER_BIN = "/usr/local/bin/avalos-update-helper"
+
+# ── i18n — mismo patrón que avalos-update/avalos-settings/avalos-about ────
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+
+
+def _detectar_idioma() -> str:
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    import os
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
+
+STRINGS = {
+    "en": {
+        "title": "Restore",
+        "subtitle": "Restore the system to an earlier point",
+        "loading": "Reading available snapshots…",
+        "err-helper": "Couldn't read the snapshot list. Is avalos-update-helper installed?",
+        "snapper-warn": "snapper couldn't be queried (is the 'root' config set up?). Showing backups only, if any.",
+        "sec-points": "Restore points",
+        "no-points": "No snapshots yet. AvalOS creates one automatically before every system update.",
+        "col-current": "current system state",
+        "btn-restore": "Restore",
+        "sec-backups": "Previous restores",
+        "sec-backups-d": "Kept in case you need to recover something from before a restore. Safe to delete once you don't need them — they take up disk space.",
+        "btn-delete": "Delete",
+        "confirm-restore-title": "Restore to snapshot #{number}?",
+        "confirm-restore-body": "The current state will be saved first, so nothing is lost. The system will switch to this snapshot, but the change only takes effect after a reboot.",
+        "confirm-restore-yes": "Yes, restore",
+        "confirm-restore-cancel": "Cancel",
+        "confirm-delete-title": "Delete this backup?",
+        "confirm-delete-body": "This permanently frees the disk space it uses. It cannot be undone.",
+        "confirm-delete-yes": "Yes, delete",
+        "confirm-delete-cancel": "Cancel",
+        "restoring": "Restoring…",
+        "deleting": "Deleting…",
+        "restore-done-title": "Restore ready",
+        "restore-done-body": "Reboot now to finish switching to snapshot #{number}, or do it later — nothing else changes until you do.",
+        "btn-reboot-now": "Reboot now",
+        "btn-reboot-later": "Later",
+        "restore-failed": "The restore failed — nothing was changed. See the log below.",
+        "delete-failed": "Couldn't delete it — see the log below.",
+        "close": "Close",
+        "back": "← Back to the list",
+    },
+    "es": {
+        "title": "Restaurar",
+        "subtitle": "Restaura el sistema a un punto anterior",
+        "loading": "Leyendo los snapshots disponibles…",
+        "err-helper": "No se pudo leer la lista de snapshots. ¿avalos-update-helper está instalado?",
+        "snapper-warn": "No se pudo consultar snapper (¿está configurado 'root'?). Se muestran solo los respaldos, si hay.",
+        "sec-points": "Puntos de restauración",
+        "no-points": "Todavía no hay snapshots. AvalOS crea uno automáticamente antes de cada actualización del sistema.",
+        "col-current": "estado actual del sistema",
+        "btn-restore": "Restaurar",
+        "sec-backups": "Restauraciones anteriores",
+        "sec-backups-d": "Se guardan por si necesitás recuperar algo de antes de una restauración. Se pueden borrar sin problema cuando ya no los necesites — ocupan espacio en disco.",
+        "btn-delete": "Eliminar",
+        "confirm-restore-title": "¿Restaurar al snapshot #{number}?",
+        "confirm-restore-body": "Primero se guarda el estado actual, así que nada se pierde. El sistema va a cambiar a este snapshot, pero el cambio recién se aplica al reiniciar.",
+        "confirm-restore-yes": "Sí, restaurar",
+        "confirm-restore-cancel": "Cancelar",
+        "confirm-delete-title": "¿Eliminar este respaldo?",
+        "confirm-delete-body": "Esto libera permanentemente el espacio en disco que usa. No se puede deshacer.",
+        "confirm-delete-yes": "Sí, eliminar",
+        "confirm-delete-cancel": "Cancelar",
+        "restoring": "Restaurando…",
+        "deleting": "Eliminando…",
+        "restore-done-title": "Restauración lista",
+        "restore-done-body": "Reiniciá ahora para terminar de cambiar al snapshot #{number}, o hacelo más tarde — nada más cambia hasta que reinicies.",
+        "btn-reboot-now": "Reiniciar ahora",
+        "btn-reboot-later": "Más tarde",
+        "restore-failed": "La restauración falló — no se cambió nada. Mirá el registro de abajo.",
+        "delete-failed": "No se pudo eliminar — mirá el registro de abajo.",
+        "close": "Cerrar",
+        "back": "← Volver a la lista",
+    },
+    "zh": {
+        "title": "还原",
+        "subtitle": "将系统还原到较早的状态",
+        "loading": "正在读取可用的快照…",
+        "err-helper": "无法读取快照列表。avalos-update-helper 是否已安装？",
+        "snapper-warn": "无法查询 snapper（是否已配置 'root'？）。仅显示备份（如果有）。",
+        "sec-points": "还原点",
+        "no-points": "目前还没有快照。AvalOS 会在每次系统更新前自动创建一个。",
+        "col-current": "系统当前状态",
+        "btn-restore": "还原",
+        "sec-backups": "以往的还原操作",
+        "sec-backups-d": "保留下来以便在还原前恢复某些内容。不再需要时可以放心删除——它们会占用磁盘空间。",
+        "btn-delete": "删除",
+        "confirm-restore-title": "还原到快照 #{number} 吗？",
+        "confirm-restore-body": "会先保存当前状态，不会丢失任何内容。系统将切换到此快照，但更改只有在重启后才会生效。",
+        "confirm-restore-yes": "是，还原",
+        "confirm-restore-cancel": "取消",
+        "confirm-delete-title": "删除此备份吗？",
+        "confirm-delete-body": "这将永久释放其占用的磁盘空间，且无法撤销。",
+        "confirm-delete-yes": "是，删除",
+        "confirm-delete-cancel": "取消",
+        "restoring": "正在还原…",
+        "deleting": "正在删除…",
+        "restore-done-title": "还原已就绪",
+        "restore-done-body": "立即重启以完成切换到快照 #{number}，或稍后再做——在此之前不会有其他变化。",
+        "btn-reboot-now": "立即重启",
+        "btn-reboot-later": "稍后",
+        "restore-failed": "还原失败——未做任何更改。请查看下方日志。",
+        "delete-failed": "删除失败——请查看下方日志。",
+        "close": "关闭",
+        "back": "← 返回列表",
+    },
+    "ja": {
+        "title": "復元",
+        "subtitle": "システムを以前の状態に復元します",
+        "loading": "利用可能なスナップショットを読み込んでいます…",
+        "err-helper": "スナップショットの一覧を読み込めませんでした。avalos-update-helper はインストールされていますか？",
+        "snapper-warn": "snapper に問い合わせできませんでした（'root' 設定はありますか？）。バックアップのみ表示します（あれば）。",
+        "sec-points": "復元ポイント",
+        "no-points": "スナップショットはまだありません。AvalOS はシステム更新のたびに自動的に作成します。",
+        "col-current": "現在のシステム状態",
+        "btn-restore": "復元",
+        "sec-backups": "過去の復元操作",
+        "sec-backups-d": "復元前の状態を取り戻せるように保持されています。不要になれば削除しても問題ありません — ディスク容量を使用します。",
+        "btn-delete": "削除",
+        "confirm-restore-title": "スナップショット #{number} に復元しますか？",
+        "confirm-restore-body": "まず現在の状態が保存されるので、何も失われません。システムはこのスナップショットに切り替わりますが、変更は再起動後にのみ有効になります。",
+        "confirm-restore-yes": "はい、復元する",
+        "confirm-restore-cancel": "キャンセル",
+        "confirm-delete-title": "このバックアップを削除しますか？",
+        "confirm-delete-body": "使用しているディスク容量が完全に解放されます。元に戻すことはできません。",
+        "confirm-delete-yes": "はい、削除する",
+        "confirm-delete-cancel": "キャンセル",
+        "restoring": "復元中…",
+        "deleting": "削除中…",
+        "restore-done-title": "復元の準備ができました",
+        "restore-done-body": "今すぐ再起動してスナップショット #{number} への切り替えを完了するか、後で行ってください — それまで他には何も変わりません。",
+        "btn-reboot-now": "今すぐ再起動",
+        "btn-reboot-later": "後で",
+        "restore-failed": "復元に失敗しました — 何も変更されていません。下のログを確認してください。",
+        "delete-failed": "削除できませんでした — 下のログを確認してください。",
+        "close": "閉じる",
+        "back": "← 一覧に戻る",
+    },
+}
+T = STRINGS[LANG]
+
+
+# ── API expuesta a la GUI ───────────────────────────────────────────
+class RestoreAPI:
+    window = None
+
+    def list_points(self):
+        ok, lines = self._run_helper_capture(["list-restore-points"])
+        if not ok or not lines:
+            return json.dumps({"ok": False, "points": [], "backups": [], "snapper_ok": False})
+        try:
+            data = json.loads(lines[-1])
+        except (ValueError, IndexError):
+            return json.dumps({"ok": False, "points": [], "backups": [], "snapper_ok": False})
+        return json.dumps({
+            "ok": True,
+            "points": data.get("points", []),
+            "backups": data.get("backups", []),
+            "snapper_ok": data.get("snapper_ok", True),
+        })
+
+    def restore(self, number):
+        threading.Thread(target=self._restore_worker, args=(int(number),), daemon=True).start()
+        return json.dumps({"started": True})
+
+    def delete_backup(self, name):
+        threading.Thread(target=self._delete_worker, args=(name,), daemon=True).start()
+        return json.dumps({"started": True})
+
+    def reboot_now(self):
+        # Sin pkexec a propósito: reiniciar la sesión activa es una acción
+        # de logind (org.freedesktop.login1.reboot) que ya autoriza a
+        # cualquier usuario con sesión activa al frente — envolverlo en el
+        # pkexec de avalos-update-helper sería pedir una segunda
+        # contraseña para algo que el botón de apagado del sistema ya
+        # hace sin pedir ninguna.
+        try:
+            subprocess.Popen(["systemctl", "reboot"])
+        except FileNotFoundError:
+            self._log("systemctl no está disponible en este sistema.", "err")
+
+    def close(self):
+        if self.window:
+            self.window.destroy()
+
+    # ── internos ──
+    def _jsc(self, func, *args):
+        if not self.window:
+            return
+        encoded = ", ".join(json.dumps(a, ensure_ascii=False) for a in args)
+        try:
+            self.window.evaluate_js(f"{func}({encoded})")
+        except Exception as e:
+            print(f"[JS] {e}")
+
+    def _log(self, txt, cls="info"):
+        self._jsc("pyLog", txt, cls)
+
+    def _run_helper_capture(self, args):
+        """Como avalos-update._run_helper, pero además junta las líneas
+        que NO llevan el prefijo '### ' — la narración (_out) va al log
+        en vivo igual que en avalos-update; la salida "de datos" real
+        (el JSON de una sola línea que imprime list-restore-points) es
+        la que se devuelve para que el caller la parsee."""
+        cmd = ["pkexec", HELPER_BIN, *args]
+        self._log(f"$ {' '.join(args)}", "step")
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+        except FileNotFoundError:
+            self._log("pkexec no está disponible en este sistema.", "err")
+            return False, []
+        captured = []
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            if line.startswith("### "):
+                rest = line[4:]
+                cls = "err" if rest.startswith("ERROR:") else "step" if rest.startswith("$ ") else "info"
+                self._log(rest, cls)
+            elif line.strip():
+                captured.append(line)
+        proc.wait()
+        if proc.returncode != 0:
+            self._log(f"(código de salida {proc.returncode})", "err")
+            return False, captured
+        return True, captured
+
+    def _restore_worker(self, number):
+        ok, _ = self._run_helper_capture(["restore", "--number", str(number)])
+        self._jsc("pyRestoreDone", ok, number)
+
+    def _delete_worker(self, name):
+        ok, _ = self._run_helper_capture(["delete-backup", "--name", name])
+        self._jsc("pyDeleteDone", ok, name)
+
+
+# ── HTML/CSS/JS embebido (mismo patrón que avalos-update) ──────────────
+def _build_html():
+    return """<!DOCTYPE html>
+<html lang="LANG_PLACEHOLDER">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
+    --border: #414868; --text: #c0caf5; --text-dim: #565f89;
+    --blue: #7aa2f7; --purple: #bb9af7; --green: #9ece6a; --red: #f7768e; --yellow: #e0af68;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
+    overflow: hidden; height: 100%; font-size: 13px; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  header { padding: 16px 22px 14px; border-bottom: 1px solid var(--border);
+    flex-shrink: 0; }
+  header h1 { font-size: 16px; margin: 0 0 2px; font-weight: 600; letter-spacing: .2px; }
+  header h1 .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header .sub { font-size: 11.5px; color: var(--text-dim); }
+
+  .body { flex: 1; overflow-y: auto; padding: 16px 22px; }
+  .hidden { display: none !important; }
+
+  .loading { color: var(--text-dim); padding: 30px 4px; font-size: 12.5px; }
+  .empty { color: var(--text-dim); padding: 16px 4px; font-size: 12.5px; line-height: 1.5; }
+  .warn-banner { background: rgba(224,175,104,.12); border: 1px solid rgba(224,175,104,.35);
+    color: var(--yellow); border-radius: 8px; padding: 9px 12px; font-size: 12px; margin-bottom: 12px; }
+
+  .sec-title { font-weight: 600; font-size: 13px; margin: 18px 0 4px; }
+  .sec-title:first-child { margin-top: 0; }
+  .sec-desc { font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; line-height: 1.45; }
+
+  .point { display: flex; align-items: center; gap: 12px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 7px; }
+  .point .num { font-weight: 700; color: var(--blue); font-size: 13px; min-width: 34px; }
+  .point .info { flex: 1; min-width: 0; }
+  .point .date { font-size: 12px; color: var(--text); }
+  .point .desc { font-size: 11.5px; color: var(--text-dim); margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .point .desc.current { color: var(--green); }
+
+  .backup { display: flex; align-items: center; gap: 12px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; margin-bottom: 7px; }
+  .backup .date { flex: 1; font-size: 12px; }
+
+  button.btn { font-family: inherit; font-size: 11.5px; font-weight: 600; padding: 6px 13px;
+    border-radius: 7px; border: 1px solid var(--border); background: var(--surface-hi);
+    color: var(--text); cursor: pointer; white-space: nowrap; }
+  button.btn:hover { border-color: var(--blue); }
+  button.btn:disabled { opacity: .45; cursor: not-allowed; }
+  button.btn.primary { background: linear-gradient(135deg, var(--blue), var(--purple)); color: var(--bg-alt); border: none; }
+  button.btn.danger { color: var(--red); }
+  button.btn.danger:hover { border-color: var(--red); }
+  button.btn.ghost { background: transparent; }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; }
+  .panel p { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; margin: 0 0 16px; }
+  .panel .row { display: flex; gap: 8px; justify-content: flex-end; }
+
+  .log { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 11.5px; line-height: 1.6; height: 160px; overflow-y: auto;
+    margin-top: 14px; white-space: pre-wrap; word-break: break-word; }
+  .log .step { color: var(--blue); font-weight: 600; }
+  .log .err { color: var(--red); }
+  .log .info { color: var(--text-dim); }
+
+  .done-icon { font-size: 30px; margin-bottom: 6px; }
+  .done-icon.ok { color: var(--green); }
+  .done-icon.fail { color: var(--red); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1><span class="accent">AvalOS</span> — STR_TITLE</h1>
+    <div class="sub">STR_SUBTITLE</div>
+  </header>
+  <div class="body" id="body">
+    <div class="loading" id="loading">STR_LOADING</div>
+  </div>
+</div>
+
+<script>
+const STR = STRINGS_PLACEHOLDER;
+let STATE = { points: [], backups: [] };
+
+function el(tag, cls, txt) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt !== undefined) e.textContent = txt;
+  return e;
+}
+
+function pyLog(txt, cls) {
+  const box = document.getElementById('active-log');
+  if (!box) return;
+  const line = el('div', cls || 'info', txt);
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function loadPoints() {
+  const raw = await window.pywebview.api.list_points();
+  const res = JSON.parse(raw);
+  const body = document.getElementById('body');
+  body.innerHTML = '';
+  if (!res.ok) {
+    body.appendChild(el('div', 'empty', STR['err-helper']));
+    return;
+  }
+  STATE.points = res.points; STATE.backups = res.backups;
+  if (!res.snapper_ok) {
+    body.appendChild(el('div', 'warn-banner', STR['snapper-warn']));
+  }
+
+  body.appendChild(el('div', 'sec-title', STR['sec-points']));
+  if (res.points.length === 0) {
+    body.appendChild(el('div', 'empty', STR['no-points']));
+  } else {
+    res.points.forEach(function (p) {
+      const row = el('div', 'point');
+      row.appendChild(el('div', 'num', '#' + p.number));
+      const info = el('div', 'info');
+      info.appendChild(el('div', 'date', p.date || ''));
+      info.appendChild(el('div', 'desc', p.description || ''));
+      row.appendChild(info);
+      const btn = el('button', 'btn primary', STR['btn-restore']);
+      btn.onclick = function () { showRestoreConfirm(p.number); };
+      row.appendChild(btn);
+      body.appendChild(row);
+    });
+  }
+
+  if (res.backups.length > 0) {
+    body.appendChild(el('div', 'sec-title', STR['sec-backups']));
+    body.appendChild(el('div', 'sec-desc', STR['sec-backups-d']));
+    res.backups.forEach(function (name) {
+      const row = el('div', 'backup');
+      row.appendChild(el('div', 'date', backupLabel(name)));
+      const btn = el('button', 'btn danger', STR['btn-delete']);
+      btn.onclick = function () { showDeleteConfirm(name); };
+      row.appendChild(btn);
+      body.appendChild(row);
+    });
+  }
+}
+
+function backupLabel(name) {
+  // "@.avalos-restore-backup-20260921-143012-004213" -> "2026-09-21 14:30:12"
+  const m = name.match(/backup-(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})(\\d{2})/);
+  if (!m) return name;
+  return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5] + ':' + m[6];
+}
+
+function renderPanel() {
+  const body = document.getElementById('body');
+  body.innerHTML = '';
+  const panel = el('div', 'panel');
+  body.appendChild(panel);
+  return panel;
+}
+
+function showRestoreConfirm(number) {
+  const panel = renderPanel();
+  panel.appendChild(el('h2', null, STR['confirm-restore-title'].replace('{number}', number)));
+  panel.appendChild(el('p', null, STR['confirm-restore-body']));
+  const row = el('div', 'row');
+  const cancel = el('button', 'btn ghost', STR['confirm-restore-cancel']);
+  cancel.onclick = loadPoints;
+  const yes = el('button', 'btn primary', STR['confirm-restore-yes']);
+  yes.onclick = function () { runRestore(number); };
+  row.appendChild(cancel); row.appendChild(yes);
+  panel.appendChild(row);
+}
+
+function runRestore(number) {
+  const panel = renderPanel();
+  panel.appendChild(el('h2', null, STR['restoring']));
+  const log = el('div', 'log'); log.id = 'active-log';
+  panel.appendChild(log);
+  window._pfPendingNumber = number;
+  window.pywebview.api.restore(number);
+}
+
+function pyRestoreDone(ok, number) {
+  const body = document.getElementById('body');
+  body.innerHTML = '';
+  const panel = el('div', 'panel');
+  if (ok) {
+    panel.appendChild(el('div', 'done-icon ok', '✔'));
+    panel.appendChild(el('h2', null, STR['restore-done-title']));
+    panel.appendChild(el('p', null, STR['restore-done-body'].replace('{number}', number)));
+    const row = el('div', 'row');
+    const later = el('button', 'btn ghost', STR['btn-reboot-later']);
+    later.onclick = loadPoints;
+    const now = el('button', 'btn primary', STR['btn-reboot-now']);
+    now.onclick = function () { window.pywebview.api.reboot_now(); };
+    row.appendChild(later); row.appendChild(now);
+    panel.appendChild(row);
+  } else {
+    panel.appendChild(el('div', 'done-icon fail', '✖'));
+    panel.appendChild(el('h2', null, STR['restore-failed']));
+    const log = el('div', 'log'); log.id = 'active-log';
+    panel.appendChild(log);
+    const row = el('div', 'row');
+    const back = el('button', 'btn ghost', STR['back']);
+    back.onclick = loadPoints;
+    row.appendChild(back);
+    panel.appendChild(row);
+  }
+  body.appendChild(panel);
+}
+
+function showDeleteConfirm(name) {
+  const panel = renderPanel();
+  panel.appendChild(el('h2', null, STR['confirm-delete-title']));
+  panel.appendChild(el('p', null, STR['confirm-delete-body']));
+  const row = el('div', 'row');
+  const cancel = el('button', 'btn ghost', STR['confirm-delete-cancel']);
+  cancel.onclick = loadPoints;
+  const yes = el('button', 'btn danger', STR['confirm-delete-yes']);
+  yes.onclick = function () { runDelete(name); };
+  row.appendChild(cancel); row.appendChild(yes);
+  panel.appendChild(row);
+}
+
+function runDelete(name) {
+  const panel = renderPanel();
+  panel.appendChild(el('h2', null, STR['deleting']));
+  const log = el('div', 'log'); log.id = 'active-log';
+  panel.appendChild(log);
+  window.pywebview.api.delete_backup(name);
+}
+
+function pyDeleteDone(ok, name) {
+  if (ok) { loadPoints(); return; }
+  const body = document.getElementById('body');
+  body.innerHTML = '';
+  const panel = el('div', 'panel');
+  panel.appendChild(el('div', 'done-icon fail', '✖'));
+  panel.appendChild(el('h2', null, STR['delete-failed']));
+  const log = el('div', 'log'); log.id = 'active-log';
+  panel.appendChild(log);
+  const row = el('div', 'row');
+  const back = el('button', 'btn ghost', STR['back']);
+  back.onclick = loadPoints;
+  row.appendChild(back);
+  panel.appendChild(row);
+  body.appendChild(panel);
+}
+
+window.addEventListener('pywebviewready', loadPoints);
+</script>
+</body>
+</html>"""
+
+
+def main():
+    html = (_build_html()
+            .replace("LANG_PLACEHOLDER", LANG)
+            .replace("STR_TITLE", T["title"])
+            .replace("STR_SUBTITLE", T["subtitle"])
+            .replace("STR_LOADING", T["loading"])
+            .replace("STRINGS_PLACEHOLDER", json.dumps(T, ensure_ascii=False)))
+
+    # Mismo fix que avalos-wallpaper/avalos-update (BUG-012): sin esto GTK
+    # usa "python3" como app_id en Wayland y la window rule (class =
+    # "avalos-restore") nunca matchea.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-restore")
+    except Exception:
+        pass
+
+    api = RestoreAPI()
+    win = webview.create_window(
+        title            = f"AvalOS — {T['title']}",
+        html             = html,
+        js_api           = api,
+        width            = 620,
+        height           = 640,
+        min_size         = (480, 460),
+        resizable        = True,
+        background_color = "#1a1b26",
+    )
+    api.window = win
+
+    try:
+        webview.start(debug=False)
+    except Exception as e:
+        print(f"ERROR al iniciar pywebview: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

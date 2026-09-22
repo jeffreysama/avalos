@@ -262,6 +262,12 @@ hl.window_rule({
     size   = { 760, 720 },
 })
 hl.window_rule({
+    match  = { class = "avalos-restore" },
+    float  = true,
+    center = true,
+    size   = { 620, 640 },
+})
+hl.window_rule({
     match  = { class = "avalos-store" },
     float  = true,
     center = true,

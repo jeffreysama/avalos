@@ -235,7 +235,12 @@ elif [[ "$chosen" == "$T_USERS" ]]; then
     disown
 
 elif [[ "$chosen" == "$T_SNAPSHOTS" ]]; then
-    if command -v snapper-gui &>/dev/null; then
+    # avalos-restore (one-click restore) es la vía principal: además de listar,
+    # deja restaurar el sistema a un snapshot elegido. snapper-gui y la vista
+    # de solo lectura en kitty quedan como respaldo si por algo no está.
+    if command -v avalos-restore &>/dev/null; then
+        _run avalos-restore
+    elif command -v snapper-gui &>/dev/null; then
         _run snapper-gui
     else
         kitty --title "AvalOS — Snapshots" -- bash -c '

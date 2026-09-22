@@ -46,7 +46,7 @@ LIVE = ROOT / "configs" / "hyprland" / "hyprland.lua"
 TEMPLATE = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
 CATALOG = ROOT / "configs" / "avalos-store-catalog.json"
 MODS = {"SUPER", "SHIFT", "CTRL", "ALT"}
-NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update"}
+NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore"}
 FLAG_WORDS = ("long_press", "release", "repeating", "locked", "mouse", "click", "drag", "non_consuming", "transparent", "ignore_mods")
 
 fails: list[str] = []
