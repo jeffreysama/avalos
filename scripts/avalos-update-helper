@@ -18,7 +18,7 @@
 #   segundo mecanismo de privilegio pisando al de flatpak).
 # ────────────────────────────────────────────────────────────────────
 from __future__ import annotations
-import argparse, ctypes, json, os, pwd, re, subprocess, sys, time, urllib.request
+import argparse, ctypes, json, os, pwd, re, select, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 REPO_RAW = "https://raw.githubusercontent.com/jeffreysama/avalos/main"
@@ -63,19 +63,49 @@ def _require_root_via_pkexec() -> str:
         _fail(f"UID invocador ({uid}) no resuelve a un usuario real.")
 
 
-def _stream(cmd: list[str], **kw) -> int:
+def _stream(cmd: list[str], idle_timeout: float | None = None, **kw) -> int:
     """Corre cmd imprimiendo stdout/stderr línea por línea EN VIVO, no
     todo junto al final — así el GUI (que nos lee vía pkexec con pipes)
     puede mostrar progreso real durante una compilación de AUR de 10
-    minutos en vez de una barra congelada."""
+    minutos en vez de una barra congelada.
+
+    idle_timeout (segundos, default None = sin límite, comportamiento
+    igual que antes): NO es un límite de duración total — una
+    compilación larga que sigue imprimiendo progreso nunca lo dispara.
+    Es específicamente para detectar un proceso COLGADO Y EN SILENCIO
+    (snapper/btrfs esperando algo que nunca llega, por ejemplo): si no
+    sale NINGUNA línea en ese lapso, se mata el proceso y se corta acá
+    con código 124, en vez de quedar esperando para siempre sin que el
+    GUI (ni quien mira el log) tenga ninguna señal de que algo se
+    trabó. Implementado con select() sobre el fd del pipe (no con
+    subprocess.run(timeout=...), que exigiría comunicate() y perdería
+    el streaming línea por línea de arriba)."""
     print(f"### $ {' '.join(cmd)}", flush=True)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, **kw,
     )
-    for line in proc.stdout:
-        print(line, end="", flush=True)
-    proc.wait()
+    try:
+        while True:
+            if idle_timeout is not None:
+                listo, _, _ = select.select([proc.stdout], [], [], idle_timeout)
+                if not listo:
+                    proc.kill()
+                    proc.wait()
+                    print(
+                        f"### ERROR: sin salida por {idle_timeout:.0f}s — "
+                        f"proceso colgado (pid {proc.pid}), se mató.",
+                        flush=True,
+                    )
+                    return 124
+            linea = proc.stdout.readline()
+            if linea == "":
+                break
+            print(linea, end="", flush=True)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
     return proc.returncode
 
 
@@ -392,8 +422,19 @@ def cmd_apply_aur(args: argparse.Namespace) -> None:
 def cmd_snapshot(args: argparse.Namespace) -> None:
     _require_root_via_pkexec()
     desc = args.description or "avalos-update: pre-update"
-    rc = _stream(["snapper", "-c", "root", "create", "--description", desc])
-    if rc != 0:
+    # --cleanup-algorithm number: sin esto, esta snapshot NUNCA entra en la
+    # limpieza automática de snapper-cleanup.timer (NUMBER_LIMIT/_IMPORTANT
+    # que el instalador dejó en 10) — se acumula para siempre. idle_timeout:
+    # 'snapper create' en este layout nunca debería tardar más de un par de
+    # segundos; 120s es margen de sobra para no cortar algo legítimo pero sí
+    # detectar un cuelgue real en vez de quedar esperando sin límite.
+    rc = _stream(
+        ["snapper", "-c", "root", "create", "--cleanup-algorithm", "number", "--description", desc],
+        idle_timeout=120,
+    )
+    if rc == 124:
+        _out("el snapshot se colgó y se mató tras 2 minutos sin salida — revisá 'sudo snapper -c root list' y si hay un proceso snapper/btrfs trabado a mano. Se continúa igual, esto no bloquea el update.")
+    elif rc != 0:
         _out(f"aviso: snapper terminó con código {rc} (¿snapper-root configurado?) — se continúa igual, esto no bloquea el update.")
     else:
         _out("snapshot creado.")
@@ -711,8 +752,14 @@ def cmd_restore(args: argparse.Namespace) -> None:
     device = _root_source_device()
 
     _out("creando snapshot de seguridad del estado actual (por si hace falta deshacer esto)...")
-    rc = _stream(["snapper", "-c", "root", "create", "--description", f"avalos-restore: antes de restaurar a #{number}"])
-    if rc != 0:
+    rc = _stream(
+        ["snapper", "-c", "root", "create", "--cleanup-algorithm", "number",
+         "--description", f"avalos-restore: antes de restaurar a #{number}"],
+        idle_timeout=120,
+    )
+    if rc == 124:
+        _out("el snapshot de seguridad se colgó y se mató tras 2 minutos sin salida — se continúa igual, esto no bloquea la restauración.")
+    elif rc != 0:
         _out(f"aviso: el snapshot de seguridad terminó con código {rc} — se continúa igual, esto no bloquea la restauración.")
 
     _out(f"montando el subvolumen raíz de {device}...")
