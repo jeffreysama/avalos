@@ -1,0 +1,44 @@
+diff --git a/scripts/avalos-store b/scripts/avalos-store
+index fea1d9a..c65b136 100644
+--- a/scripts/avalos-store
++++ b/scripts/avalos-store
+@@ -20,6 +20,7 @@ import base64
+ import json
+ import os
+ import re
++import select
+ import shutil
+ import subprocess
+ import sys
+@@ -710,12 +711,28 @@ class StoreAPI:
+     def _finish(self, app_id, action, ok, message="", external=False):
+         self._emit(app_id, "finish", {"action": action, "ok": ok, "message": message, "external": external})
+ 
+-    def _stream(self, app_id, proc):
++    def _stream(self, app_id, proc, idle_timeout=180):
++        # idle_timeout: sin esto, un pkexec/pacman/flatpak colgado (esperando
++        # auth, o cualquier otro motivo) deja el Store esperando para siempre
++        # sin ninguna señal — mismo bug ya confirmado en avalos-update-helper.
++        # No es un límite de duración total: una descarga grande que sigue
++        # imprimiendo progreso nunca lo dispara, solo el silencio total.
+         try:
+-            for line in proc.stdout:
+-                self._log(app_id, line.rstrip())
++            while True:
++                listo, _, _ = select.select([proc.stdout], [], [], idle_timeout)
++                if not listo:
++                    proc.kill()
++                    proc.wait()
++                    self._log(app_id, f"sin salida por {idle_timeout}s — se mató el proceso (colgado).")
++                    return 124
++                linea = proc.stdout.readline()
++                if linea == "":
++                    break
++                self._log(app_id, linea.rstrip())
+         except Exception:
+             pass
++        if proc.poll() is None:
++            proc.kill()
+         proc.wait()
+         return proc.returncode
+ 
