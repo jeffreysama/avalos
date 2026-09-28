@@ -18,10 +18,17 @@
 #   segundo mecanismo de privilegio pisando al de flatpak).
 # ────────────────────────────────────────────────────────────────────
 from __future__ import annotations
-import argparse, ctypes, json, os, pwd, re, select, subprocess, sys, time, urllib.request
+import argparse, ctypes, hashlib, json, os, pwd, re, select, subprocess, sys, time, urllib.request
 from pathlib import Path
 
-REPO_RAW = "https://raw.githubusercontent.com/jeffreysama/avalos/main"
+# AVALOS_SYNC_REF: commit específico, NO 'main' — así "sync configs" (que
+# corre esto con privilegios de root) siempre instala una versión que Jeff
+# ya confirmó que anda bien, no lo que sea que esté en la punta de main en
+# ese instante (podría ser un WIP a medio probar, o un push roto por
+# accidente). Para "cortar una release" nueva que sync-configs efectivamente
+# instale: ver el docstring de scripts/gen-sync-manifest.py.
+AVALOS_SYNC_REF = "38787252a81978d4f1eafc4889cd32c723279eaa"
+REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 BOOT_DIR = Path("/boot")
 MKINITCPIO_D = Path("/etc/mkinitcpio.d")
 GRUB_CFG = BOOT_DIR / "grub" / "grub.cfg"
@@ -310,7 +317,7 @@ def _actualizar_bootloader(kernel_name: str | None = None) -> None:
     el paquete refind se actualiza."""
     if GRUB_CFG.parent.exists() and Path("/etc/default/grub").exists():
         _out("regenerando grub.cfg…")
-        _stream(["grub-mkconfig", "-o", str(GRUB_CFG)])
+        _stream(["grub-mkconfig", "-o", str(GRUB_CFG)], idle_timeout=120)
     elif kernel_name:
         # _actualizar_systemd_boot_entry ya verifica internamente si
         # existe avalos.conf de systemd-boot; si no hay GRUB ni esa
@@ -331,7 +338,7 @@ def cmd_apply_system(args: argparse.Namespace) -> None:
             pkg, headers = KERNEL_VARIANTS[actual]
             cmd += ["--ignore", pkg, "--ignore", headers]
             _out(f"kernel retenido a propósito: {pkg} (elegiste actualizar todo menos el kernel).")
-    rc = _stream(cmd)
+    rc = _stream(cmd, idle_timeout=180)
     if rc != 0:
         _fail(f"pacman -Syu terminó con código {rc}.", rc)
     _out("sistema actualizado.")
@@ -361,7 +368,7 @@ def cmd_apply_kernel(args: argparse.Namespace) -> None:
     elif actual:
         _out(f"cambiando de variante: {KERNEL_VARIANTS[actual][0]} → {pkg}")
 
-    rc = _stream(["pacman", "-S", "--needed", "--noconfirm", pkg, headers])
+    rc = _stream(["pacman", "-S", "--needed", "--noconfirm", pkg, headers], idle_timeout=180)
     if rc != 0:
         _fail(f"no se pudo instalar {pkg}/{headers} (código {rc}) — se deja el kernel viejo intacto.", rc)
 
@@ -371,20 +378,20 @@ def cmd_apply_kernel(args: argparse.Namespace) -> None:
     # 100% arrancable con lo que ya tenía. Recién después de confirmar
     # que el nuevo generó initramfs bien se borra la variante anterior.
     _out("regenerando initramfs…")
-    rc_m = _stream(["mkinitcpio", "-P"])
+    rc_m = _stream(["mkinitcpio", "-P"], idle_timeout=180)
     if rc_m != 0:
         _fail(f"mkinitcpio -P terminó con código {rc_m} para {pkg} — se deja la variante anterior instalada, no reinicies todavía.", rc_m)
 
     if actual and KERNEL_VARIANTS[actual][0] != pkg:
         pkg_viejo, headers_viejo = KERNEL_VARIANTS[actual]
         _out(f"quitando variante anterior: {pkg_viejo}")
-        rc_r = _stream(["pacman", "-R", "--noconfirm", pkg_viejo, headers_viejo])
+        rc_r = _stream(["pacman", "-R", "--noconfirm", pkg_viejo, headers_viejo], idle_timeout=180)
         if rc_r != 0:
             _out(f"aviso: no se pudo quitar {pkg_viejo} (código {rc_r}) — queda instalado junto al nuevo, sin romper nada.")
         _limpiar_presets_huerfanos(f"{pkg}.preset")
         # Segunda pasada: limpia cualquier referencia que haya quedado
         # del preset viejo ahora que ya no está. Barata e idempotente.
-        _stream(["mkinitcpio", "-P"])
+        _stream(["mkinitcpio", "-P"], idle_timeout=180)
 
     _actualizar_bootloader(kernel_name=pkg)
     _out(f"listo — {pkg} instalado. Reiniciá para arrancar con el kernel nuevo.")
@@ -440,6 +447,39 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
         _out("snapshot creado.")
 
 
+def _cargar_manifest_hashes() -> dict[str, str] | None:
+    """Trae configs/MANIFEST.sha256 desde REPO_RAW (mismo AVALOS_SYNC_REF
+    fijo que todo lo demás) y lo parsea al formato de sha256sum: '<hash>
+    <ruta>' por línea. None si no se pudo bajar o ninguna línea matcheó el
+    formato — eso hace fallar cmd_sync_system_files entero (ver más abajo):
+    un manifiesto que no se puede leer es tan sospechoso como un archivo
+    que no matchea su hash, así que no hay fallback silencioso a 'confiar
+    en todo sin verificar'."""
+    url = f"{REPO_RAW}/configs/MANIFEST.sha256"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            if resp.status != 200:
+                raise OSError(f"HTTP {resp.status}")
+            texto = resp.read().decode("utf-8")
+    except Exception as e:
+        _out(f"no se pudo bajar MANIFEST.sha256: {e}")
+        return None
+    hashes: dict[str, str] = {}
+    for linea in texto.splitlines():
+        linea = linea.strip()
+        if not linea:
+            continue
+        partes = linea.split(None, 1)
+        if len(partes) != 2 or len(partes[0]) != 64:
+            _out(f"línea con formato inesperado en MANIFEST.sha256, se ignora: {linea!r}")
+            continue
+        hashes[partes[1].lstrip("*").strip()] = partes[0].lower()
+    if not hashes:
+        _out("MANIFEST.sha256 se bajó pero no tenía ninguna línea válida.")
+        return None
+    return hashes
+
+
 def cmd_sync_system_files(args: argparse.Namespace) -> None:
     """Sincroniza SOLO rutas de sistema (root:root) contra jeffreysama/
     avalos@main: los scripts de /usr/local/bin/avalos-*, el .desktop,
@@ -448,8 +488,19 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
     ya están aplicados en ningún /home/*/.config/... — eso lo maneja
     avalos-update (sin root) escribiendo un *.new al lado del archivo
     del usuario si la plantilla cambió, igual que un .pacnew, nunca
-    pisando directo lo que la persona ya haya personalizado."""
+    pisando directo lo que la persona ya haya personalizado.
+
+    Cada archivo se verifica contra configs/MANIFEST.sha256 (mismo
+    AVALOS_SYNC_REF fijo de arriba) antes de escribirse: protege contra una
+    descarga corrupta a medio camino o una respuesta manipulada para un
+    archivo puntual. NO protege contra que AVALOS_SYNC_REF mismo apunte a
+    un commit legítimamente comprometido — para eso hace falta firmar
+    releases (GPG), que por ahora es de más para el tamaño del proyecto."""
     _require_root_via_pkexec()
+
+    manifest_hashes = _cargar_manifest_hashes()
+    if manifest_hashes is None:
+        _fail("no se pudo verificar MANIFEST.sha256 — por seguridad, no se sincroniza nada sin poder chequear integridad. Reintentá más tarde.")
 
     # Rutas confirmadas 1:1 contra las llamadas reales a _leer_config(...)
     # en skill_instalar_usb.py (todas bajo configs/<algo>/<archivo> en el
@@ -513,6 +564,17 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
             fallas += 1
             continue
 
+        hash_esperado = manifest_hashes.get(src_rel)
+        hash_real = hashlib.sha256(contenido).hexdigest()
+        if hash_esperado is None:
+            _out(f"aviso: {src_rel} no está en MANIFEST.sha256 — se deja el archivo actual sin tocar (por seguridad, no se escribe nada sin poder verificar).")
+            fallas += 1
+            continue
+        if hash_real != hash_esperado:
+            _out(f"aviso: {src_rel} NO coincide con MANIFEST.sha256 (esperado {hash_esperado[:12]}…, bajado {hash_real[:12]}…) — se deja el archivo actual sin tocar.")
+            fallas += 1
+            continue
+
         dest_path = Path(dest)
         try:
             dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -528,7 +590,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
     if fallas:
         _out(f"sync terminado con {fallas} archivo(s) que no se pudieron actualizar (ver arriba).")
     else:
-        _out("archivos de sistema de AvalOS sincronizados contra el repo.")
+        _out("archivos de sistema de AvalOS sincronizados y verificados contra MANIFEST.sha256.")
 
 
 # ── Restauración de un snapshot (one-click restore) ─────────────────────
@@ -776,7 +838,7 @@ def cmd_restore(args: argparse.Namespace) -> None:
             )
 
         _out(f"creando copia escribible del snapshot #{number}...")
-        rc = _stream(["btrfs", "subvolume", "snapshot", str(src), str(incoming)])
+        rc = _stream(["btrfs", "subvolume", "snapshot", str(src), str(incoming)], idle_timeout=120)
         if rc != 0:
             _fail(f"no se pudo crear la copia del snapshot #{number} (código {rc}) — no se tocó nada más.", rc)
 
@@ -833,7 +895,7 @@ def cmd_delete_backup(args: argparse.Namespace) -> None:
         target = top / name
         if not target.is_dir():
             _fail(f"'{name}' no existe en {top}.")
-        rc = _stream(["btrfs", "subvolume", "delete", str(target)])
+        rc = _stream(["btrfs", "subvolume", "delete", str(target)], idle_timeout=120)
         if rc != 0:
             _fail(f"no se pudo borrar '{name}' (código {rc}).", rc)
         _out(f"respaldo '{name}' eliminado.")

@@ -33,7 +33,12 @@ from pathlib import Path
 
 import webview
 
-REPO_RAW = "https://raw.githubusercontent.com/jeffreysama/avalos/main"
+# Mismo AVALOS_SYNC_REF que avalos-update-helper (ver ese archivo para el
+# porqué y cómo bumpearlo) — así "¿tu dotfile quedó viejo?" se compara
+# contra la MISMA versión que "sync configs" realmente va a instalar, no
+# contra lo que sea que esté en la punta de main en ese instante.
+AVALOS_SYNC_REF = "38787252a81978d4f1eafc4889cd32c723279eaa"
+REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 HELPER_BIN = "/usr/local/bin/avalos-update-helper"
 TEMPLATE_LOCAL = Path("/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template")
 

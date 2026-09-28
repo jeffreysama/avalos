@@ -38,7 +38,7 @@ kitty --title "AvalOS — About / Acerca de" -- bash -c '
     echo "  Hyprland       : ${_hver:-N/A}"
     _wver=$(waybar --version 2>/dev/null | head -1)
     echo "  Waybar         : ${_wver:-N/A}"
-    _mfree=$(free -h | awk /^Mem:/{print\$7})
+    _mfree=$(free -h | awk /^Mem:/{print\$4})
     _mtotal=$(free -h | awk /^Mem:/{print\$2})
     echo "  Memoria libre  : $_mfree libre de $_mtotal"
     _dfree=$(df -h / | awk NR==2{print\$4})
