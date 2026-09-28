@@ -38,7 +38,7 @@ env:
 jobs:
   check-version:
     name: Verificar version del kernel
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       kernel_ver: ${{ steps.get_ver.outputs.kernel_ver }}
       should_build: ${{ steps.check_build.outputs.should_build }}
@@ -171,7 +171,7 @@ jobs:
     # contenedor totalmente separado, sin filesystem compartido).
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     container:
@@ -326,7 +326,7 @@ jobs:
   build-standard:
     name: Compilar linux-avalos
     needs: [check-version, prepare]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: archlinux:base-devel
       options: --privileged
@@ -387,7 +387,7 @@ jobs:
     name: Compilar linux-avalos-bore
     needs: [check-version, prepare]
     if: github.event.inputs.build_bore != 'false' || github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: archlinux:base-devel
       options: --privileged
@@ -510,7 +510,7 @@ jobs:
   build-compat:
     name: Compilar linux-avalos-compat (x86-64-v2)
     needs: [check-version, prepare]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: archlinux:base-devel
       options: --privileged
@@ -606,7 +606,7 @@ jobs:
     # apenas se confirma que corresponde buildear en este run.
     needs: check-version
     if: needs.check-version.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: archlinux:base-devel
       options: --privileged
@@ -680,7 +680,7 @@ jobs:
     # GitHub salte automaticamente los jobs dependientes).
     needs: [check-version, build-standard, build-bore, build-compat, build-firmware]
     if: always() && needs.build-standard.result == 'success' && needs.build-compat.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     container:
@@ -867,7 +867,7 @@ jobs:
     name: Resumen
     needs: [check-version, build-standard, build-bore, build-compat, publish]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Resumen del build
         run: |
