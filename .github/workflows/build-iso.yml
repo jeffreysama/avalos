@@ -12,6 +12,12 @@ on:
         type: boolean
         default: true
 
+# Explícito en vez de depender del default de permisos del repo/org para
+# GITHUB_TOKEN (que puede cambiar): el job publica en GitHub Releases
+# ("Publicar en GitHub Releases" más abajo), así que necesita contents:write.
+permissions:
+  contents: write
+
 env:
   AVALOS_REPO: jeffreysama/avalos
   AVALOS_REPO_URL: https://github.com/jeffreysama/avalos/releases/download/repo

@@ -19,6 +19,12 @@ on:
       - ".github/workflows/**"
   workflow_dispatch:
 
+# Mínimo posible: este es el único de los 3 workflows que corre en
+# pull_request (incluidas PRs desde forks) — solo lee y valida, no usa
+# secrets.GITHUB_TOKEN ni escribe nada.
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Validar configs con los parsers reales
@@ -35,3 +41,6 @@ jobs:
 
       - name: Validar
         run: /usr/bin/python3 scripts/validate_configs.py --strict
+
+      - name: Coherencia del manifiesto de sync
+        run: /usr/bin/python3 scripts/gen-sync-manifest.py --check

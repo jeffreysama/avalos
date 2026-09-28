@@ -331,7 +331,7 @@ def diagnose_network(mirrorlist: Path = MIRRORLIST) -> NetDiagnosis:
     # 3) salida a Internet por IP (en paralelo)
     t = time.monotonic()
     with cf.ThreadPoolExecutor(max_workers=len(_IP_PROBES)) as ex:
-        hits = [hp for hp, ok in zip(_IP_PROBES, ex.map(lambda hp: _tcp_ok(*hp), _IP_PROBES)) if ok]
+        hits = [hp for hp, ok in zip(_IP_PROBES, ex.map(lambda hp: _tcp_ok(*hp), _IP_PROBES), strict=True) if ok]
     if not hits:
         add("internet", "fail", "ninguna IP pública responde en TCP/443", t)
         return done(NO_INTERNET)
@@ -345,7 +345,7 @@ def diagnose_network(mirrorlist: Path = MIRRORLIST) -> NetDiagnosis:
     # 4) DNS
     t = time.monotonic()
     with cf.ThreadPoolExecutor(max_workers=len(_DNS_NAMES)) as ex:
-        resolved = [n for n, ok in zip(_DNS_NAMES, ex.map(_resolves, _DNS_NAMES)) if ok]
+        resolved = [n for n, ok in zip(_DNS_NAMES, ex.map(_resolves, _DNS_NAMES), strict=True) if ok]
     if not resolved:
         add("dns", "fail", f"no resuelve {', '.join(_DNS_NAMES)}", t)
         soft = DNS

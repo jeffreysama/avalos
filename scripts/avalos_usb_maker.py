@@ -703,7 +703,22 @@ class AvalAPI:
         try:
             url, ver = _get_latest_ventoy_url()
             self._a._jsc("pyLog", f"  URL: {url}", "INF")
-            tmp_zip = Path(tempfile.mktemp(suffix=".zip"))
+            if not url.startswith("https://"):
+                # _get_latest_ventoy_url() arma esto desde la respuesta JSON de la
+                # API de GitHub (browser_download_url) — en la práctica siempre
+                # https, pero no había ninguna garantía a nivel de código; esto
+                # corta acá en vez de dejar que urlretrieve siga un esquema
+                # inesperado (file:, etc).
+                raise ValueError(f"URL de descarga con esquema inesperado (no https): {url}")
+            # mkstemp en vez de mktemp: mktemp solo genera un nombre (no crea el
+            # archivo), dejando una ventana entre "elegir el nombre" y "abrirlo"
+            # donde algo más en la misma máquina podría crear un symlink ahí
+            # primero (mktemp está marcado como inseguro/deprecado en la propia
+            # doc de Python). mkstemp crea el archivo de forma atómica y
+            # exclusiva, cerrando esa ventana.
+            _fd, _tmp_name = tempfile.mkstemp(suffix=".zip")
+            os.close(_fd)
+            tmp_zip = Path(_tmp_name)
 
             def progress(blocks, bsize, total):
                 if total > 0:

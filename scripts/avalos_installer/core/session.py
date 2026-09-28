@@ -38,12 +38,25 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import translations
 
 from avalos_installer.core.config import MOUNT_ROOT, MOUNT_EFI, MOUNT_ISO
 from avalos_installer.core.logfile import InstallLog
 from avalos_installer.core.runner import kill_all, run_streaming
+
+if TYPE_CHECKING:
+    # Solo para type hints (nunca se ejecuta en runtime — TYPE_CHECKING es
+    # siempre False fuera de un chequeo estático) — preserva la misma
+    # intención que ya documentaba el string quoting de abajo: sin crear
+    # una dependencia de import real entre session.py y context.py, ni
+    # asumir que el paquete `webview` esté disponible en este punto, pero
+    # ahora sí resoluble por ruff/mypy/IDEs en vez de ser un string suelto
+    # que podría quedar desincronizado si `InstallContext` se renombra.
+    import webview
+
+    from avalos_installer.core.context import InstallContext
 
 
 def output_indicates_gpg_error(output: str) -> bool:

@@ -18,6 +18,14 @@ on:
   schedule:
     - cron: "0 3 * * 1"
 
+# Explícito en vez de depender del default de permisos del repo/org para
+# GITHUB_TOKEN (que puede cambiar sin avisar): este pipeline commitea y
+# pushea el bump de pkgver en el PKGBUILD, y publica/limpia assets en
+# GitHub Releases — varios pasos más abajo usan secrets.GITHUB_TOKEN para
+# exactamente eso, así que necesita contents:write.
+permissions:
+  contents: write
+
 env:
   AVALOS_REPO: jeffreysama/avalos
   REPO_TAG: repo

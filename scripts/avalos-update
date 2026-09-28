@@ -33,11 +33,11 @@ from pathlib import Path
 
 import webview
 
-# Mismo AVALOS_SYNC_REF que avalos-update-helper (ver ese archivo para el
-# porqué y cómo bumpearlo) — así "¿tu dotfile quedó viejo?" se compara
-# contra la MISMA versión que "sync configs" realmente va a instalar, no
-# contra lo que sea que esté en la punta de main en ese instante.
-AVALOS_SYNC_REF = "38787252a81978d4f1eafc4889cd32c723279eaa"
+# Mismo valor que AVALOS_SYNC_REF en avalos-update-helper (ver ahí el porqué
+# completo) — duplicado acá, no se importa uno del otro para no crear una
+# dependencia entre el helper con privilegios y este proceso sin privilegios.
+# `python3 scripts/gen-sync-manifest.py --pin` actualiza los dos juntos.
+AVALOS_SYNC_REF = "UNSET"
 REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 HELPER_BIN = "/usr/local/bin/avalos-update-helper"
 TEMPLATE_LOCAL = Path("/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template")

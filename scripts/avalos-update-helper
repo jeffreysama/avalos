@@ -21,13 +21,23 @@ from __future__ import annotations
 import argparse, ctypes, hashlib, json, os, pwd, re, select, subprocess, sys, time, urllib.request
 from pathlib import Path
 
-# AVALOS_SYNC_REF: commit específico, NO 'main' — así "sync configs" (que
-# corre esto con privilegios de root) siempre instala una versión que Jeff
-# ya confirmó que anda bien, no lo que sea que esté en la punta de main en
-# ese instante (podría ser un WIP a medio probar, o un push roto por
-# accidente). Para "cortar una release" nueva que sync-configs efectivamente
-# instale: ver el docstring de scripts/gen-sync-manifest.py.
-AVALOS_SYNC_REF = "38787252a81978d4f1eafc4889cd32c723279eaa"
+# AVALOS_SYNC_REF: SHA (40 hex) del commit desde el que cmd_sync_system_files baja
+# los archivos Y configs/MANIFEST.sha256 (el manifiesto vive en ese MISMO commit).
+# Sin pin ni verificación, un push a 'main' comprometido o roto se instalaría como
+# root en todos los sistemas que corran sync (CWE-494). "UNSET" = release sin
+# cortar: sync se niega a correr (fail closed) hasta que se corra
+# `python3 scripts/gen-sync-manifest.py --pin` en el repo y se commitee el resultado.
+#
+# avalos-update-helper y avalos-update NO están en el `manifest` de
+# cmd_sync_system_files a propósito: son los que llevan este pin, y un archivo no
+# puede instalar su propia ancla de confianza desde el canal que esa ancla
+# autentica — el commit pineado siempre contendría un pin más viejo que el que ya
+# tenés, así que cada sync te degradaría el helper (dejándolo apuntando a un commit
+# sin manifiesto). Se actualizan por otro camino (ISO nueva o copia manual).
+# Esto NO cubre un AVALOS_SYNC_REF que apunte a un commit legítimamente
+# comprometido; el arreglo de fondo es distribuir estos archivos como paquete
+# firmado del repo [avalos] en vez de bajarlos de raw.githubusercontent.com.
+AVALOS_SYNC_REF = "UNSET"
 REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 BOOT_DIR = Path("/boot")
 MKINITCPIO_D = Path("/etc/mkinitcpio.d")
@@ -412,8 +422,12 @@ def cmd_apply_aur(args: argparse.Namespace) -> None:
         SUDOERS_AUR.chmod(0o440)
         _out(f"instalando/actualizando de AUR como {usuario}: {' '.join(args.packages)}")
         rc = 1
+        # idle_timeout: mismo hueco que pacman -S/-R arriba — --noconfirm evita la
+        # mayoría de los prompts interactivos, pero no cubre todo (ej. un paso de
+        # verificación GPG colgado a mitad de una compilación de AUR).
         rc = _stream(
-            ["sudo", "-H", "-u", usuario, "yay", "-S", "--noconfirm", "--needed", *args.packages]
+            ["sudo", "-H", "-u", usuario, "yay", "-S", "--noconfirm", "--needed", *args.packages],
+            idle_timeout=180,
         )
     finally:
         try:
@@ -448,59 +462,59 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
 
 
 def _cargar_manifest_hashes() -> dict[str, str] | None:
-    """Trae configs/MANIFEST.sha256 desde REPO_RAW (mismo AVALOS_SYNC_REF
-    fijo que todo lo demás) y lo parsea al formato de sha256sum: '<hash>
-    <ruta>' por línea. None si no se pudo bajar o ninguna línea matcheó el
-    formato — eso hace fallar cmd_sync_system_files entero (ver más abajo):
-    un manifiesto que no se puede leer es tan sospechoso como un archivo
-    que no matchea su hash, así que no hay fallback silencioso a 'confiar
-    en todo sin verificar'."""
-    url = f"{REPO_RAW}/configs/MANIFEST.sha256"
+    """Baja y parsea configs/MANIFEST.sha256 (formato de `sha256sum`: '<hash>  <ruta>'
+    por línea, generado por scripts/gen-sync-manifest.py). None si no se pudo bajar
+    o el formato no es el esperado — cmd_sync_system_files trata eso como fallo
+    CERRADO (no sincroniza nada), nunca como "confiar sin verificar"."""
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
+        with urllib.request.urlopen(f"{REPO_RAW}/configs/MANIFEST.sha256", timeout=15) as resp:
             if resp.status != 200:
-                raise OSError(f"HTTP {resp.status}")
+                return None
             texto = resp.read().decode("utf-8")
-    except Exception as e:
-        _out(f"no se pudo bajar MANIFEST.sha256: {e}")
+    except Exception:
         return None
     hashes: dict[str, str] = {}
     for linea in texto.splitlines():
         linea = linea.strip()
-        if not linea:
+        if not linea or linea.startswith("#"):
             continue
         partes = linea.split(None, 1)
         if len(partes) != 2 or len(partes[0]) != 64:
-            _out(f"línea con formato inesperado en MANIFEST.sha256, se ignora: {linea!r}")
-            continue
-        hashes[partes[1].lstrip("*").strip()] = partes[0].lower()
-    if not hashes:
-        _out("MANIFEST.sha256 se bajó pero no tenía ninguna línea válida.")
-        return None
-    return hashes
+            return None  # línea con formato inesperado — manifiesto no confiable, fail closed
+        hashes[partes[1].strip()] = partes[0].lower()
+    return hashes or None
+
+
+def _verificar_contra_manifest(src_rel: str, contenido: bytes, hashes: dict[str, str]) -> str | None:
+    """None si `contenido` coincide con el hash de `src_rel` en el manifiesto; si no,
+    el motivo (para el log). Un archivo que el manifiesto no lista cuenta como NO
+    verificado — nunca se escribe."""
+    esperado = hashes.get(src_rel)
+    if esperado is None:
+        return f"{src_rel} no está listado en MANIFEST.sha256"
+    real = hashlib.sha256(contenido).hexdigest()
+    if real != esperado:
+        return f"{src_rel} no coincide con MANIFEST.sha256 (esperado {esperado[:12]}…, bajado {real[:12]}…)"
+    return None
 
 
 def cmd_sync_system_files(args: argparse.Namespace) -> None:
     """Sincroniza SOLO rutas de sistema (root:root) contra jeffreysama/
-    avalos@main: los scripts de /usr/local/bin/avalos-*, el .desktop,
+    avalos@AVALOS_SYNC_REF (commit pineado, verificado contra
+    configs/MANIFEST.sha256): los scripts de /usr/local/bin/avalos-*, el .desktop,
     la policy de polkit, y la copia de referencia de las plantillas en
     /usr/share/avalos/configs/. A propósito NUNCA toca los dotfiles que
     ya están aplicados en ningún /home/*/.config/... — eso lo maneja
     avalos-update (sin root) escribiendo un *.new al lado del archivo
     del usuario si la plantilla cambió, igual que un .pacnew, nunca
-    pisando directo lo que la persona ya haya personalizado.
-
-    Cada archivo se verifica contra configs/MANIFEST.sha256 (mismo
-    AVALOS_SYNC_REF fijo de arriba) antes de escribirse: protege contra una
-    descarga corrupta a medio camino o una respuesta manipulada para un
-    archivo puntual. NO protege contra que AVALOS_SYNC_REF mismo apunte a
-    un commit legítimamente comprometido — para eso hace falta firmar
-    releases (GPG), que por ahora es de más para el tamaño del proyecto."""
+    pisando directo lo que la persona ya haya personalizado."""
     _require_root_via_pkexec()
 
-    manifest_hashes = _cargar_manifest_hashes()
-    if manifest_hashes is None:
-        _fail("no se pudo verificar MANIFEST.sha256 — por seguridad, no se sincroniza nada sin poder chequear integridad. Reintentá más tarde.")
+    if not re.fullmatch(r"[0-9a-f]{40}", AVALOS_SYNC_REF):
+        _fail(
+            "AVALOS_SYNC_REF no está configurado (release sin cortar) — por seguridad, "
+            "no se sincroniza nada. En el repo: python3 scripts/gen-sync-manifest.py --pin"
+        )
 
     # Rutas confirmadas 1:1 contra las llamadas reales a _leer_config(...)
     # en skill_instalar_usb.py (todas bajo configs/<algo>/<archivo> en el
@@ -513,12 +527,13 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
     # Se entrega junto con esto — mismo contenido que ese fallback, así
     # que el resultado final para quien instala no cambia, pero deja de
     # depender de un texto embebido a mano y pasa a vivir en el repo.
+    # OJO: mantener 1:1 con RUTAS en scripts/gen-sync-manifest.py (lo chequea
+    # `gen-sync-manifest.py --check`, también en CI). avalos-update-helper y
+    # avalos-update NO van acá a propósito — ver AVALOS_SYNC_REF arriba.
     manifest = [
         ("scripts/avalos-settings", "/usr/local/bin/avalos-settings", 0o755),
         ("scripts/avalos-wallpaper", "/usr/local/bin/avalos-wallpaper", 0o755),
         ("scripts/avalos-about", "/usr/local/bin/avalos-about", 0o755),
-        ("scripts/avalos-update", "/usr/local/bin/avalos-update", 0o755),
-        ("scripts/avalos-update-helper", "/usr/local/bin/avalos-update-helper", 0o755),
         ("scripts/avalos-store", "/usr/local/bin/avalos-store", 0o755),
         ("scripts/avalos-restore", "/usr/local/bin/avalos-restore", 0o755),
         ("configs/avalos-store-catalog.json", "/usr/local/bin/avalos-store-catalog.json", 0o644),
@@ -551,6 +566,15 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("configs/sddm/metadata.desktop", "/usr/share/avalos/configs/sddm/metadata.desktop", 0o644),
     ]
 
+    # Fail closed: sin manifiesto verificable, no se escribe NADA (ver
+    # _cargar_manifest_hashes y AVALOS_SYNC_REF más arriba — CWE-494).
+    manifest_hashes = _cargar_manifest_hashes()
+    if manifest_hashes is None:
+        _fail(
+            "no se pudo obtener/parsear configs/MANIFEST.sha256 desde el repo "
+            f"(ref {AVALOS_SYNC_REF[:12]}…) — por seguridad, no se sincroniza nada."
+        )
+
     fallas = 0
     for src_rel, dest, mode in manifest:
         url = f"{REPO_RAW}/{src_rel}"
@@ -564,14 +588,9 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
             fallas += 1
             continue
 
-        hash_esperado = manifest_hashes.get(src_rel)
-        hash_real = hashlib.sha256(contenido).hexdigest()
-        if hash_esperado is None:
-            _out(f"aviso: {src_rel} no está en MANIFEST.sha256 — se deja el archivo actual sin tocar (por seguridad, no se escribe nada sin poder verificar).")
-            fallas += 1
-            continue
-        if hash_real != hash_esperado:
-            _out(f"aviso: {src_rel} NO coincide con MANIFEST.sha256 (esperado {hash_esperado[:12]}…, bajado {hash_real[:12]}…) — se deja el archivo actual sin tocar.")
+        motivo = _verificar_contra_manifest(src_rel, contenido, manifest_hashes)
+        if motivo:
+            _out(f"aviso: {motivo} — no se escribe.")
             fallas += 1
             continue
 
@@ -590,7 +609,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
     if fallas:
         _out(f"sync terminado con {fallas} archivo(s) que no se pudieron actualizar (ver arriba).")
     else:
-        _out("archivos de sistema de AvalOS sincronizados y verificados contra MANIFEST.sha256.")
+        _out("archivos de sistema de AvalOS sincronizados contra el repo.")
 
 
 # ── Restauración de un snapshot (one-click restore) ─────────────────────

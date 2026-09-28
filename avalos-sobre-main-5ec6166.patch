@@ -1,0 +1,664 @@
+diff --git a/.github/workflows/build-iso.yml b/.github/workflows/build-iso.yml
+index 4818b66..f7a313d 100644
+--- a/.github/workflows/build-iso.yml
++++ b/.github/workflows/build-iso.yml
+@@ -12,6 +12,12 @@ on:
+         type: boolean
+         default: true
+ 
++# Explícito en vez de depender del default de permisos del repo/org para
++# GITHUB_TOKEN (que puede cambiar): el job publica en GitHub Releases
++# ("Publicar en GitHub Releases" más abajo), así que necesita contents:write.
++permissions:
++  contents: write
++
+ env:
+   AVALOS_REPO: jeffreysama/avalos
+   AVALOS_REPO_URL: https://github.com/jeffreysama/avalos/releases/download/repo
+diff --git a/.github/workflows/build-kernel.yml b/.github/workflows/build-kernel.yml
+index 70c3419..feb6664 100644
+--- a/.github/workflows/build-kernel.yml
++++ b/.github/workflows/build-kernel.yml
+@@ -18,6 +18,14 @@ on:
+   schedule:
+     - cron: "0 3 * * 1"
+ 
++# Explícito en vez de depender del default de permisos del repo/org para
++# GITHUB_TOKEN (que puede cambiar sin avisar): este pipeline commitea y
++# pushea el bump de pkgver en el PKGBUILD, y publica/limpia assets en
++# GitHub Releases — varios pasos más abajo usan secrets.GITHUB_TOKEN para
++# exactamente eso, así que necesita contents:write.
++permissions:
++  contents: write
++
+ env:
+   AVALOS_REPO: jeffreysama/avalos
+   REPO_TAG: repo
+diff --git a/.github/workflows/validate-configs.yml b/.github/workflows/validate-configs.yml
+index 784d9c8..e908c89 100644
+--- a/.github/workflows/validate-configs.yml
++++ b/.github/workflows/validate-configs.yml
+@@ -19,6 +19,12 @@ on:
+       - ".github/workflows/**"
+   workflow_dispatch:
+ 
++# Mínimo posible: este es el único de los 3 workflows que corre en
++# pull_request (incluidas PRs desde forks) — solo lee y valida, no usa
++# secrets.GITHUB_TOKEN ni escribe nada.
++permissions:
++  contents: read
++
+ jobs:
+   validate:
+     name: Validar configs con los parsers reales
+@@ -35,3 +41,6 @@ jobs:
+ 
+       - name: Validar
+         run: /usr/bin/python3 scripts/validate_configs.py --strict
++
++      - name: Coherencia del manifiesto de sync
++        run: /usr/bin/python3 scripts/gen-sync-manifest.py --check
+diff --git a/configs/MANIFEST.sha256 b/configs/MANIFEST.sha256
+new file mode 100644
+index 0000000..7317f3e
+--- /dev/null
++++ b/configs/MANIFEST.sha256
+@@ -0,0 +1,31 @@
++89aa32e18e68356274d2edcba5333c92ed06cf1047658837e757232f9a3c2f47  configs/avalos-restore.desktop
++7b7e5466f9e4fc6fc8a21e107d925a188a714f36c59f882dd69ee3646e3b5ba8  configs/avalos-restore.svg
++e3ec03e4631f3f7acef4284bb177d5414c2da168df05e26a50932d5113d60396  configs/avalos-settings.desktop
++1e2814ce69e96fc12bdcac6082dfdadc9b9286bef904068bd6e1648ff3229774  configs/avalos-store-catalog.json
++9787a25ca92932020a959f212d94ed424f4f5b44c11bc7d24dc79d2e2a87735d  configs/avalos-store.desktop
++59229367baaee927e7fd621c33ae2b90c365ed1452d9cba3be049bb2a5bbc856  configs/avalos-store.policy
++b9b177af33296ae8271712752b6bb3876a87358a025b756ca484c1ccabc6ebf2  configs/avalos-store.svg
++b4cf9590fc71ebc74a31942a5f5ff3e34e2ec2868e099e2c296b0349cbc5d2f9  configs/avalos-update.desktop
++432597485cfa7653ee0bcf5fe039701bec80df8cc47cd7e2e7e6098d9e22f216  configs/avalos-update.policy
++8cee9823f926ab4615624dafa373e7f78f3a4886a058761a2fd0ad8229e45e52  configs/avalos-update.svg
++f64770e41425081f11a6ca0d718185088116855d9d15ea6bdf5976cd3c2f1b68  configs/fastfetch/avalos.txt
++d4c2c3d4cb9366f68de7edafc5def3fb32fe04265795cf47135904719d58ea24  configs/fastfetch/config.jsonc
++f58ec5e00b8d4a0c95062afd5d0488f58a8921c2f3fb7719ef913d1e5bdab58f  configs/gtk/settings.ini
++8be2ca9c7a79a76db669c4d36595ab33256022a8e47c267ff42db55442854b50  configs/hyprland/hypridle.conf
++72b22eeea5f530d6faf2303626236ed4bf7c0382d0164226fdab036490869cd4  configs/hyprland/hyprland_conf_lua.template
++d9a4ed22bad69bcb3aa99779d47e0da80cc2b24da3a7bdcd9d64ca059cc72653  configs/hyprland/hyprlock.conf
++8eeb257fdd23d721a49709d09f8775c9ee85e2d3db9837838ca5b040739008d8  configs/hyprland/hyprpaper.conf
++36d26770108a5fc2f235245b4eec0ad8c16d58aee627123296032923bd6dc91c  configs/kitty/kitty.conf
++50a249aee6bd10b2bbc27f986749fa0d837ea72e556ce04c58ee2a0e0fbcf75d  configs/mako/config
++5c195b5e323906efd8af16d03fa88982ff60ce71a40868a2b548bdcd6cd35388  configs/mangohud/MangoHud.conf
++87cc33bb3958a5a7948cda4063d027da4d555057d885ff9af50c52cff43e2980  configs/rofi/config.rasi
++0e97ccbd1c8304b4737adf57d53899efcdfb58e943695c5201a90e6ea9fbbf11  configs/rofi/powermenu.sh
++877208294e0618fbeb85ddd40b43bdd9ffed42b1b9b83ae5379fb439a324eea8  configs/sddm/Main.qml
++41addcaf1eee7860ab41e64b433dc7c977c4395bcb60caf4643d2c765778365a  configs/sddm/metadata.desktop
++01156f2d698627d3f218d3eb3fa3185f1e14e634dbdb4f6cd9631aecc27b5e17  configs/waybar/config.jsonc
++0ca04023dcfd6a5c012ea1d7a6198d74aa268d767d381a3c4ecdb1e1d50fe55a  configs/waybar/style.css
++560a6dcc03372b6830a5bfaf52b5922b015638ddfb84c81fc5ff48cc89e8c1e4  scripts/avalos-about
++a8864c899a6e16566347fc9b2620d72ff228321a9596578f97e91dfca41ad2c4  scripts/avalos-restore
++b34bab4cbfde738974ee5bd1f367ba73e9e78628703261647cb361965c87f74a  scripts/avalos-settings
++a17d60510671798d8450faa64bafe0ac40b768ee75ecc639f0d52612bfe13422  scripts/avalos-store
++d5b39a2069179148cbb6e1b805d50614d7ed520cecdaa48f1a1f762111f0a99e  scripts/avalos-wallpaper
+diff --git a/scripts/avalos-update b/scripts/avalos-update
+index 4f81fa2..4d30f1f 100644
+--- a/scripts/avalos-update
++++ b/scripts/avalos-update
+@@ -33,11 +33,11 @@ from pathlib import Path
+ 
+ import webview
+ 
+-# Mismo AVALOS_SYNC_REF que avalos-update-helper (ver ese archivo para el
+-# porqué y cómo bumpearlo) — así "¿tu dotfile quedó viejo?" se compara
+-# contra la MISMA versión que "sync configs" realmente va a instalar, no
+-# contra lo que sea que esté en la punta de main en ese instante.
+-AVALOS_SYNC_REF = "38787252a81978d4f1eafc4889cd32c723279eaa"
++# Mismo valor que AVALOS_SYNC_REF en avalos-update-helper (ver ahí el porqué
++# completo) — duplicado acá, no se importa uno del otro para no crear una
++# dependencia entre el helper con privilegios y este proceso sin privilegios.
++# `python3 scripts/gen-sync-manifest.py --pin` actualiza los dos juntos.
++AVALOS_SYNC_REF = "UNSET"
+ REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
+ HELPER_BIN = "/usr/local/bin/avalos-update-helper"
+ TEMPLATE_LOCAL = Path("/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template")
+diff --git a/scripts/avalos-update-helper b/scripts/avalos-update-helper
+index f62ec31..bc434d6 100644
+--- a/scripts/avalos-update-helper
++++ b/scripts/avalos-update-helper
+@@ -21,13 +21,23 @@ from __future__ import annotations
+ import argparse, ctypes, hashlib, json, os, pwd, re, select, subprocess, sys, time, urllib.request
+ from pathlib import Path
+ 
+-# AVALOS_SYNC_REF: commit específico, NO 'main' — así "sync configs" (que
+-# corre esto con privilegios de root) siempre instala una versión que Jeff
+-# ya confirmó que anda bien, no lo que sea que esté en la punta de main en
+-# ese instante (podría ser un WIP a medio probar, o un push roto por
+-# accidente). Para "cortar una release" nueva que sync-configs efectivamente
+-# instale: ver el docstring de scripts/gen-sync-manifest.py.
+-AVALOS_SYNC_REF = "38787252a81978d4f1eafc4889cd32c723279eaa"
++# AVALOS_SYNC_REF: SHA (40 hex) del commit desde el que cmd_sync_system_files baja
++# los archivos Y configs/MANIFEST.sha256 (el manifiesto vive en ese MISMO commit).
++# Sin pin ni verificación, un push a 'main' comprometido o roto se instalaría como
++# root en todos los sistemas que corran sync (CWE-494). "UNSET" = release sin
++# cortar: sync se niega a correr (fail closed) hasta que se corra
++# `python3 scripts/gen-sync-manifest.py --pin` en el repo y se commitee el resultado.
++#
++# avalos-update-helper y avalos-update NO están en el `manifest` de
++# cmd_sync_system_files a propósito: son los que llevan este pin, y un archivo no
++# puede instalar su propia ancla de confianza desde el canal que esa ancla
++# autentica — el commit pineado siempre contendría un pin más viejo que el que ya
++# tenés, así que cada sync te degradaría el helper (dejándolo apuntando a un commit
++# sin manifiesto). Se actualizan por otro camino (ISO nueva o copia manual).
++# Esto NO cubre un AVALOS_SYNC_REF que apunte a un commit legítimamente
++# comprometido; el arreglo de fondo es distribuir estos archivos como paquete
++# firmado del repo [avalos] en vez de bajarlos de raw.githubusercontent.com.
++AVALOS_SYNC_REF = "UNSET"
+ REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
+ BOOT_DIR = Path("/boot")
+ MKINITCPIO_D = Path("/etc/mkinitcpio.d")
+@@ -412,8 +422,12 @@ def cmd_apply_aur(args: argparse.Namespace) -> None:
+         SUDOERS_AUR.chmod(0o440)
+         _out(f"instalando/actualizando de AUR como {usuario}: {' '.join(args.packages)}")
+         rc = 1
++        # idle_timeout: mismo hueco que pacman -S/-R arriba — --noconfirm evita la
++        # mayoría de los prompts interactivos, pero no cubre todo (ej. un paso de
++        # verificación GPG colgado a mitad de una compilación de AUR).
+         rc = _stream(
+-            ["sudo", "-H", "-u", usuario, "yay", "-S", "--noconfirm", "--needed", *args.packages]
++            ["sudo", "-H", "-u", usuario, "yay", "-S", "--noconfirm", "--needed", *args.packages],
++            idle_timeout=180,
+         )
+     finally:
+         try:
+@@ -448,59 +462,59 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
+ 
+ 
+ def _cargar_manifest_hashes() -> dict[str, str] | None:
+-    """Trae configs/MANIFEST.sha256 desde REPO_RAW (mismo AVALOS_SYNC_REF
+-    fijo que todo lo demás) y lo parsea al formato de sha256sum: '<hash>
+-    <ruta>' por línea. None si no se pudo bajar o ninguna línea matcheó el
+-    formato — eso hace fallar cmd_sync_system_files entero (ver más abajo):
+-    un manifiesto que no se puede leer es tan sospechoso como un archivo
+-    que no matchea su hash, así que no hay fallback silencioso a 'confiar
+-    en todo sin verificar'."""
+-    url = f"{REPO_RAW}/configs/MANIFEST.sha256"
++    """Baja y parsea configs/MANIFEST.sha256 (formato de `sha256sum`: '<hash>  <ruta>'
++    por línea, generado por scripts/gen-sync-manifest.py). None si no se pudo bajar
++    o el formato no es el esperado — cmd_sync_system_files trata eso como fallo
++    CERRADO (no sincroniza nada), nunca como "confiar sin verificar"."""
+     try:
+-        with urllib.request.urlopen(url, timeout=15) as resp:
++        with urllib.request.urlopen(f"{REPO_RAW}/configs/MANIFEST.sha256", timeout=15) as resp:
+             if resp.status != 200:
+-                raise OSError(f"HTTP {resp.status}")
++                return None
+             texto = resp.read().decode("utf-8")
+-    except Exception as e:
+-        _out(f"no se pudo bajar MANIFEST.sha256: {e}")
++    except Exception:
+         return None
+     hashes: dict[str, str] = {}
+     for linea in texto.splitlines():
+         linea = linea.strip()
+-        if not linea:
++        if not linea or linea.startswith("#"):
+             continue
+         partes = linea.split(None, 1)
+         if len(partes) != 2 or len(partes[0]) != 64:
+-            _out(f"línea con formato inesperado en MANIFEST.sha256, se ignora: {linea!r}")
+-            continue
+-        hashes[partes[1].lstrip("*").strip()] = partes[0].lower()
+-    if not hashes:
+-        _out("MANIFEST.sha256 se bajó pero no tenía ninguna línea válida.")
+-        return None
+-    return hashes
++            return None  # línea con formato inesperado — manifiesto no confiable, fail closed
++        hashes[partes[1].strip()] = partes[0].lower()
++    return hashes or None
++
++
++def _verificar_contra_manifest(src_rel: str, contenido: bytes, hashes: dict[str, str]) -> str | None:
++    """None si `contenido` coincide con el hash de `src_rel` en el manifiesto; si no,
++    el motivo (para el log). Un archivo que el manifiesto no lista cuenta como NO
++    verificado — nunca se escribe."""
++    esperado = hashes.get(src_rel)
++    if esperado is None:
++        return f"{src_rel} no está listado en MANIFEST.sha256"
++    real = hashlib.sha256(contenido).hexdigest()
++    if real != esperado:
++        return f"{src_rel} no coincide con MANIFEST.sha256 (esperado {esperado[:12]}…, bajado {real[:12]}…)"
++    return None
+ 
+ 
+ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+     """Sincroniza SOLO rutas de sistema (root:root) contra jeffreysama/
+-    avalos@main: los scripts de /usr/local/bin/avalos-*, el .desktop,
++    avalos@AVALOS_SYNC_REF (commit pineado, verificado contra
++    configs/MANIFEST.sha256): los scripts de /usr/local/bin/avalos-*, el .desktop,
+     la policy de polkit, y la copia de referencia de las plantillas en
+     /usr/share/avalos/configs/. A propósito NUNCA toca los dotfiles que
+     ya están aplicados en ningún /home/*/.config/... — eso lo maneja
+     avalos-update (sin root) escribiendo un *.new al lado del archivo
+     del usuario si la plantilla cambió, igual que un .pacnew, nunca
+-    pisando directo lo que la persona ya haya personalizado.
+-
+-    Cada archivo se verifica contra configs/MANIFEST.sha256 (mismo
+-    AVALOS_SYNC_REF fijo de arriba) antes de escribirse: protege contra una
+-    descarga corrupta a medio camino o una respuesta manipulada para un
+-    archivo puntual. NO protege contra que AVALOS_SYNC_REF mismo apunte a
+-    un commit legítimamente comprometido — para eso hace falta firmar
+-    releases (GPG), que por ahora es de más para el tamaño del proyecto."""
++    pisando directo lo que la persona ya haya personalizado."""
+     _require_root_via_pkexec()
+ 
+-    manifest_hashes = _cargar_manifest_hashes()
+-    if manifest_hashes is None:
+-        _fail("no se pudo verificar MANIFEST.sha256 — por seguridad, no se sincroniza nada sin poder chequear integridad. Reintentá más tarde.")
++    if not re.fullmatch(r"[0-9a-f]{40}", AVALOS_SYNC_REF):
++        _fail(
++            "AVALOS_SYNC_REF no está configurado (release sin cortar) — por seguridad, "
++            "no se sincroniza nada. En el repo: python3 scripts/gen-sync-manifest.py --pin"
++        )
+ 
+     # Rutas confirmadas 1:1 contra las llamadas reales a _leer_config(...)
+     # en skill_instalar_usb.py (todas bajo configs/<algo>/<archivo> en el
+@@ -513,12 +527,13 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+     # Se entrega junto con esto — mismo contenido que ese fallback, así
+     # que el resultado final para quien instala no cambia, pero deja de
+     # depender de un texto embebido a mano y pasa a vivir en el repo.
++    # OJO: mantener 1:1 con RUTAS en scripts/gen-sync-manifest.py (lo chequea
++    # `gen-sync-manifest.py --check`, también en CI). avalos-update-helper y
++    # avalos-update NO van acá a propósito — ver AVALOS_SYNC_REF arriba.
+     manifest = [
+         ("scripts/avalos-settings", "/usr/local/bin/avalos-settings", 0o755),
+         ("scripts/avalos-wallpaper", "/usr/local/bin/avalos-wallpaper", 0o755),
+         ("scripts/avalos-about", "/usr/local/bin/avalos-about", 0o755),
+-        ("scripts/avalos-update", "/usr/local/bin/avalos-update", 0o755),
+-        ("scripts/avalos-update-helper", "/usr/local/bin/avalos-update-helper", 0o755),
+         ("scripts/avalos-store", "/usr/local/bin/avalos-store", 0o755),
+         ("scripts/avalos-restore", "/usr/local/bin/avalos-restore", 0o755),
+         ("configs/avalos-store-catalog.json", "/usr/local/bin/avalos-store-catalog.json", 0o644),
+@@ -551,6 +566,15 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+         ("configs/sddm/metadata.desktop", "/usr/share/avalos/configs/sddm/metadata.desktop", 0o644),
+     ]
+ 
++    # Fail closed: sin manifiesto verificable, no se escribe NADA (ver
++    # _cargar_manifest_hashes y AVALOS_SYNC_REF más arriba — CWE-494).
++    manifest_hashes = _cargar_manifest_hashes()
++    if manifest_hashes is None:
++        _fail(
++            "no se pudo obtener/parsear configs/MANIFEST.sha256 desde el repo "
++            f"(ref {AVALOS_SYNC_REF[:12]}…) — por seguridad, no se sincroniza nada."
++        )
++
+     fallas = 0
+     for src_rel, dest, mode in manifest:
+         url = f"{REPO_RAW}/{src_rel}"
+@@ -564,14 +588,9 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+             fallas += 1
+             continue
+ 
+-        hash_esperado = manifest_hashes.get(src_rel)
+-        hash_real = hashlib.sha256(contenido).hexdigest()
+-        if hash_esperado is None:
+-            _out(f"aviso: {src_rel} no está en MANIFEST.sha256 — se deja el archivo actual sin tocar (por seguridad, no se escribe nada sin poder verificar).")
+-            fallas += 1
+-            continue
+-        if hash_real != hash_esperado:
+-            _out(f"aviso: {src_rel} NO coincide con MANIFEST.sha256 (esperado {hash_esperado[:12]}…, bajado {hash_real[:12]}…) — se deja el archivo actual sin tocar.")
++        motivo = _verificar_contra_manifest(src_rel, contenido, manifest_hashes)
++        if motivo:
++            _out(f"aviso: {motivo} — no se escribe.")
+             fallas += 1
+             continue
+ 
+@@ -590,7 +609,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+     if fallas:
+         _out(f"sync terminado con {fallas} archivo(s) que no se pudieron actualizar (ver arriba).")
+     else:
+-        _out("archivos de sistema de AvalOS sincronizados y verificados contra MANIFEST.sha256.")
++        _out("archivos de sistema de AvalOS sincronizados contra el repo.")
+ 
+ 
+ # ── Restauración de un snapshot (one-click restore) ─────────────────────
+diff --git a/scripts/avalos_installer/core/session.py b/scripts/avalos_installer/core/session.py
+index e9285a5..c168b96 100644
+--- a/scripts/avalos_installer/core/session.py
++++ b/scripts/avalos_installer/core/session.py
+@@ -38,6 +38,7 @@ import subprocess
+ import threading
+ import time
+ from pathlib import Path
++from typing import TYPE_CHECKING
+ 
+ import translations
+ 
+@@ -45,6 +46,18 @@ from avalos_installer.core.config import MOUNT_ROOT, MOUNT_EFI, MOUNT_ISO
+ from avalos_installer.core.logfile import InstallLog
+ from avalos_installer.core.runner import kill_all, run_streaming
+ 
++if TYPE_CHECKING:
++    # Solo para type hints (nunca se ejecuta en runtime — TYPE_CHECKING es
++    # siempre False fuera de un chequeo estático) — preserva la misma
++    # intención que ya documentaba el string quoting de abajo: sin crear
++    # una dependencia de import real entre session.py y context.py, ni
++    # asumir que el paquete `webview` esté disponible en este punto, pero
++    # ahora sí resoluble por ruff/mypy/IDEs en vez de ser un string suelto
++    # que podría quedar desincronizado si `InstallContext` se renombra.
++    import webview
++
++    from avalos_installer.core.context import InstallContext
++
+ 
+ def output_indicates_gpg_error(output: str) -> bool:
+     """Detecta si la salida de pacman apunta a un problema de confianza/firma GPG
+diff --git a/scripts/avalos_installer/network/diagnose.py b/scripts/avalos_installer/network/diagnose.py
+index e5bff2a..046a3cf 100644
+--- a/scripts/avalos_installer/network/diagnose.py
++++ b/scripts/avalos_installer/network/diagnose.py
+@@ -331,7 +331,7 @@ def diagnose_network(mirrorlist: Path = MIRRORLIST) -> NetDiagnosis:
+     # 3) salida a Internet por IP (en paralelo)
+     t = time.monotonic()
+     with cf.ThreadPoolExecutor(max_workers=len(_IP_PROBES)) as ex:
+-        hits = [hp for hp, ok in zip(_IP_PROBES, ex.map(lambda hp: _tcp_ok(*hp), _IP_PROBES)) if ok]
++        hits = [hp for hp, ok in zip(_IP_PROBES, ex.map(lambda hp: _tcp_ok(*hp), _IP_PROBES), strict=True) if ok]
+     if not hits:
+         add("internet", "fail", "ninguna IP pública responde en TCP/443", t)
+         return done(NO_INTERNET)
+@@ -345,7 +345,7 @@ def diagnose_network(mirrorlist: Path = MIRRORLIST) -> NetDiagnosis:
+     # 4) DNS
+     t = time.monotonic()
+     with cf.ThreadPoolExecutor(max_workers=len(_DNS_NAMES)) as ex:
+-        resolved = [n for n, ok in zip(_DNS_NAMES, ex.map(_resolves, _DNS_NAMES)) if ok]
++        resolved = [n for n, ok in zip(_DNS_NAMES, ex.map(_resolves, _DNS_NAMES), strict=True) if ok]
+     if not resolved:
+         add("dns", "fail", f"no resuelve {', '.join(_DNS_NAMES)}", t)
+         soft = DNS
+diff --git a/scripts/avalos_usb_maker.py b/scripts/avalos_usb_maker.py
+index ae76cdc..1443791 100755
+--- a/scripts/avalos_usb_maker.py
++++ b/scripts/avalos_usb_maker.py
+@@ -703,7 +703,22 @@ class AvalAPI:
+         try:
+             url, ver = _get_latest_ventoy_url()
+             self._a._jsc("pyLog", f"  URL: {url}", "INF")
+-            tmp_zip = Path(tempfile.mktemp(suffix=".zip"))
++            if not url.startswith("https://"):
++                # _get_latest_ventoy_url() arma esto desde la respuesta JSON de la
++                # API de GitHub (browser_download_url) — en la práctica siempre
++                # https, pero no había ninguna garantía a nivel de código; esto
++                # corta acá en vez de dejar que urlretrieve siga un esquema
++                # inesperado (file:, etc).
++                raise ValueError(f"URL de descarga con esquema inesperado (no https): {url}")
++            # mkstemp en vez de mktemp: mktemp solo genera un nombre (no crea el
++            # archivo), dejando una ventana entre "elegir el nombre" y "abrirlo"
++            # donde algo más en la misma máquina podría crear un symlink ahí
++            # primero (mktemp está marcado como inseguro/deprecado en la propia
++            # doc de Python). mkstemp crea el archivo de forma atómica y
++            # exclusiva, cerrando esa ventana.
++            _fd, _tmp_name = tempfile.mkstemp(suffix=".zip")
++            os.close(_fd)
++            tmp_zip = Path(_tmp_name)
+ 
+             def progress(blocks, bsize, total):
+                 if total > 0:
+diff --git a/scripts/gen-sync-manifest.py b/scripts/gen-sync-manifest.py
+new file mode 100755
+index 0000000..af0fbc8
+--- /dev/null
++++ b/scripts/gen-sync-manifest.py
+@@ -0,0 +1,259 @@
++#!/usr/bin/env python3
++"""Manifiesto de checksums para `sync-system-files` (scripts/avalos-update-helper).
++
++    python3 scripts/gen-sync-manifest.py           # regenera configs/MANIFEST.sha256
++    python3 scripts/gen-sync-manifest.py --check   # valida listas, manifiesto y commit pineado (lo corre CI)
++    python3 scripts/gen-sync-manifest.py --pin     # fija AVALOS_SYNC_REF = HEAD
++
++Cómo encaja (ver el comentario de AVALOS_SYNC_REF en avalos-update-helper):
++sync-system-files corre como root, baja archivos de raw.githubusercontent.com en
++un commit FIJO (AVALOS_SYNC_REF) y verifica cada uno contra
++configs/MANIFEST.sha256, que vive en ese mismo commit. RUTAS = los archivos que
++sync instala, 1:1 con `manifest` en cmd_sync_system_files (`--check` lo
++verifica). PIN_FILES (helper + avalos-update) llevan el pin, así que NO se
++sincronizan: un archivo no puede instalar su propia ancla de confianza desde el
++canal que esa ancla autentica.
++
++Cortar una release (en este orden):
++  1. commitear los cambios a los archivos de RUTAS
++  2. python3 scripts/gen-sync-manifest.py
++     git add configs/MANIFEST.sha256 && git commit -m "chore: manifiesto de sync"
++  3. python3 scripts/gen-sync-manifest.py --pin
++     git commit -am "chore: pin AVALOS_SYNC_REF"
++  4. git push        (el commit pineado tiene que estar en GitHub antes del primer sync)
++     Si el push sale rechazado: `git pull --no-rebase` (un rebase reescribe el commit
++     pineado y ese SHA dejaría de existir → sync fallaría cerrado).
++
++--pin se niega a correr si el manifiesto de HEAD no coincide con los archivos
++de HEAD. Esto NO cubre un commit pineado legítimamente comprometido — para eso
++hace falta firmar (GPG) o distribuir estos archivos como paquete del repo [avalos].
++"""
++from __future__ import annotations
++
++import argparse
++import ast
++import hashlib
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++# Debe reflejar 1:1 los `src_rel` de `manifest` en cmd_sync_system_files. Son 2
++# listas separadas A PROPÓSITO (avalos-update-helper no tiene extensión .py, no
++# hay forma limpia de importarlo); `--check` detecta si se desalinean.
++RUTAS = [
++    "scripts/avalos-settings",
++    "scripts/avalos-wallpaper",
++    "scripts/avalos-about",
++    "scripts/avalos-store",
++    "scripts/avalos-restore",
++    "configs/avalos-store-catalog.json",
++    "configs/avalos-settings.desktop",
++    "configs/avalos-store.desktop",
++    "configs/avalos-update.policy",
++    "configs/avalos-store.policy",
++    "configs/avalos-store.svg",
++    "configs/avalos-update.desktop",
++    "configs/avalos-update.svg",
++    "configs/avalos-restore.desktop",
++    "configs/avalos-restore.svg",
++    "configs/hyprland/hyprland_conf_lua.template",
++    "configs/hyprland/hyprpaper.conf",
++    "configs/hyprland/hypridle.conf",
++    "configs/hyprland/hyprlock.conf",
++    "configs/waybar/config.jsonc",
++    "configs/waybar/style.css",
++    "configs/mako/config",
++    "configs/kitty/kitty.conf",
++    "configs/rofi/config.rasi",
++    "configs/rofi/powermenu.sh",
++    "configs/mangohud/MangoHud.conf",
++    "configs/fastfetch/config.jsonc",
++    "configs/fastfetch/avalos.txt",
++    "configs/gtk/settings.ini",
++    "configs/sddm/Main.qml",
++    "configs/sddm/metadata.desktop",
++]
++PIN_FILES = ["scripts/avalos-update-helper", "scripts/avalos-update"]
++HELPER = "scripts/avalos-update-helper"
++MANIFEST = "configs/MANIFEST.sha256"
++_PIN_RE = re.compile(r'^(AVALOS_SYNC_REF\s*=\s*)"([^"\n]*)"', re.M)
++
++
++def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
++    return subprocess.run(["git", *args], cwd=root, capture_output=True, check=check)
++
++
++def _root() -> Path:
++    out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True)
++    return Path(out.stdout.strip())
++
++
++def _sha(data: bytes) -> str:
++    return hashlib.sha256(data).hexdigest()
++
++
++def _parse_manifest(texto: str) -> dict[str, str]:
++    """Mismo formato estricto que _cargar_manifest_hashes() del helper."""
++    hashes: dict[str, str] = {}
++    for linea in texto.splitlines():
++        linea = linea.strip()
++        if not linea or linea.startswith("#"):
++            continue
++        partes = linea.split(None, 1)
++        if len(partes) != 2 or not re.fullmatch(r"[0-9a-f]{64}", partes[0]):
++            raise ValueError(f"línea con formato inesperado: {linea!r}")
++        hashes[partes[1].strip()] = partes[0]
++    return hashes
++
++
++def _rutas_del_helper(root: Path) -> list[str]:
++    tree = ast.parse((root / HELPER).read_text(encoding="utf-8"))
++    for fn in ast.walk(tree):
++        if isinstance(fn, ast.FunctionDef) and fn.name == "cmd_sync_system_files":
++            for nodo in ast.walk(fn):
++                if (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1
++                        and isinstance(nodo.targets[0], ast.Name) and nodo.targets[0].id == "manifest"
++                        and isinstance(nodo.value, ast.List)):
++                    return [e.elts[0].value for e in nodo.value.elts]  # type: ignore[attr-defined]
++    raise RuntimeError("no encontré `manifest = [...]` dentro de cmd_sync_system_files")
++
++
++def _verificar_ref(root: Path, ref: str) -> list[str]:
++    """Problemas de `ref` como commit sincronizable: tiene que traer MANIFEST.sha256,
++    listar exactamente RUTAS, y cada hash tiene que coincidir con el archivo de ESE commit."""
++    corto = ref[:12]
++    m = _git(root, "show", f"{ref}:{MANIFEST}", check=False)
++    if m.returncode != 0:
++        return [f"{MANIFEST} no existe en {corto} — sync-system-files fallaría cerrado "
++                "(commiteá el manifiesto ANTES de pinear)"]
++    try:
++        hashes = _parse_manifest(m.stdout.decode("utf-8"))
++    except ValueError as e:
++        return [f"{MANIFEST} en {corto}: {e}"]
++    if set(hashes) != set(RUTAS):
++        return [f"{MANIFEST} en {corto} no lista exactamente RUTAS — regenerá y commiteá"]
++    malos = []
++    for r in RUTAS:
++        f = _git(root, "show", f"{ref}:{r}", check=False)
++        if f.returncode != 0 or _sha(f.stdout) != hashes[r]:
++            malos.append(r)
++    if malos:
++        return [f"el manifiesto de {corto} no coincide con sus archivos: {', '.join(malos)}"]
++    return []
++
++
++def _check_pin(root: Path) -> list[str]:
++    """El pin de los 2 archivos: mismo valor, UNSET o SHA de 40 hex, y si el commit está
++    disponible, que traiga un manifiesto consistente (el error que deja sync roto)."""
++    pines: dict[str, str | None] = {}
++    for p in PIN_FILES:
++        mo = _PIN_RE.search((root / p).read_text(encoding="utf-8"))
++        pines[p] = mo.group(2) if mo else None
++    if None in pines.values():
++        return [f"no encontré AVALOS_SYNC_REF en: {', '.join(p for p, v in pines.items() if v is None)}"]
++    if len(set(pines.values())) != 1:
++        return [f"AVALOS_SYNC_REF distinto entre archivos: {pines}"]
++    pin = next(iter(pines.values())) or ""
++    if pin == "UNSET":
++        print("aviso: AVALOS_SYNC_REF = UNSET (release sin cortar) — sync-system-files se niega a correr hasta pinear")
++        return []
++    if not re.fullmatch(r"[0-9a-f]{40}", pin):
++        return [f"AVALOS_SYNC_REF no es UNSET ni un SHA de 40 hex: {pin!r}"]
++    existe = ["cat-file", "-e", f"{pin}^{{commit}}"]
++    if _git(root, *existe, check=False).returncode != 0:
++        _git(root, "fetch", "-q", "--depth=1", "origin", pin, check=False)  # CI hace checkout superficial
++        if _git(root, *existe, check=False).returncode != 0:
++            print(f"aviso: no pude verificar el commit pineado {pin[:12]} (no está en el clon y no se pudo traer de origin)")
++            return []
++    return _verificar_ref(root, pin)
++
++
++def cmd_generar(root: Path) -> int:
++    faltan = [r for r in RUTAS if not (root / r).is_file()]
++    if faltan:
++        print("ERROR: faltan archivos de RUTAS: " + ", ".join(faltan), file=sys.stderr)
++        return 1
++    lineas = [f"{_sha((root / r).read_bytes())}  {r}\n" for r in sorted(RUTAS)]
++    (root / MANIFEST).write_text("".join(lineas), encoding="utf-8")
++    print(f"escrito: {MANIFEST} ({len(lineas)} archivos)")
++    return 0
++
++
++def cmd_check(root: Path) -> int:
++    errores: list[str] = []
++    if len(set(RUTAS)) != len(RUTAS):
++        errores.append("RUTAS tiene entradas duplicadas")
++    for p in PIN_FILES:
++        if p in RUTAS:
++            errores.append(f"{p} lleva el pin y NO debe estar en RUTAS (ver AVALOS_SYNC_REF)")
++    try:
++        del_helper = _rutas_del_helper(root)
++    except (RuntimeError, OSError, SyntaxError) as e:
++        errores.append(str(e))
++        del_helper = None
++    if del_helper is not None and sorted(del_helper) != sorted(RUTAS):
++        solo_helper = sorted(set(del_helper) - set(RUTAS))
++        solo_rutas = sorted(set(RUTAS) - set(del_helper))
++        errores.append(f"`manifest` del helper y RUTAS no coinciden — solo en helper: {solo_helper}, solo en RUTAS: {solo_rutas}")
++    for r in RUTAS:
++        if not (root / r).is_file():
++            errores.append(f"no existe en el repo: {r}")
++    mf = root / MANIFEST
++    if not mf.is_file():
++        errores.append(f"falta {MANIFEST} (correr: python3 scripts/gen-sync-manifest.py)")
++    else:
++        try:
++            hashes = _parse_manifest(mf.read_text(encoding="utf-8"))
++        except ValueError as e:
++            errores.append(f"{MANIFEST}: {e}")
++        else:
++            if set(hashes) != set(RUTAS):
++                errores.append(f"{MANIFEST} no lista exactamente RUTAS — regenerar")
++            else:
++                viejos = [r for r in RUTAS if (root / r).is_file() and _sha((root / r).read_bytes()) != hashes[r]]
++                if viejos:  # aviso, no error: el manifiesto solo tiene que estar al día al cortar una release
++                    print(f"aviso: {len(viejos)} archivo(s) cambiaron desde el último manifiesto (regenerarlo antes de cortar release): {', '.join(viejos)}")
++    errores += _check_pin(root)
++    for e in errores:
++        print(f"ERROR: {e}", file=sys.stderr)
++    if not errores:
++        print("ok: RUTAS == manifest del helper, manifiesto bien formado, pin consistente")
++    return 1 if errores else 0
++
++
++def cmd_pin(root: Path) -> int:
++    problemas = _verificar_ref(root, "HEAD")
++    if problemas:
++        for e in problemas:
++            print(f"ERROR: {e}", file=sys.stderr)
++        print("       arreglalo, commiteá y volvé a correr --pin.", file=sys.stderr)
++        return 1
++    sha = _git(root, "rev-parse", "HEAD").stdout.decode().strip()
++    for p in PIN_FILES:
++        ruta = root / p
++        nuevo, n = _PIN_RE.subn(lambda mo: f'{mo.group(1)}"{sha}"', ruta.read_text(encoding="utf-8"))
++        if n != 1:
++            print(f"ERROR: no encontré exactamente una línea AVALOS_SYNC_REF en {p}", file=sys.stderr)
++            return 1
++        ruta.write_text(nuevo, encoding="utf-8")
++    print(f"AVALOS_SYNC_REF = {sha}  (en {', '.join(PIN_FILES)})")
++    if not _git(root, "branch", "-r", "--contains", "HEAD", check=False).stdout.strip():
++        print("aviso: HEAD todavía no está en ningún remoto — pushealo antes de que alguien corra sync.")
++    print('siguiente: git commit -am "chore: pin AVALOS_SYNC_REF" && git push')
++    print("ojo: si el push sale rechazado usá 'git pull --no-rebase' (un rebase reescribe el commit pineado)")
++    return 0
++
++
++def main() -> int:
++    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
++    g = ap.add_mutually_exclusive_group()
++    g.add_argument("--check", action="store_true", help="valida RUTAS vs helper + formato del manifiesto")
++    g.add_argument("--pin", action="store_true", help="fija AVALOS_SYNC_REF al SHA de HEAD (tras commitear el manifiesto)")
++    a = ap.parse_args()
++    root = _root()
++    return cmd_check(root) if a.check else cmd_pin(root) if a.pin else cmd_generar(root)
++
++
++if __name__ == "__main__":
++    sys.exit(main())
