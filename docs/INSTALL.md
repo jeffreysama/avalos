@@ -611,7 +611,7 @@ QT_QPA_PLATFORM=wayland;xcb
 QT_AUTO_SCREEN_SCALE_FACTOR=1
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 GDK_BACKEND=wayland,x11
-SDL_VIDEODRIVER=wayland
+SDL_VIDEODRIVER=wayland,x11
 CLUTTER_BACKEND=wayland
 MOZ_ENABLE_WAYLAND=1
 ELECTRON_OZONE_PLATFORM_HINT=auto
@@ -634,7 +634,7 @@ Append the same Wayland exports to your user's shell profile, so they're also se
 cat >> /home/yourusername/.bashrc << 'EOF'
 
 # ── AvalOS / Wayland ────────────────────────────────
-export QT_QPA_PLATFORM=wayland
+export QT_QPA_PLATFORM="wayland;xcb"
 export MOZ_ENABLE_WAYLAND=1
 export ELECTRON_OZONE_PLATFORM_HINT=auto
 export XDG_SESSION_TYPE=wayland
@@ -646,7 +646,7 @@ EOF
 ```bash
 mkdir -p /etc/xdg/reflector
 cat > /etc/xdg/reflector/reflector.conf << 'EOF'
---country SV,US,MX,GT,JP
+--country SV,US,MX,GT,JP,CN,HK,TW
 --latest 10
 --sort rate
 --protocol https
@@ -1083,7 +1083,6 @@ GameMode's tuning profile (performance governor, GPU optimizations, and a per-ap
 cat > /etc/gamemode.ini << 'EOF'
 [general]
 reaper_freq=5
-defaultgov=performance
 desiredgov=performance
 softrealtime=auto
 renice=-10
@@ -1122,7 +1121,7 @@ cat > /etc/systemd/resolved.conf << 'EOF'
 [Resolve]
 DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 8.8.8.8#dns.google 8.8.4.4#dns.google
 FallbackDNS=9.9.9.9#dns.quad9.net
-DNSOverTLS=yes
+DNSOverTLS=opportunistic
 DNSSEC=allow-downgrade
 Cache=yes
 DNSStubListener=yes

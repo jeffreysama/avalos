@@ -59,6 +59,11 @@ VCONSOLE_TO_XKB = {
 # el HTML del wizard (para poblar los <select>) lo necesitan — mismo criterio
 # que ya usa VCONSOLE_TO_XKB arriba.
 DEFAULT_HOSTNAME = 'avalos-pc'
+# Países de los mirrors de reflector: los usa el instalador (network/mirrors.py) y el
+# reflector.conf del sistema instalado (desktop/hyprland.py). Antes estaba copiada en cada
+# sitio y al añadir China solo se actualizó una: el reflector.timer del sistema instalado
+# habría vuelto a dejar el mirrorlist solo con SV/US/MX/GT/JP.
+MIRROR_COUNTRIES = 'SV,US,MX,GT,JP,CN,HK,TW'
 DEFAULT_TIMEZONE = 'America/El_Salvador'
 
 LOCALES = [('es_SV.UTF-8', 'Español — El Salvador'), ('es_GT.UTF-8', 'Español — Guatemala'), ('es_HN.UTF-8', 'Español — Honduras'), ('es_NI.UTF-8', 'Español — Nicaragua'), ('es_CR.UTF-8', 'Español — Costa Rica'), ('es_PA.UTF-8', 'Español — Panamá'), ('es_MX.UTF-8', 'Español — México'), ('es_CO.UTF-8', 'Español — Colombia'), ('es_PE.UTF-8', 'Español — Perú'), ('es_CL.UTF-8', 'Español — Chile'), ('es_AR.UTF-8', 'Español — Argentina'), ('es_UY.UTF-8', 'Español — Uruguay'), ('es_BO.UTF-8', 'Español — Bolivia'), ('es_VE.UTF-8', 'Español — Venezuela'), ('es_ES.UTF-8', 'Español — España'), ('en_US.UTF-8', 'English — United States'), ('en_GB.UTF-8', 'English — United Kingdom'), ('pt_BR.UTF-8', 'Português — Brasil'), ('pt_PT.UTF-8', 'Português — Portugal'), ('fr_FR.UTF-8', 'Français — France'), ('de_DE.UTF-8', 'Deutsch — Deutschland'), ('it_IT.UTF-8', 'Italiano — Italia'), ('ja_JP.UTF-8', '日本語 — Japan'), ('zh_CN.UTF-8', '中文 — China')]

@@ -191,6 +191,8 @@ DISTRIB_DESCRIPTION="AvalOS"
     rc_pw, out_pw = session.run_chroot_stdin(f"root:{ctx.password}\n", ["chpasswd"])
     if rc_pw != 0:
         session.log(session.t("log-chpasswd-root-fail", rc=rc_pw, out=out_pw), "err")
+        session.step("config", "error")
+        session.error_step(session.t("err-chpasswd-failed", usuario="root"))
         session.clean_mounts()
         return False
 
@@ -257,7 +259,20 @@ DISTRIB_DESCRIPTION="AvalOS"
                 except OSError as e:
                     session.log(session.t("log-mkinitcpio-stray-preset-error", preset=p.name, e=e), "warn")
 
-    session.run_chroot(["mkinitcpio", "-P"])
+    rc_initcpio, out_initcpio = session.run_chroot(["mkinitcpio", "-P"])
+    # Antes el rc se descartaba: si mkinitcpio fallaba (hook inexistente, preset borrado
+    # de más...) la instalación terminaba "con éxito" en un sistema que no arranca. El
+    # initramfs del pacstrap puede seguir ahí aunque -P falle (sin los hooks nuevos, pero
+    # normalmente booteable), así que rc != 0 con imagen presente solo avisa; sin imagen
+    # es fatal.
+    initramfs_img = MOUNT_ROOT / "boot" / f"initramfs-{kernel_pkg}.img"
+    if rc_initcpio != 0:
+        session.log(f"[ERR] mkinitcpio -P rc={rc_initcpio}: {out_initcpio.strip()[-500:]}", "err")
+    if not initramfs_img.exists():
+        session.step("config", "error")
+        session.error_step(session.t("err-initramfs-failed"))
+        session.clean_mounts()
+        return False
     session.step("config", "done", "locale · timezone · hostname · initramfs · btrfs-hook"
                  if not ctx.usb_mode else "locale · timezone · hostname · initramfs")
     return True

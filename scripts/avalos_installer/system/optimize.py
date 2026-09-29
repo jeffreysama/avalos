@@ -50,11 +50,14 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
         "# AvalOS: detecta GPU y actualiza el bloque hl.env(...) de hyprland.lua\n"
         "# para cada usuario, entre los marcadores AVALOS_GPU_ENV_START/END.\n"
         "set -uo pipefail\n\n"
-        "if lspci 2>/dev/null | grep -qiE 'amd|radeon|amdgpu'; then\n"
+        "# Solo lineas de tarjeta grafica: 'amd' sobre TODO lspci matchea el Root Complex\n"
+        "# de cualquier CPU AMD y forzaba el entorno RADV/radeonsi aunque la GPU fuera NVIDIA.\n"
+        "GPUS=\"$(lspci 2>/dev/null | grep -iE 'vga compatible|3d controller|display controller')\"\n"
+        "if grep -qiE 'amd|radeon' <<< \"$GPUS\"; then\n"
         "    GPU_BLOCK='hl.env(\"AMD_VULKAN_ICD\",    \"RADV\")\n"
         "hl.env(\"VDPAU_DRIVER\",      \"radeonsi\")\n"
         "hl.env(\"LIBVA_DRIVER_NAME\", \"radeonsi\")'\n"
-        "elif lspci 2>/dev/null | grep -qiE 'intel.*(graphics|vga|display)'; then\n"
+        "elif grep -qi 'intel' <<< \"$GPUS\"; then\n"
         "    GPU_BLOCK='hl.env(\"LIBVA_DRIVER_NAME\", \"iHD\")\n"
         "hl.env(\"VDPAU_DRIVER\",      \"va_gl\")'\n"
         "else\n"
@@ -380,7 +383,11 @@ def enable_dns_over_tls(session: InstallSession) -> None:
         "DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com "
         "8.8.8.8#dns.google 8.8.4.4#dns.google\n"
         "FallbackDNS=9.9.9.9#dns.quad9.net\n"
-        "DNSOverTLS=yes\n"
+        # opportunistic, no yes: con "yes" estricto, si el puerto 853 o esos servidores no
+        # son alcanzables (China bloquea 1.1.1.1/8.8.8.8; portales cautivos, hoteles y redes
+        # corporativas filtran 853) NO hay DNS y el sistema queda sin red. opportunistic usa
+        # TLS cuando puede y cae a DNS normal cuando no.
+        "DNSOverTLS=opportunistic\n"
         "DNSSEC=allow-downgrade\n"
         "Cache=yes\n"
         "DNSStubListener=yes\n"

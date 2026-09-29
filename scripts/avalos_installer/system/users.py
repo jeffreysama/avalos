@@ -47,6 +47,8 @@ def create_user(session: InstallSession, ctx: InstallContext) -> bool:
             session.t("log-chpasswd-user-fail", usuario=ctx.username, rc=rc_pw, out=out_pw),
             "err",
         )
+        session.step("user", "error")
+        session.error_step(session.t("err-chpasswd-failed", usuario=ctx.username))
         session.clean_mounts()
         return False
 

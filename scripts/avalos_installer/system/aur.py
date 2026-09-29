@@ -130,7 +130,6 @@ def install_aur(session: InstallSession, ctx: InstallContext) -> None:
                 gamemode_conf = (
                     "[general]\n"
                     "reaper_freq=5\n"
-                    "defaultgov=performance\n"
                     "desiredgov=performance\n"
                     "softrealtime=auto\n"
                     "renice=-10\n\n"

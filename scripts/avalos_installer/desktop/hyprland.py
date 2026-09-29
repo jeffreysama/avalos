@@ -25,7 +25,7 @@ from pathlib import Path
 
 import translations
 
-from avalos_installer.core.config import MOUNT_ROOT, read_config, VCONSOLE_TO_XKB
+from avalos_installer.core.config import MOUNT_ROOT, MIRROR_COUNTRIES, read_config, VCONSOLE_TO_XKB
 from avalos_installer.core.session import InstallSession
 
 
@@ -51,7 +51,7 @@ QT_QPA_PLATFORM=wayland;xcb
 QT_AUTO_SCREEN_SCALE_FACTOR=1
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 GDK_BACKEND=wayland,x11
-SDL_VIDEODRIVER=wayland
+SDL_VIDEODRIVER=wayland,x11
 CLUTTER_BACKEND=wayland
 MOZ_ENABLE_WAYLAND=1
 ELECTRON_OZONE_PLATFORM_HINT=auto
@@ -235,7 +235,7 @@ gtk-application-prefer-dark-theme = true
     bashrc_extra = """\
 
 # ── AvalOS / Wayland ────────────────────────────────
-export QT_QPA_PLATFORM=wayland
+export QT_QPA_PLATFORM="wayland;xcb"
 export MOZ_ENABLE_WAYLAND=1
 export ELECTRON_OZONE_PLATFORM_HINT=auto
 export XDG_SESSION_TYPE=wayland
@@ -282,7 +282,7 @@ export XDG_SESSION_TYPE=wayland
 
     ref_conf = MOUNT_ROOT / "etc" / "xdg" / "reflector" / "reflector.conf"
     ref_conf.parent.mkdir(parents=True, exist_ok=True)
-    ref_conf.write_text("--country SV,US,MX,GT,JP\n--latest 10\n--sort rate\n--protocol https\n")
+    ref_conf.write_text(f"--country {MIRROR_COUNTRIES}\n--latest 10\n--sort rate\n--protocol https\n")
     session.run_chroot(["systemctl", "enable", "reflector.timer"])
 
     linger = MOUNT_ROOT / "etc/systemd/system/avalos-enable-linger.service"

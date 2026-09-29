@@ -296,7 +296,7 @@ def run_installation(session: InstallSession) -> None:
         avanzar()
 
         # ── grub (bootloader) ────────────────────────────────────────
-        if not install_bootloader(session, ctx, dev, result.root_device, uefi, ucode):
+        if not install_bootloader(session, ctx, dev, result.root_device, uefi, ucode, kernel_pkg):
             return
         avanzar()
 

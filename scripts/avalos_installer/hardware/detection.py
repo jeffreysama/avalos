@@ -37,6 +37,14 @@ def detect_microcode() -> str:
     try:
         with open("/proc/cpuinfo") as f:
             c = f.read().lower()
+        # Se decide por la línea vendor_id: buscar "intel"/"amd" en TODO el archivo
+        # también matchea nombres de flags, modelo, etc. El substring queda de respaldo.
+        vendor = next((ln.split(":", 1)[1].strip() for ln in c.splitlines()
+                       if ln.startswith("vendor_id") and ":" in ln), "")
+        if vendor == "genuineintel":
+            return "intel-ucode"
+        if vendor == "authenticamd":
+            return "amd-ucode"
         if "genuineintel" in c or "intel" in c:
             return "intel-ucode"
         if "authenticamd" in c or "amd" in c:
@@ -56,14 +64,24 @@ def detect_cpu_arch_level() -> str:
                     flags = line.split(":", 1)[1].lower()
                     break
         flag_set = set(flags.split())
+        # /proc/cpuinfo NO tiene flag "lzcnt": el kernel lo expone como "abm"
+        # (X86_FEATURE_ABM = CPUID 0x80000001 ECX bit 5 = LZCNT). Con "lzcnt" en el set,
+        # v3 nunca se cumplía: toda CPU v3 SIN AVX-512 (Ryzen 1000-5000, Intel de escritorio
+        # sin AVX-512...) caía a v2, recibía linux-avalos-compat y se le negaba el kernel BORE.
+        # Solo las CPU con AVX-512 (v4) escapaban, porque v4 no mira v3.
+        if "lzcnt" in flag_set:
+            flag_set.add("abm")
         v4 = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
-        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "lzcnt", "movbe", "xsave"}
-        if v4.issubset(flag_set):
+        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "xsave"}
+        v2 = {"cx16", "lahf_lm", "popcnt", "sse4_1", "sse4_2", "ssse3"}
+        if v4.issubset(flag_set) and v3.issubset(flag_set):
             return "x86-64-v4"
         elif v3.issubset(flag_set):
             return "x86-64-v3"
-        else:
+        elif v2.issubset(flag_set):
             return "x86-64-v2"
+        else:
+            return "x86-64"
     except Exception:
         return "x86-64"
 
@@ -83,15 +101,20 @@ def detect_gpu() -> dict:
                             "polaris", "vega", "rdna", "gfx"]
             intel_keywords = ["intel corporation", "intel xe", "iris xe",
                               "uhd graphics", "hd graphics"]
-            for line in out.splitlines():
-                line_lower = line.lower()
-                if "vga" in line_lower or "display" in line_lower or "3d controller" in line_lower:
-                    if any(k in line_lower for k in amd_keywords):
-                        return {"vendor": "amd", "model": _parse_lspci_model(line),
-                                "pkgs": DRIVER_PKGS_AMD}
-                    if any(k in line_lower for k in intel_keywords):
-                        return {"vendor": "intel", "model": _parse_lspci_model(line),
-                                "pkgs": DRIVER_PKGS_INTEL}
+            gpu_lines = [ln for ln in out.splitlines()
+                         if any(k in ln.lower() for k in ("vga", "display", "3d controller"))]
+            # Dos pasadas: si hay alguna GPU AMD gana sobre Intel. Antes valía el orden de
+            # lspci, y en un portátil con iGPU Intel (00:02.0, sale primero) + dGPU Radeon
+            # se instalaban solo los drivers Intel: la GPU con la que se juega quedaba sin
+            # vulkan-radeon.
+            for line in gpu_lines:
+                if any(k in line.lower() for k in amd_keywords):
+                    return {"vendor": "amd", "model": _parse_lspci_model(line),
+                            "pkgs": DRIVER_PKGS_AMD}
+            for line in gpu_lines:
+                if any(k in line.lower() for k in intel_keywords):
+                    return {"vendor": "intel", "model": _parse_lspci_model(line),
+                            "pkgs": DRIVER_PKGS_INTEL}
     except Exception as e:
         print(f"[WARN] detect_gpu lspci: {e}")
 

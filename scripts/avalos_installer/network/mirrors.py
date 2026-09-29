@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 
+from avalos_installer.core.config import MIRROR_COUNTRIES
 from avalos_installer.core.session import InstallSession
 
 
@@ -93,7 +94,7 @@ def optimize_mirrors(session: InstallSession):
         return
 
     rc, _ = session.run_cmd([
-        "reflector", "--country", "SV,US,MX,GT,JP,CN,HK,TW",
+        "reflector", "--country", MIRROR_COUNTRIES,
         "--latest", "10", "--sort", "rate",
         "--protocol", "https", "--save", "/etc/pacman.d/mirrorlist",
     ], timeout=120)

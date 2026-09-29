@@ -29,8 +29,19 @@ from avalos_installer.core.shell import run_command
 GRUB_UEFI_REMOVABLE = False
 
 
+def _kernel_name(kernel_pkg: str | None) -> str:
+    """Sufijo de /boot/vmlinuz-<nombre>. Se prefiere el kernel_pkg que devolvió pacstrap
+    (vmlinuz-<pkgbase> lo instala el PKGBUILD); el glob queda de respaldo y ordenado,
+    porque glob.glob() no garantiza orden y con más de un vmlinuz elegía uno al azar."""
+    if kernel_pkg and (MOUNT_ROOT / "boot" / f"vmlinuz-{kernel_pkg}").exists():
+        return kernel_pkg
+    found = sorted(glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*")))
+    return Path(found[0]).name.replace("vmlinuz-", "", 1) if found else "linux"
+
+
 def install_bootloader(session: InstallSession, ctx: InstallContext,
-                        dev: str, dev_root: str, uefi: bool, ucode: str) -> bool:
+                        dev: str, dev_root: str, uefi: bool, ucode: str,
+                        kernel_pkg: str | None = None) -> bool:
     session.step("grub", "active")
 
     if ctx.bootloader == 'none':
@@ -79,7 +90,19 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
                      if not l.strip().startswith("GRUB_DISABLE_OS_PROBER")]
             lines.append("GRUB_DISABLE_OS_PROBER=false")
             gd_path.write_text("\n".join(lines) + "\n")
-        session.run_chroot(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
+        rc_cfg, out_cfg = session.run_chroot(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
+        # grub-install sin grub.cfg deja un disco que cae al prompt de GRUB. grub-mkconfig
+        # escribe grub.cfg.new y lo mueve solo si termina bien, así que en una instalación
+        # nueva "no existe / está vacío" = falló de verdad; rc != 0 con el archivo presente
+        # solo se avisa.
+        grub_cfg = MOUNT_ROOT / "boot" / "grub" / "grub.cfg"
+        if rc_cfg != 0:
+            session.log(f"[ERR] grub-mkconfig rc={rc_cfg}: {out_cfg.strip()[-500:]}", "err")
+        if not grub_cfg.exists() or grub_cfg.stat().st_size == 0:
+            session.step("grub", "error")
+            session.error_step(session.t("err-grub-mkconfig-failed"))
+            session.clean_mounts()
+            return False
         session.step("grub", "done", session.t("step-grub-installed-label"))
         return True
 
@@ -118,8 +141,7 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
             # pasemos a mano en el cmdline.
             root_opts += " rootflags=subvol=@"
 
-        vmlinuz_files = glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
-        kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
+        kernel_name = _kernel_name(kernel_pkg)
         session.log(session.t("log-kernel-detected", kernel_name=kernel_name), "info")
 
         refind_conf = MOUNT_ROOT / "boot" / "refind_linux.conf"
@@ -187,8 +209,7 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
             session.clean_mounts()
             return False
 
-        vmlinuz_files = glob.glob(str(MOUNT_ROOT / "boot" / "vmlinuz-*"))
-        kernel_name = Path(vmlinuz_files[0]).name.replace("vmlinuz-", "") if vmlinuz_files else "linux"
+        kernel_name = _kernel_name(kernel_pkg)
         session.log(session.t("log-kernel-detected", kernel_name=kernel_name), "info")
 
         rc_uuid, uuid_out, _ = run_command(["blkid", "-s", "UUID", "-o", "value", dev_root])
@@ -260,6 +281,9 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
             "[Trigger]\n"
             "Type = Package\n"
             f"Target = {kernel_name}\n"
+            # El microcode también se copia a la ESP: sin este Target, un update de
+            # amd-ucode/intel-ucode dejaba la copia de la ESP vieja hasta el próximo kernel.
+            + (f"Target = {ucode}\n" if ucode else "") +
             "Operation = Install\n"
             "Operation = Upgrade\n"
             "\n"
@@ -273,6 +297,8 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
             "Depends = bash\n"
         )
 
+        # Mantiene el binario de systemd-boot de la ESP al día tras updates de systemd.
+        session.run_chroot(["systemctl", "enable", "systemd-boot-update.service"])
         session.step("grub", "done", session.t("step-sdboot-installed-label"))
         return True
 
