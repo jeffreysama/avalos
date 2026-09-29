@@ -61,7 +61,10 @@ def configure_services(session: InstallSession, ctx: InstallContext) -> None:
     wants = svc_dir / "graphical.target.wants"
     wants.mkdir(exist_ok=True)
     symlink = wants / "avalos-gpu-detect.service"
-    if not symlink.exists():
+    # is_symlink(), no exists(): el destino es absoluto y exists() lo resuelve contra la raíz del
+    # HOST (donde ese archivo no existe), así que un symlink ya creado se veía como "no existe" y
+    # symlink_to() reventaba con FileExistsError en un reintento sobre el mismo target.
+    if not symlink.is_symlink():
         symlink.symlink_to("/etc/systemd/system/avalos-gpu-detect.service")
     session.log(session.t("log-gpu-detect-service-ok"), "ok")
 

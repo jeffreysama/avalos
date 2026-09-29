@@ -22,7 +22,14 @@ def run_command(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
     con el mensaje en stderr, para que el llamador no necesite try/except.
     """
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        # stdin=DEVNULL: un prompt interactivo recibe EOF en vez de quedarse esperando en la
+        # terminal desde la que se lanzó el instalador (mismo criterio que core/runner.py).
+        # errors="replace": un byte no-UTF-8 (p. ej. el modelo de un disco en lsblk) no debe
+        # tumbar toda la salida con UnicodeDecodeError -> rc -3 -> "no hay discos".
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+            stdin=subprocess.DEVNULL, errors="replace",
+        )
         return r.returncode, r.stdout.strip(), r.stderr.strip()
     except FileNotFoundError:
         return -1, "", f"No encontrado: {cmd[0]}"

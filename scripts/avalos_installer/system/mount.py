@@ -67,6 +67,15 @@ def mount_filesystems(session: InstallSession, ctx: InstallContext,
             rc_sv, _ = session.run_cmd(["mount", "-o", sv_opts, root_device, str(sv_path)])
             if rc_sv != 0:
                 session.log(session.t("log-subvol-mount-fail", sv_name=sv_name, sv_path=sv_path), "warn")
+                if sv_name in ("@home", "@snapshots"):
+                    # Sin @home el /home cae dentro de @ y un restore (que intercambia @)
+                    # pisaría los datos del usuario; sin @snapshots Snapper no puede
+                    # crear snapshots. Seguir adelante dejaría una instalación con el
+                    # layout equivocado sin que nadie se entere: se aborta.
+                    session.step("mount", "error")
+                    session.error_step(session.t("err-mount-subvol-failed", dev_root=root_device))
+                    session.clean_mounts()
+                    return False
             elif sv_name == "@tmp":
                 session.run_cmd(["chattr", "+C", str(sv_path)])
                 session.log(session.t("log-tmp-cow-disabled"), "ok")

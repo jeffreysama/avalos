@@ -93,7 +93,7 @@ def optimize_mirrors(session: InstallSession):
         return
 
     rc, _ = session.run_cmd([
-        "reflector", "--country", "SV,US,MX,GT,JP",
+        "reflector", "--country", "SV,US,MX,GT,JP,CN,HK,TW",
         "--latest", "10", "--sort", "rate",
         "--protocol", "https", "--save", "/etc/pacman.d/mirrorlist",
     ], timeout=120)
