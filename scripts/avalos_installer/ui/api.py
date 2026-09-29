@@ -59,6 +59,7 @@ AttributeError latente. Acá usa session.t(...), que sí existe.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import threading
@@ -129,7 +130,15 @@ class InstallerAPI:
                             bore: bool = False, manual: bool = False) -> bool:
         """El usuario pulsó 'Instalar AvalOS' con configuración válida."""
         clean_username = username.strip()
-        if not clean_username:
+        clean_hostname = hostname.strip() or DEFAULT_HOSTNAME
+        # Revalidación del lado Python: el JS ya filtra, pero estos valores acaban en
+        # sudoers.d (aur.py), useradd, /etc/hostname y chpasswd por stdin, así que un
+        # salto de línea o un carácter raro no debe llegar hasta ahí aunque el front falle.
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", clean_username):
+            return False
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", clean_hostname):
+            return False
+        if not password or any(c in password for c in "\n\r\0"):
             return False
 
         if manual and not self._manual_ready:
@@ -144,7 +153,7 @@ class InstallerAPI:
         ctx = InstallContext(
             username=clean_username,
             password=password,
-            hostname=hostname.strip() or DEFAULT_HOSTNAME,
+            hostname=clean_hostname,
             timezone=timezone or DEFAULT_TIMEZONE,
             locale=locale if locale in valid_locales else DEFAULT_LOCALE,
             keymap=keymap if keymap in valid_keymaps else DEFAULT_KEYMAP,

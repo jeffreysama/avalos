@@ -396,8 +396,11 @@ def run_installation(session: InstallSession) -> None:
     finally:
         session._installing = False
 
-        sudoers_guard = MOUNT_ROOT / "etc" / "sudoers.d" / "99-aur-build"
-        if sudoers_guard.exists():
+        # Red de seguridad del NOPASSWD temporal de system/aur.py. El archivo real
+        # es "zz-avalos-aur-build" (antes "99-aur-build", que ya no existe): se
+        # barren ambos por glob para que un cambio de nombre no vuelva a dejar
+        # esta limpieza apuntando a la nada.
+        for sudoers_guard in (MOUNT_ROOT / "etc" / "sudoers.d").glob("*aur-build"):
             try:
                 sudoers_guard.unlink()
                 session.log(session.t("log-cleanup-sudoers-ok"), "ok")
