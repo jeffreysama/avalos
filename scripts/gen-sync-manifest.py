@@ -4,6 +4,7 @@
     python3 scripts/gen-sync-manifest.py           # regenera configs/MANIFEST.sha256
     python3 scripts/gen-sync-manifest.py --check   # valida listas, manifiesto y commit pineado (lo corre CI)
     python3 scripts/gen-sync-manifest.py --pin     # fija AVALOS_SYNC_REF = HEAD
+    python3 scripts/gen-sync-manifest.py --release # pasos 2 y 3 de abajo de una vez (sin push)
 
 Cómo encaja (ver el comentario de AVALOS_SYNC_REF en avalos-update-helper):
 sync-system-files corre como root, baja archivos de raw.githubusercontent.com en
@@ -14,7 +15,9 @@ verifica). PIN_FILES (helper + avalos-update) llevan el pin, así que NO se
 sincronizan: un archivo no puede instalar su propia ancla de confianza desde el
 canal que esa ancla autentica.
 
-Cortar una release (en este orden):
+Cortar una release: commitear los cambios y correr --release (hace el manifiesto, el pin y
+sus dos commits; el push sigue siendo tuyo a propósito: es la compuerta humana de la release).
+A mano son estos pasos, en este orden:
   1. commitear los cambios a los archivos de RUTAS
   2. python3 scripts/gen-sync-manifest.py
      git add configs/MANIFEST.sha256 && git commit -m "chore: manifiesto de sync"
@@ -33,6 +36,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -166,7 +170,33 @@ def _check_pin(root: Path) -> list[str]:
         if _git(root, *existe, check=False).returncode != 0:
             print(f"aviso: no pude verificar el commit pineado {pin[:12]} (no está en el clon y no se pudo traer de origin)")
             return []
-    return _verificar_ref(root, pin)
+    problemas = _verificar_ref(root, pin)
+    if not problemas:
+        _avisar_release_pendiente(root, pin)
+    return problemas
+
+
+def _cambiados_desde(root: Path, ref: str) -> list[str]:
+    """Archivos de RUTAS cuyo contenido actual difiere del que tenía `ref`."""
+    out = []
+    for r in RUTAS:
+        antes = _git(root, "show", f"{ref}:{r}", check=False)
+        if antes.returncode != 0 or not (root / r).is_file() or antes.stdout != (root / r).read_bytes():
+            out.append(r)
+    return out
+
+
+def _avisar_release_pendiente(root: Path, pin: str) -> None:
+    """Los sistemas instalados solo reciben lo que está en el commit pineado: si RUTAS cambió
+    desde el pin, esos cambios NO llegan a nadie hasta cortar release. Se avisa, no se falla."""
+    cambiados = _cambiados_desde(root, pin)
+    if not cambiados:
+        return
+    msg = (f"{len(cambiados)} archivo(s) sincronizable(s) cambiaron desde el commit pineado "
+           f"{pin[:12]} y todavía NO llegan a los sistemas instalados: {', '.join(cambiados)}")
+    print(f"aviso: {msg} — para publicarlos: python3 scripts/gen-sync-manifest.py --release")
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::notice title=Release de sync pendiente::{msg}")
 
 
 def cmd_generar(root: Path) -> int:
@@ -222,7 +252,7 @@ def cmd_check(root: Path) -> int:
     return 1 if errores else 0
 
 
-def cmd_pin(root: Path) -> int:
+def cmd_pin(root: Path, *, indicar_siguiente: bool = True) -> int:
     problemas = _verificar_ref(root, "HEAD")
     if problemas:
         for e in problemas:
@@ -240,8 +270,42 @@ def cmd_pin(root: Path) -> int:
     print(f"AVALOS_SYNC_REF = {sha}  (en {', '.join(PIN_FILES)})")
     if not _git(root, "branch", "-r", "--contains", "HEAD", check=False).stdout.strip():
         print("aviso: HEAD todavía no está en ningún remoto — pushealo antes de que alguien corra sync.")
-    print('siguiente: git commit -am "chore: pin AVALOS_SYNC_REF" && git push')
-    print("ojo: si el push sale rechazado usá 'git pull --no-rebase' (un rebase reescribe el commit pineado)")
+    if indicar_siguiente:
+        print('siguiente: git commit -am "chore: pin AVALOS_SYNC_REF" && git push')
+        print("ojo: si el push sale rechazado usá 'git pull --no-rebase' (un rebase reescribe el commit pineado)")
+    return 0
+
+
+def cmd_release(root: Path) -> int:
+    """Manifiesto -> commit -> pin -> commit. NO hace push."""
+    tocados = [*RUTAS, *PIN_FILES, MANIFEST]
+    sucio = _git(root, "status", "--porcelain", "--", *tocados, check=False).stdout.decode().strip()
+    if sucio:
+        print("ERROR: hay cambios sin commitear en archivos de la release:\n" + sucio, file=sys.stderr)
+        print("       commitealos primero (el manifiesto se calcula sobre lo commiteado) y volvé a correr --release.", file=sys.stderr)
+        return 1
+    pin_actual = next(iter({m.group(2) for p in PIN_FILES if (m := _PIN_RE.search((root / p).read_text(encoding="utf-8")))}), "")
+    if re.fullmatch(r"[0-9a-f]{40}", pin_actual) and _git(root, "cat-file", "-e", f"{pin_actual}^{{commit}}", check=False).returncode == 0 \
+            and not _cambiados_desde(root, pin_actual):
+        print(f"nada que publicar: los archivos sincronizables no cambiaron desde el pin actual ({pin_actual[:12]}).")
+        return 0
+    try:
+        if cmd_generar(root) != 0:
+            return 1
+        if _git(root, "status", "--porcelain", "--", MANIFEST).stdout.strip():
+            _git(root, "add", MANIFEST)
+            _git(root, "commit", "-q", "-m", "chore: manifiesto de sync")
+            print("commit: chore: manifiesto de sync")
+        if cmd_pin(root, indicar_siguiente=False) != 0:
+            return 1
+        _git(root, "add", *PIN_FILES)
+        _git(root, "commit", "-q", "-m", "chore: pin AVALOS_SYNC_REF")
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: git falló: {e.stderr.decode(errors='replace').strip() or e}", file=sys.stderr)
+        print("       (si dice que falta user.name/user.email: git config --global user.name ... / user.email ...)", file=sys.stderr)
+        return 1
+    print("commit: chore: pin AVALOS_SYNC_REF")
+    print("listo. Falta solo: git push   (si sale rechazado: git pull --no-rebase, NUNCA rebase: reescribiría el commit pineado)")
     return 0
 
 
@@ -250,8 +314,11 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--check", action="store_true", help="valida RUTAS vs helper + formato del manifiesto")
     g.add_argument("--pin", action="store_true", help="fija AVALOS_SYNC_REF al SHA de HEAD (tras commitear el manifiesto)")
+    g.add_argument("--release", action="store_true", help="manifiesto + pin + los dos commits (sin push)")
     a = ap.parse_args()
     root = _root()
+    if a.release:
+        return cmd_release(root)
     return cmd_check(root) if a.check else cmd_pin(root) if a.pin else cmd_generar(root)
 
 

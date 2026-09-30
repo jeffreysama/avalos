@@ -159,6 +159,8 @@ If that's unavailable for some reason, fall back to `reflector`:
 ```bash
 pacman -Sy --noconfirm --needed reflector
 reflector --latest 10 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
+# optional: limit it to nearby countries (the installer uses SV,US,MX,GT,JP,CN,HK,TW):
+# reflector --country SV,US,MX,GT,JP,CN,HK,TW --latest 10 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
 ```
 
 > **Tip:** whichever of the two you used, the installer appends one more line afterwards as a safety net — a large, always-complete mirror that's never missing packages (including multilib):
@@ -800,6 +802,7 @@ sed -i 's/^HOOKS=(\(.*\)filesystems\(.*\))/HOOKS=(\1btrfs filesystems\2)/' /etc/
 sed -i 's/^HOOKS=(\(.*\)fsck\(.*\))/HOOKS=(\1grub-btrfs-overlayfs fsck\2)/' /etc/mkinitcpio.conf
 
 mkinitcpio -P
+ls /boot/initramfs-*.img     # must list one image per kernel — if it's empty, do NOT continue to the bootloader
 ```
 
 If `mkinitcpio -P` complains about a `.preset` file pointing at a `vmlinuz` that doesn't exist, it's a leftover from an earlier attempt in this same chroot (e.g. a stray `linux.preset` from before you settled on `linux-avalos`) — safe to delete anything under `/etc/mkinitcpio.d/` that doesn't match the kernel you actually installed in step 7.
@@ -820,6 +823,7 @@ grep -q "^GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION" /etc/default/grub || \
   echo "GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION=true" >> /etc/default/grub
 
 grub-mkconfig -o /boot/grub/grub.cfg
+test -s /boot/grub/grub.cfg && echo "grub.cfg OK"   # an empty/missing grub.cfg boots straight to the GRUB prompt
 ```
 
 (The `GRUB_BTRFS_OVERRIDE_BOOT_PARTITION_DETECTION` line matters here specifically because `/boot` isn't a separate partition in this layout — it lives inside the `@` subvolume alongside `/` — which can otherwise confuse `grub-btrfs`'s automatic detection once you set up Snapper in step 18.)
@@ -887,6 +891,7 @@ cat > "/etc/pacman.d/hooks/95-systemd-boot.hook" << EOF
 [Trigger]
 Type = Package
 Target = $KERNEL_NAME
+$( [ -n "$UCODE" ] && echo "Target = $UCODE" )
 Operation = Install
 Operation = Upgrade
 
@@ -896,7 +901,12 @@ When = PostTransaction
 Exec = /usr/bin/bash -c 'cp /boot/vmlinuz-$KERNEL_NAME /boot/efi/AvalOS/vmlinuz-$KERNEL_NAME; cp /boot/initramfs-$KERNEL_NAME.img /boot/efi/AvalOS/initramfs-$KERNEL_NAME.img; [[ -n "$UCODE" ]] && [[ -f /boot/$UCODE.img ]] && cp /boot/$UCODE.img /boot/efi/AvalOS/$UCODE.img || true'
 Depends = bash
 EOF
+
+# keep systemd-boot's own EFI binary on the ESP up to date after systemd updates
+systemctl enable systemd-boot-update.service
 ```
+
+(The `Target = $UCODE` line makes a microcode update refresh the copy on the ESP too, instead of waiting for the next kernel update. If `$UCODE` is empty that line comes out blank, which pacman ignores.)
 
 **rEFInd**, the other alternative:
 
