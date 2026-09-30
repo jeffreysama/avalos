@@ -35,7 +35,7 @@ pcall(require, "monitors")
 
 -- ── Variables de entorno ──────────────────────────────────────────
 hl.env("XCURSOR_SIZE",                        "24")
-hl.env("XCURSOR_THEME",                       "capitaine-cursors-dark")
+hl.env("XCURSOR_THEME",                       "capitaine-cursors")
 hl.env("QT_QPA_PLATFORM",                     "wayland;xcb")
 hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 hl.env("GDK_BACKEND",                         "wayland,x11")
@@ -152,7 +152,7 @@ hl.bind(mod .. " + B",        hl.dsp.exec_cmd("firefox"))
 -- que sí lo tenía bien). SHIFT+B = Edge, B solo = Firefox.
 hl.bind(mod .. " + SHIFT + B", hl.dsp.exec_cmd("microsoft-edge-stable"))
 hl.bind(mod .. " + SHIFT + S",
-    hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy'))
+    hl.dsp.exec_cmd('g="$(slurp)" && grim -g "$g" - | wl-copy'))
 hl.bind(mod .. " + V",
     hl.dsp.exec_cmd("cliphist list | rofi -dmenu | cliphist decode | wl-copy"))
 
@@ -176,7 +176,7 @@ hl.bind(mod .. " + CTRL + down",  hl.dsp.window.resize({ x =   0, y =  30, relat
 -- entorno. Se unifica en SUPER+SHIFT+E con el mismo guard que el live;
 -- se quita el bind de "exit" crudo para no salir sin pasar por el menú.
 hl.bind(mod .. " + SHIFT + E",
-    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
+    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh"))
 
 -- Foco — flechas y HJKL
 hl.bind(mod .. " + left",  hl.dsp.focus({ direction = "left" }))

@@ -34,7 +34,7 @@ pcall(require, "monitors")
 -- ELECTRON_* a ~/.config/uwsm/env en lugar de aquí.
 -- Solo AQ_* y HYPR* van en ~/.config/uwsm/env-hyprland.
 hl.env("XCURSOR_SIZE",                      "24")
-hl.env("XCURSOR_THEME",                     "capitaine-cursors-dark")
+hl.env("XCURSOR_THEME",                     "capitaine-cursors")
 hl.env("QT_QPA_PLATFORM",                   "wayland;xcb")
 hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 hl.env("GDK_BACKEND",                       "wayland,x11")
@@ -197,7 +197,7 @@ hl.bind(mod .. " + SHIFT + L",
 
 -- Powermenu (con fallback a poweroff si el script no existe)
 hl.bind(mod .. " + SHIFT + E",
-    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh || systemctl poweroff"))
+    hl.dsp.exec_cmd("~/.config/rofi/scripts/powermenu.sh"))
 
 -- Foco — flechas y HJKL
 -- FIX: hl.dsp.focus.move(...) no existe en la API real — 'focus' es una
@@ -257,7 +257,7 @@ end
 hl.bind("Print",
     hl.dsp.exec_cmd("grim ~/screenshot_$(date +%Y%m%d_%H%M%S).png"))
 hl.bind(mod .. " + SHIFT + S",
-    hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy'))
+    hl.dsp.exec_cmd('g="$(slurp)" && grim -g "$g" - | wl-copy'))
 
 -- Audio (repeating = true para mantener pulsado)
 hl.bind("XF86AudioRaiseVolume",
