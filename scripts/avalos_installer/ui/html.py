@@ -1373,6 +1373,15 @@ try {
 // datos de nuevo a Python.
 let _ultimoDiscosJson = null;
 
+// Escapa texto antes de meterlo con innerHTML. El modelo/tran de un disco lo reporta el
+// propio dispositivo (un USB puede anunciar cualquier cadena) y el instalador corre como
+// root con la API de Python expuesta al webview: sin esto, un modelo con markup
+// ejecutaria JS con acceso a start_installation()/open_partitioning_terminal().
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
 function pyRenderDiscos(discosJson) {
   _ultimoDiscosJson = discosJson;
   const _seleccionPrevia = _selDisco;
@@ -1401,16 +1410,16 @@ function pyRenderDiscos(discosJson) {
     div.id = 'dc-' + d.name;
     div.innerHTML = `
       <div class="disk-name">
-        /dev/${d.name}
-        <span class="dtag dtag-${tipo}">${d.tipo}</span>
+        /dev/${esc(d.name)}
+        <span class="dtag dtag-${tipo}">${esc(d.tipo)}</span>
         ${esBoot ? `<span class="dtag dtag-boot">${t('tag-disco-actual-live')}</span>` : ''}
       </div>
       <div class="disk-meta">
-        <span class="disk-size">${d.size_human}</span> · ${d.model} · ${d.tran}
+        <span class="disk-size">${esc(d.size_human)}</span> · ${esc(d.model)} · ${esc(d.tran)}
         ${d.montajes.length ? ` · <span style="color:var(--tn-orange)">${t('tag-montado')}</span>` : ''}
       </div>
-      ${esBoot ? '<div class="disk-warn" style="color:var(--tn-dim);font-style:italic;">No disponible: es el disco donde corre este live ISO</div>' : ''}
-      ${bajo && !esBoot ? `<div class="disk-warn">⚠ Solo ${sizeGb} GB — se recomiendan ≥30 GB</div>` : ''}
+      ${esBoot ? `<div class="disk-warn" style="color:var(--tn-dim);font-style:italic;">${t('disk-unavailable-live')}</div>` : ''}
+      ${bajo && !esBoot ? `<div class="disk-warn">${t('disk-low-space', { gb: sizeGb })}</div>` : ''}
     `;
     if (!esBoot) div.onclick = () => selectDisk(d.name);
     cont.appendChild(div);
@@ -1711,6 +1720,10 @@ function validarEIniciar() {
 
   if (!_selDisco)                   return showFormError(t('val-select-disk'));
   if (!user || user.length < 2)     return showFormError(t('val-invalid-user'));
+  // Misma regla que ui/api.py (start_installation): si el front deja pasar algo que Python
+  // rechaza, el wizard ya estaria en la pantalla de instalacion sin que arranque nada.
+  if (!/^[a-z_][a-z0-9_-]{1,31}$/.test(user))
+                                    return showFormError(t('val-invalid-user'));
   if (pass.length < 8)              return showFormError(t('val-pass-short'));
   if (_passStrength(pass).score < 2) return showFormError(t('val-pass-weak'));
   if (pass !== pass2)               return showFormError(t('val-pass-mismatch'));
@@ -1733,7 +1746,13 @@ function validarEIniciar() {
   const _gaming = window._installGaming === true;
   const _bore   = window._installBore === true;
   const _manual = window._modoManualListo === true;
-  window.pywebview.api.start_installation(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap, _gaming, _bore, _manual);
+  window.pywebview.api.start_installation(user, pass, host, tz, _selDisco, _bootloader, _modoUsb, locale, keymap, _gaming, _bore, _manual)
+    .then(function (ok) {
+      if (ok === false) {          // Python rechazo la config: volver al formulario, no dejar la pantalla muerta
+        showPage('config');
+        showFormError(_manual ? t('warn-manual-no-partitions') : t('val-invalid-user'));
+      }
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1810,8 +1829,8 @@ function abortar() {
   if (abortado) return;
   abortado = true;
   document.getElementById('btn-abort').disabled = true;
-  appendLog('\n[USUARIO] Instalación abortada.', 'err');
-  setStatus('Abortado — limpiando montajes…');
+  appendLog('\n' + t('log-user-aborted'), 'err');
+  setStatus(t('status-aborting'));
   window.pywebview.api.abort_installation();
 }
 function reintentar() {
@@ -1874,9 +1893,9 @@ function pyCerrarCountdown() {
 function pyInstalacionCompleta(info) {
   stopTimer();
   document.getElementById('btn-abort').disabled = true;
-  document.getElementById('status-label').textContent = '✓ completado';
+  document.getElementById('status-label').textContent = t('status-label-done');
   setProgress(100);
-  setStatus('Instalación completada — reinicia el equipo');
+  setStatus(t('status-complete'));
   // Show done overlay
   if (info) document.getElementById('done-info').innerHTML = info;
   document.getElementById('ov-done').classList.add('show');
@@ -1920,7 +1939,7 @@ function pyErrorPaso(msg) {
   document.getElementById('btn-retry').style.display = 'block';
   appendLog('\n[ERROR] ' + msg, 'err');
   setStatus(t('status-error'));
-  document.getElementById('status-label').textContent = '✗ error';
+  document.getElementById('status-label').textContent = t('status-label-error');
 }
 
 // ══════════════════════════════════════════════════════════════════

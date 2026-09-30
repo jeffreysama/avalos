@@ -80,6 +80,13 @@ class InstallSession:
     No confundir con InstallContext (configuración elegida por el usuario).
     Esto es "cómo hacer las cosas", no "qué se eligió hacer"."""
 
+    # pywebview expone al JS TODOS los métodos públicos de js_api y, recursivamente, de sus
+    # atributos públicos (InstallerAPI.session es uno): sin esto el webview podía llamar a
+    # window.pywebview.api.session.run_cmd()/run_chroot()/clean_mounts() como root. El JS del
+    # wizard solo usa los métodos de InstallerAPI; pywebview salta lo que tenga
+    # _serializable = False. Solo los métodos de InstallerAPI quedan visibles.
+    _serializable = False
+
     def __init__(self, window: "webview.Window | None" = None, lang: str = "en"):
         # Log persistente (ver core/logfile.py): el archivo en RAM existe desde
         # ya, así que hasta lo que pase antes de que cargue la UI queda
