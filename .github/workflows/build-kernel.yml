@@ -463,12 +463,12 @@ jobs:
           # Cosmetico: sin esto, 'pacman -Si linux-avalos-bore' mostraba el
           # mismo pkgdesc que el estandar, palabra por palabra — no se podía
           # distinguir uno de otro por descripción.
-          sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF+BORE|g' "$BORE_DIR/PKGBUILD"
 
           BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${MAJOR}.${MINOR}/sched/0001-bore.patch"
           if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
              && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
             echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
+            sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF+BORE|g' "$BORE_DIR/PKGBUILD"
 
             if grep -qE '^\s*"config"' "$BORE_DIR/PKGBUILD"; then
               sed -i -E 's|^(\s*)"config"|\1"config"\n\1"bore-scheduler.patch"|' "$BORE_DIR/PKGBUILD"
@@ -482,6 +482,11 @@ jobs:
             echo "sha256sums actualizado con entrada para bore-scheduler.patch"
           else
             echo "Parche BORE no disponible - usara EEVDF con HZ=1000"
+            # Antes el pkgdesc decia "EEVDF+BORE" SIEMPRE, incluso sin parche: se publicaba un
+            # linux-avalos-bore que en realidad es EEVDF puro y `pacman -Qi` mentia. Ahora la
+            # descripcion dice la verdad y el run deja un warning visible en Actions.
+            sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF (SIN BORE: parche no disponible para esta version)|g' "$BORE_DIR/PKGBUILD"
+            echo "::warning::linux-avalos-bore se compila SIN el parche BORE (${BORE_URL} no disponible)"
           fi
 
           sudo -u builder env \

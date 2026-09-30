@@ -138,8 +138,12 @@ def detectar_cpu_arch_level() -> str:
                     flags = line.split(":", 1)[1].lower()
                     break
         flag_set = set(flags.split())
+        # /proc/cpuinfo no tiene flag "lzcnt": el kernel lo expone como "abm". Con "lzcnt" en el
+        # set v3 nunca se cumplia en CPU sin AVX-512 (Ryzen 1000-5000...) y BORE quedaba bloqueado.
+        if "lzcnt" in flag_set:
+            flag_set.add("abm")
         v4 = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
-        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "lzcnt", "movbe", "xsave"}
+        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "xsave"}
         if v4.issubset(flag_set):
             return "x86-64-v4"
         elif v3.issubset(flag_set):
@@ -378,7 +382,16 @@ def cmd_apply_kernel(args: argparse.Namespace) -> None:
     elif actual:
         _out(f"cambiando de variante: {KERNEL_VARIANTS[actual][0]} → {pkg}")
 
-    rc = _stream(["pacman", "-S", "--needed", "--noconfirm", pkg, headers], idle_timeout=180)
+    cambiando = bool(actual and KERNEL_VARIANTS[actual][0] != pkg)
+    cmd_s = ["pacman", "-S", "--needed", "--noconfirm"]
+    if cambiando:
+        # Las variantes se declaran "conflicts" entre si (el kernel nuevo lista al viejo y a sus
+        # headers). Con --noconfirm pacman responde NO a "Remove <viejo>? [y/N]" y aborta con
+        # "unresolvable package conflicts detected": el cambio de variante nunca funcionaba.
+        # --ask=4 invierte SOLO esa pregunta (la de conflictos) y pacman saca la variante vieja
+        # en la misma transaccion; no afecta a ninguna otra confirmacion.
+        cmd_s.append("--ask=4")
+    rc = _stream(cmd_s + [pkg, headers], idle_timeout=180)
     if rc != 0:
         _fail(f"no se pudo instalar {pkg}/{headers} (código {rc}) — se deja el kernel viejo intacto.", rc)
 
@@ -390,14 +403,18 @@ def cmd_apply_kernel(args: argparse.Namespace) -> None:
     _out("regenerando initramfs…")
     rc_m = _stream(["mkinitcpio", "-P"], idle_timeout=180)
     if rc_m != 0:
+        if cambiando:
+            _fail(f"mkinitcpio -P terminó con código {rc_m} para {pkg} — la variante anterior ya la quitó pacman en el cambio: NO reinicies hasta que 'mkinitcpio -P' termine bien.", rc_m)
         _fail(f"mkinitcpio -P terminó con código {rc_m} para {pkg} — se deja la variante anterior instalada, no reinicies todavía.", rc_m)
 
-    if actual and KERNEL_VARIANTS[actual][0] != pkg:
+    if cambiando:
         pkg_viejo, headers_viejo = KERNEL_VARIANTS[actual]
-        _out(f"quitando variante anterior: {pkg_viejo}")
-        rc_r = _stream(["pacman", "-R", "--noconfirm", pkg_viejo, headers_viejo], idle_timeout=180)
-        if rc_r != 0:
-            _out(f"aviso: no se pudo quitar {pkg_viejo} (código {rc_r}) — queda instalado junto al nuevo, sin romper nada.")
+        # Normalmente pacman ya la quitó arriba (--ask=4); el -R solo corre si sigue instalada.
+        if subprocess.run(["pacman", "-Q", pkg_viejo], capture_output=True).returncode == 0:
+            _out(f"quitando variante anterior: {pkg_viejo}")
+            rc_r = _stream(["pacman", "-R", "--noconfirm", pkg_viejo, headers_viejo], idle_timeout=180)
+            if rc_r != 0:
+                _out(f"aviso: no se pudo quitar {pkg_viejo} (código {rc_r}) — queda instalado junto al nuevo, sin romper nada.")
         _limpiar_presets_huerfanos(f"{pkg}.preset")
         # Segunda pasada: limpia cualquier referencia que haya quedado
         # del preset viejo ahora que ya no está. Barata e idempotente.

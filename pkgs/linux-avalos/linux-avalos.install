@@ -53,10 +53,14 @@ post_remove() {
                   "$_esp/AvalOS/initramfs-${_pkgbase}.img"
             echo "   ✓ vmlinuz + initramfs de ${_pkgbase} eliminados de ${_esp}/AvalOS/"
         fi
-        local _entry="$_esp/loader/entries/avalos.conf"
-        if [[ -f "$_entry" ]]; then
-            rm -f "$_entry"
-            echo "   ✓ Entrada de systemd-boot eliminada: ${_entry}"
+        # La entrada avalos.conf NO se borra: es una sola entrada compartida por todas las
+        # variantes. En un cambio de variante (avalos-update-helper) pacman quita la vieja ANTES
+        # de instalar la nueva, y borrarla aqui dejaba el sistema sin entrada de arranque:
+        # el post_install del kernel nuevo solo la EDITA si existe, no la recrea.
+        # Si de verdad se elimino el unico kernel, la entrada queda colgando (sin efecto hasta
+        # que se instale otro kernel AvalOS, que la reescribe).
+        if [[ -f "$_esp/loader/entries/avalos.conf" ]]; then
+            echo "   [INFO] Entrada avalos.conf conservada: la reescribe el próximo kernel AvalOS que se instale."
         fi
     else
         echo "   [INFO] ESP no detectada — elimina manualmente los archivos del bootloader si es necesario."

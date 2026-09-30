@@ -266,7 +266,11 @@ def _check_kernel_info():
                     flags = line.split(":", 1)[1].lower()
                     break
         flag_set = set(flags.split())
-        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "lzcnt", "movbe", "xsave"}
+        # /proc/cpuinfo no tiene flag "lzcnt": el kernel lo expone como "abm". Con "lzcnt" en el
+        # set v3 nunca se cumplia en CPU sin AVX-512 (Ryzen 1000-5000...) y BORE quedaba bloqueado.
+        if "lzcnt" in flag_set:
+            flag_set.add("abm")
+        v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "xsave"}
         v4 = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
         if v4.issubset(flag_set):
             cpu_arch = "x86-64-v4"
