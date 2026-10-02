@@ -230,18 +230,26 @@ class InstallSession:
     # ── Ejecución de comandos ─────────────────────────────────────────────
     def run_cmd(self, cmd: list[str], timeout: int = 300,
                 log_cls: str = "info",
-                pre_mkdir: str | None = None) -> tuple[int, str]:
+                pre_mkdir: str | None = None,
+                abortable: bool = True) -> tuple[int, str]:
         """Corre un comando en el live, transmite su salida al log y deja el
         código de retorno (y cuánto tardó) en el archivo de log — antes el
-        rc solo lo veía quien lo consultaba en el código."""
+        rc solo lo veía quien lo consultaba en el código.
+
+        abortable=False hace que ignore el botón Cancelar. Es solo para la limpieza
+        (clean_mounts): con _aborted ya en True, run_streaming mata cualquier comando en su
+        primera vuelta, así que los umount de la limpieza posterior a un Cancelar nunca
+        corrían y el destino quedaba montado (y "Reintentar" chocaba con esos montajes)."""
         t0 = time.monotonic()
-        rc, out = self._run_cmd_raw(cmd, timeout=timeout, log_cls=log_cls, pre_mkdir=pre_mkdir)
+        rc, out = self._run_cmd_raw(cmd, timeout=timeout, log_cls=log_cls, pre_mkdir=pre_mkdir,
+                                    abortable=abortable)
         self.logfile.write("rc", f"rc={rc} ({time.monotonic() - t0:.1f}s) {' '.join(map(str, cmd))[:160]}")
         return rc, out
 
     def _run_cmd_raw(self, cmd: list[str], timeout: int = 300,
                      log_cls: str = "info",
-                     pre_mkdir: str | None = None) -> tuple[int, str]:
+                     pre_mkdir: str | None = None,
+                     abortable: bool = True) -> tuple[int, str]:
         """Ejecuta `cmd` en streaming (ver core/runner.py: timeout y Cancelar
         reales sobre todo el árbol de procesos, stdin=/dev/null, sin terminal
         de control). Devuelve (rc, salida); -2 timeout, -99 cancelado, -3
@@ -265,7 +273,7 @@ class InstallSession:
             res = run_streaming(
                 cmd, timeout,
                 on_line=lambda ln: self.log(ln, log_cls),
-                should_abort=lambda: self._aborted,
+                should_abort=(lambda: self._aborted) if abortable else (lambda: False),
                 on_idle=_idle, on_kill=_kill,
             )
         except Exception as e:
@@ -325,6 +333,9 @@ class InstallSession:
             self.log(self.t("log-file-target-ok", path=info), "ok")
         elif info != "no montado":
             self.log(self.t("log-file-target-fail", e=info), "warn")
+        # Escribir a disco ANTES de los umount -l: el desmontaje diferido no sincroniza, y en
+        # instalaciones a USB (ext4) quitar el pendrive al terminar dejaba datos en la caché.
+        self.run_cmd(["sync"], timeout=120, abortable=False)
         mount_points = [
             str(MOUNT_EFI),
             str(MOUNT_ROOT / "boot"),
@@ -344,7 +355,7 @@ class InstallSession:
         ]
         for point in mount_points:
             if Path(point).is_mount():
-                rc, _ = self.run_cmd(["umount", "-l", point])
+                rc, _ = self.run_cmd(["umount", "-l", point], abortable=False)
                 if rc == 0:
                     self.log(self.t("log-unmounted", p=point), "ok")
 

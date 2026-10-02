@@ -181,6 +181,13 @@ def detect_manual_partitions(dev: str, uefi: bool) -> dict:
     "size_human","fstype"} , ... ], "es_gpt": bool}. No decide sola cuál
     partición es root si hay más de una candidata — eso lo resuelve el
     usuario en el dropdown del wizard."""
+    # lsblk exige la RUTA del dispositivo y el wizard manda el nombre pelado de list_disks()
+    # ("sda", "nvme0n1"): con eso lsblk falla ("not a block device") y el modo manual nunca
+    # encontraba particiones. Se normaliza acá (también para el sfdisk de más abajo).
+    _name = (dev or "").removeprefix("/dev/")
+    if not _name:
+        return {"efi": "", "candidatas_root": [], "es_gpt": False}
+    dev = "/dev/" + _name
     rc, out, _ = run_command([
         "lsblk", "-J", "-b", "-n", "-o",
         "NAME,SIZE,TYPE,PARTTYPE,FSTYPE,MOUNTPOINTS", dev,

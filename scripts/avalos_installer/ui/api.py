@@ -87,6 +87,7 @@ class InstallerAPI:
         self._manual_root_candidates: list[dict] = []
         self._manual_existing_subvolumes: list[str] = []
         self._manual_root = ""
+        self._manual_disk = ""  # disco (sin /dev/) para el que se hizo la verificación manual
 
     def set_language(self, code: str) -> bool:
         """Llamado desde JS al elegir idioma. Guarda el código para
@@ -145,6 +146,12 @@ class InstallerAPI:
             # JS dice modo manual pero Python nunca confirmó una detección
             # válida (check_manual_partitioning/confirm_manual_root) — no
             # arrancar la instalación con partición root vacía.
+            return False
+        if manual and (disk or "").removeprefix("/dev/") != self._manual_disk:
+            # La detección manual se hizo para OTRO disco (el usuario cambió la selección después
+            # de verificar): root/EFI son de aquel. El JS vuelve al formulario con el aviso del
+            # particionado manual y hay que verificar de nuevo sobre este disco.
+            self._manual_ready = False
             return False
 
         valid_locales = {lc for lc, _ in LOCALES}
@@ -216,7 +223,15 @@ class InstallerAPI:
         Si hay más de una candidata a root, NO elige sola — devuelve la
         lista completa para que el wizard se la ofrezca al usuario en un
         dropdown; la decisión final llega después por confirm_manual_root()."""
-        info = detect_manual_partitions(disk, is_uefi())
+        # Estado nuevo en cada verificación: nada de un disco o intento anterior debe sobrevivir.
+        disk_name = (disk or "").removeprefix("/dev/")
+        self._manual_ready = False
+        self._manual_disk = disk_name
+        self._manual_efi = ""
+        self._manual_root = ""
+        self._manual_root_candidates = []
+        self._manual_existing_subvolumes = []
+        info = detect_manual_partitions(disk_name, is_uefi())
         candidates = info["candidatas_root"]
 
         if not candidates:
@@ -251,17 +266,21 @@ class InstallerAPI:
         wizard y esta llamada la fija como definitiva. Vuelve a validar
         contra self._manual_root_candidates (no confía ciegamente en el
         string que llega de JS) para no aceptar un device arbitrario.
-        'disk' no se usa acá (tampoco se usaba en el original) — se
-        mantiene en la firma porque el JS lo sigue mandando."""
+        'disk' tiene que ser el mismo disco para el que se verificó el particionado: si el
+        usuario cambió la selección entre medio, las candidatas son de otro disco."""
+        if (disk or "").removeprefix("/dev/") != self._manual_disk:
+            return False
         valid = {c["name"] for c in self._manual_root_candidates}
         if chosen_root not in valid:
             return False
         self._manual_root = chosen_root
-        # Solo re-sondear subvolúmenes si la elección es btrfs y no se hizo
-        # ya en check_manual_partitioning() (caso de candidata única).
+        # Los subvolúmenes se sondean SIEMPRE sobre el root elegido: con dos candidatas btrfs,
+        # conservar la lista de la elección anterior hacía saltarse la creación de subvolúmenes
+        # que en ESTA partición no existen.
         candidate = next((c for c in self._manual_root_candidates if c["name"] == chosen_root), None)
-        if candidate and candidate["fstype"] == "btrfs" and not self._manual_existing_subvolumes:
-            self._manual_existing_subvolumes = detect_btrfs_subvolumes(chosen_root)
+        self._manual_existing_subvolumes = (
+            detect_btrfs_subvolumes(chosen_root) if candidate and candidate["fstype"] == "btrfs" else []
+        )
         self._manual_ready = True
         return True
 
