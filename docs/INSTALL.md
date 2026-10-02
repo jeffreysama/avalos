@@ -475,7 +475,7 @@ Then the Hyprland desktop stack:
 ```bash
 pacman -S --needed \
   hyprland uwsm libnewt xdg-desktop-portal-hyprland xdg-desktop-portal-gtk \
-  xdg-user-dirs kitty waybar rofi-wayland mako \
+  xdg-user-dirs kitty waybar rofi mako \
   hyprpaper hyprlock hypridle hyprpicker \
   grim slurp wl-clipboard cliphist \
   pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber pavucontrol \

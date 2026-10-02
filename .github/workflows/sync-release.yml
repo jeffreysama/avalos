@@ -1,0 +1,107 @@
+name: Sync release
+
+# Corta la release de sync (manifiesto + pin de AVALOS_SYNC_REF) y la publica: lo mismo que
+# `python3 scripts/gen-sync-manifest.py --release` + `git push` a mano, pero desde Actions.
+#
+# COMPUERTA HUMANA: solo workflow_dispatch (Actions → Sync release → Run workflow, en main).
+# Nunca corre solo: el pin decide qué código reciben como root TODOS los sistemas instalados.
+# Para exigir además una aprobación explícita: Settings → Environments → sync-release →
+# Required reviewers (el Environment se crea solo en la primera corrida).
+#
+# Un push hecho con GITHUB_TOKEN no dispara otros workflows, así que validate-configs NO
+# correría sobre el commit del pin: por eso las validaciones corren acá dentro, antes del push.
+# Si main tiene protección de rama, el push directo de este workflow va a ser rechazado.
+
+on:
+  workflow_dispatch:
+
+# Solo lectura por defecto; la escritura se pide únicamente en el job que publica.
+permissions:
+  contents: read
+
+# Nunca dos releases a la vez (se encolan; no se cancela la que ya está corriendo).
+concurrency:
+  group: sync-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Cortar y publicar la release de sync
+    # Solo desde main: disparado desde otra rama, el push publicaría ESE código en main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: sync-release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (historial completo, el commit pineado tiene que ser alcanzable)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Instalar parsers (GTK3, Lua, desktop-file-utils)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            python3-gi gir1.2-gtk-3.0 lua5.4 desktop-file-utils python3-yaml
+
+      - name: Validar configs
+        run: /usr/bin/python3 scripts/validate_configs.py --strict
+
+      - name: Coherencia del manifiesto de sync (antes de cortar)
+        run: /usr/bin/python3 scripts/gen-sync-manifest.py --check
+
+      - name: Cortar release (manifiesto + pin, sin push)
+        id: release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          antes=$(git rev-parse HEAD)
+          /usr/bin/python3 scripts/gen-sync-manifest.py --release
+          if [[ "$(git rev-parse HEAD)" == "$antes" ]]; then
+            echo "publicar=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publicar=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Coherencia del manifiesto de sync (después de cortar)
+        if: steps.release.outputs.publicar == 'true'
+        run: /usr/bin/python3 scripts/gen-sync-manifest.py --check
+
+      - name: Push (nunca rebase, reescribiría el commit pineado)
+        if: steps.release.outputs.publicar == 'true'
+        run: |
+          if ! git push origin HEAD:main; then
+            echo "::error title=Push rechazado::main avanzó (o está protegida) mientras corría la release. Volvé a correr el workflow; nunca rebase: reescribiría el commit pineado."
+            exit 1
+          fi
+
+      - name: Verificar desde GitHub (lo que bajará sync-system-files)
+        if: steps.release.outputs.publicar == 'true'
+        run: /usr/bin/python3 scripts/gen-sync-manifest.py --verify-remote
+
+      - name: Resumen
+        if: always()
+        env:
+          PUBLICAR: ${{ steps.release.outputs.publicar }}
+          ESTADO: ${{ job.status }}
+        run: |
+          {
+            echo "## Release de sync"
+            echo
+            if [[ "$ESTADO" != "success" ]]; then
+              echo "**No se completó** (estado: $ESTADO). Revisá el paso que falló; si fue el push, main avanzó: volvé a correr el workflow."
+            elif [[ "$PUBLICAR" == "true" ]]; then
+              pin=$(sed -n 's/^AVALOS_SYNC_REF = "\([0-9a-f]\{40\}\)".*/\1/p' scripts/avalos-update-helper)
+              echo "Publicada. \`AVALOS_SYNC_REF\` = \`$pin\`"
+              echo
+              echo "Archivos publicados (verificados contra GitHub):"
+              echo
+              echo '```'
+              cat configs/MANIFEST.sha256
+              echo '```'
+            else
+              echo "Nada que publicar: los archivos sincronizables no cambiaron desde el pin actual."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

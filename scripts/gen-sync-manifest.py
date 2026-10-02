@@ -5,6 +5,7 @@
     python3 scripts/gen-sync-manifest.py --check   # valida listas, manifiesto y commit pineado (lo corre CI)
     python3 scripts/gen-sync-manifest.py --pin     # fija AVALOS_SYNC_REF = HEAD
     python3 scripts/gen-sync-manifest.py --release # pasos 2 y 3 de abajo de una vez (sin push)
+    python3 scripts/gen-sync-manifest.py --verify-remote  # post-push: baja los archivos al SHA pineado desde GitHub y los compara
 
 Cómo encaja (ver el comentario de AVALOS_SYNC_REF en avalos-update-helper):
 sync-system-files corre como root, baja archivos de raw.githubusercontent.com en
@@ -17,6 +18,9 @@ canal que esa ancla autentica.
 
 Cortar una release: commitear los cambios y correr --release (hace el manifiesto, el pin y
 sus dos commits; el push sigue siendo tuyo a propósito: es la compuerta humana de la release).
+También se puede cortar desde GitHub: Actions → "Sync release" → Run workflow (solo en main).
+Hace --release, valida, pushea (sin rebase) y corre --verify-remote; ahí la compuerta humana es
+el botón (más el aprobador del Environment `sync-release`, si se configura en Settings).
 A mano son estos pasos, en este orden:
   1. commitear los cambios a los archivos de RUTAS
   2. python3 scripts/gen-sync-manifest.py
@@ -26,6 +30,7 @@ A mano son estos pasos, en este orden:
   4. git push        (el commit pineado tiene que estar en GitHub antes del primer sync)
      Si el push sale rechazado: `git pull --no-rebase` (un rebase reescribe el commit
      pineado y ese SHA dejaría de existir → sync fallaría cerrado).
+  5. python3 scripts/gen-sync-manifest.py --verify-remote   (opcional: lo que bajará sync, desde GitHub)
 
 --pin se niega a correr si el manifiesto de HEAD no coincide con los archivos
 de HEAD. Esto NO cubre un commit pineado legítimamente comprometido — para eso
@@ -40,6 +45,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.request
 from pathlib import Path
 
 # Debe reflejar 1:1 los `src_rel` de `manifest` en cmd_sync_system_files. Son 2
@@ -82,6 +89,7 @@ PIN_FILES = ["scripts/avalos-update-helper", "scripts/avalos-update"]
 HELPER = "scripts/avalos-update-helper"
 MANIFEST = "configs/MANIFEST.sha256"
 _PIN_RE = re.compile(r'^(AVALOS_SYNC_REF\s*=\s*)"([^"\n]*)"', re.M)
+_REPO_RAW_RE = re.compile(r'^REPO_RAW\s*=\s*f?"(https://raw\.githubusercontent\.com/[^/"\s]+/[^/"\s]+)/', re.M)
 
 
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
@@ -309,14 +317,74 @@ def cmd_release(root: Path) -> int:
     return 0
 
 
+def _http_get(url: str, intentos: int = 5, espera: float = 3.0) -> bytes:
+    """GET con reintentos: recién pusheado, raw.githubusercontent.com puede tardar unos segundos."""
+    ultimo: Exception | None = None
+    for i in range(intentos):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "avalos-gen-sync-manifest"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.read()
+        except OSError as e:  # URLError, HTTPError y timeouts heredan de OSError
+            ultimo = e
+            if i + 1 < intentos:
+                time.sleep(espera)
+    raise OSError(f"{url}: {ultimo}")
+
+
+def cmd_verify_remote(root: Path, raw_base: str | None = None) -> int:
+    """Lo que hará sync-system-files en un sistema instalado, pero desde acá: baja de GitHub el
+    manifiesto y cada archivo de RUTAS AL SHA PINEADO y los compara. Para correr tras el push."""
+    pines = [_PIN_RE.search((root / p).read_text(encoding="utf-8")) for p in PIN_FILES]
+    valores = {m.group(2) for m in pines if m}
+    pin = next(iter(valores)) if all(pines) and len(valores) == 1 else ""
+    if not re.fullmatch(r"[0-9a-f]{40}", pin):
+        print(f"ERROR: AVALOS_SYNC_REF tiene que ser el mismo SHA de 40 hex en {', '.join(PIN_FILES)} (¿release sin cortar?)", file=sys.stderr)
+        return 1
+    if raw_base is None:
+        mo = _REPO_RAW_RE.search((root / HELPER).read_text(encoding="utf-8"))
+        if not mo:
+            print(f"ERROR: no encontré REPO_RAW en {HELPER}", file=sys.stderr)
+            return 1
+        raw_base = mo.group(1)
+    base = f"{raw_base.rstrip('/')}/{pin}"
+    try:
+        remoto = _parse_manifest(_http_get(f"{base}/{MANIFEST}").decode("utf-8"))
+    except (OSError, ValueError) as e:  # UnicodeDecodeError es ValueError
+        print(f"ERROR: no pude leer {MANIFEST} de {base}: {e}", file=sys.stderr)
+        return 1
+    problemas = []
+    if set(remoto) != set(RUTAS):
+        problemas.append(f"{MANIFEST} remoto no lista exactamente RUTAS")
+    for r in RUTAS:
+        try:
+            real = _sha(_http_get(f"{base}/{r}", intentos=3))
+        except OSError as e:
+            problemas.append(f"{r}: no se pudo bajar ({e})")
+            continue
+        if real != remoto.get(r):
+            problemas.append(f"{r}: el hash de lo servido ({real[:12]}) no coincide con el manifiesto")
+    for e in problemas:
+        print(f"ERROR: {e}", file=sys.stderr)
+    if not problemas:
+        print(f"ok: los {len(RUTAS)} archivos de RUTAS bajados de {base} coinciden con su manifiesto")
+    return 1 if problemas else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--check", action="store_true", help="valida RUTAS vs helper + formato del manifiesto")
     g.add_argument("--pin", action="store_true", help="fija AVALOS_SYNC_REF al SHA de HEAD (tras commitear el manifiesto)")
     g.add_argument("--release", action="store_true", help="manifiesto + pin + los dos commits (sin push)")
+    g.add_argument("--verify-remote", action="store_true", help="baja RUTAS de GitHub al SHA pineado y las compara con el manifiesto (tras el push)")
+    ap.add_argument("--raw-base", metavar="URL", help="solo con --verify-remote: base alternativa a la REPO_RAW del helper (tests)")
     a = ap.parse_args()
+    if a.raw_base and not a.verify_remote:
+        ap.error("--raw-base solo se usa con --verify-remote")
     root = _root()
+    if a.verify_remote:
+        return cmd_verify_remote(root, a.raw_base)
     if a.release:
         return cmd_release(root)
     return cmd_check(root) if a.check else cmd_pin(root) if a.pin else cmd_generar(root)

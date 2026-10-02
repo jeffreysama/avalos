@@ -15,6 +15,12 @@ moverlas hubiera sido reorganizar de más, no una extracción fiel.
 Cambios de forma (no de lógica): `self.X` → `session.X` / `ctx.X`. La
 llamada anidada `_pacman_disponible` del original pasa a ser una función
 de módulo `_pacman_package_available`. Todos los identificadores → inglés.
+
+Cambios posteriores (de lógica): se pide 'rofi' en vez del alias 'rofi-wayland'; 'grub-btrfs'
+solo se instala con GRUB (ya solo se usaba ahí); y los dos
+fatales que retornaban con el root ya montado (kernel sin repo / diálogo de mirror rechazado)
+ahora llaman a clean_mounts(), como dice el docstring de run_pacstrap: sin eso el botón
+"Reintentar" chocaba con los montajes del intento anterior en el chequeo de partition.py.
 """
 
 from __future__ import annotations
@@ -57,7 +63,11 @@ BTRFS_PKGS = [
 
 HYPRLAND_PKGS = [
     "hyprland", "uwsm", "libnewt", "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
-    "xdg-user-dirs", "kitty", "waybar", "rofi-wayland", "mako",
+    # rofi 2.0+ ya trae el backend Wayland (antes era el paquete aparte 'rofi-wayland', que
+    # Arch absorbió en 'rofi'). Se pide 'rofi' directo: si Arch retira el alias, 'rofi-wayland'
+    # daría "target not found", que NO es lib32- y por eso no se recorta solo: bloquearía
+    # TODAS las instalaciones en el preflight.
+    "xdg-user-dirs", "kitty", "waybar", "rofi", "mako",
     "hyprpaper", "hyprlock", "hypridle", "hyprpicker",
     "grim", "slurp", "wl-clipboard", "cliphist",
     "pipewire", "pipewire-alsa", "pipewire-pulse", "pipewire-jack",
@@ -194,6 +204,10 @@ def run_pacstrap(session: InstallSession, ctx: InstallContext,
         pkgs = [p for p in pkgs if p not in {"grub", "os-prober"}]
     elif ctx.bootloader == 'none':
         pkgs = [p for p in pkgs if p not in {"grub", "efibootmgr", "os-prober"}]
+    if ctx.bootloader != 'grub':
+        # grub-btrfs (servicio y hook de initramfs) solo se usa con GRUB: services.py y
+        # locale.py ya lo condicionan al bootloader. Sin GRUB no hace nada y se instalaba igual.
+        pkgs = [p for p in pkgs if p != "grub-btrfs"]
 
     is_v3_or_higher = cpu_arch in ("x86-64-v3", "x86-64-v4")
     cpu_level_name = "v3/v4 (AVX2+)" if is_v3_or_higher else "baseline (sin AVX2)"
@@ -245,6 +259,7 @@ def run_pacstrap(session: InstallSession, ctx: InstallContext,
 
     if not kernel_pkg:
         session.error_fatal(session.t("err-avalos-repo-unreachable", target=target_kernel))
+        session.clean_mounts()  # el root ya está montado (mount_filesystems corre antes)
         return None
 
     pkgs += [kernel_pkg, headers_pkg]
@@ -347,6 +362,7 @@ def run_pacstrap(session: InstallSession, ctx: InstallContext,
             # con el mismo error claro de siempre y lo dejamos usar
             # el botón "Reintentar" global cuando esté listo.
             session.error_fatal(session.t("err-multilib-unreachable", detalle=detail))
+            session.clean_mounts()  # el root ya está montado: sin esto "Reintentar" choca con /mnt
             return None
         # "reintentar": vuelve a probar tal cual, con los mismos mirrors
 
