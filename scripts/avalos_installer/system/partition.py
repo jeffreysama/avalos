@@ -17,6 +17,12 @@ los identificadores → inglés. `dev`, `dev_name` y `disk_info` (el dict que
 antes era `disco`, viene de disk.discovery.list_disks()) y `uefi` se
 reciben como parámetros — se calculan ANTES de este paso en el orquestador,
 no acá.
+
+Endurecimientos posteriores a la extracción (estos sí son de lógica): el chequeo de uso del
+disco (_in_use) compara nombres de partición con la regla del kernel y mira también
+/proc/swaps y los montajes en árbol de list_disks(); los nombres de partición salen de esa
+misma regla (_part_sep); en modo manual root/EFI tienen que ser particiones del disco destino;
+y en modo automático el log solo declara los subvolúmenes que de verdad se crearon.
 """
 
 from __future__ import annotations
@@ -34,6 +40,52 @@ from avalos_installer.core.shell import run_command
 class PartitionResult:
     root_device: str
     efi_device: str  # "" si no hay partición EFI (BIOS/MBR)
+
+
+def _read_text(path: str) -> str:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def _part_sep(disk_name: str) -> str:
+    """Separador entre el disco y el número de partición según la regla del kernel: si el
+    nombre del disco termina en dígito (nvme0n1, mmcblk0, loop0, md0…) lleva una 'p'
+    (nvme0n1p1); si no (sda), va pegado (sda1)."""
+    return "p" if disk_name[-1:].isdigit() else ""
+
+
+def _is_part_of(name: str, disk_name: str) -> bool:
+    """¿`name` (sin /dev/) es una partición de `disk_name`? Coincidencia exacta con la regla
+    anterior: un startswith() a secas daba falso positivo entre nvme0n1 y nvme0n10p1."""
+    prefix = disk_name + _part_sep(disk_name)
+    return name.startswith(prefix) and name[len(prefix):].isdigit()
+
+
+def _in_use(dev_name: str, disk_info: dict) -> list[str]:
+    """Puntos de montaje (o [SWAP]) que están usando el disco destino o sus particiones.
+    Junta tres fuentes: /proc/mounts y /proc/swaps (el estado de AHORA) y los 'montajes' que
+    list_disks() recorrió en árbol — esos cubren LUKS/LVM/md/Ventoy apilados sobre el disco,
+    que en /proc/mounts aparecen como /dev/mapper/… y el nombre del disco no los delata.
+    Un montaje del disco entero (sin tabla de particiones) también cuenta."""
+    def es_del_disco(fuente: str) -> bool:
+        nombre = fuente.removeprefix("/dev/")
+        return nombre == dev_name or _is_part_of(nombre, dev_name)
+
+    usados: list[str] = []
+    for line in _read_text("/proc/mounts").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and es_del_disco(parts[0]):
+            usados.append(parts[1])
+    try:
+        swaps = _read_text("/proc/swaps").splitlines()[1:]  # la primera línea es el encabezado
+    except OSError:  # kernel sin swap
+        swaps = []
+    for line in swaps:
+        parts = line.split()
+        if parts and es_del_disco(parts[0]):
+            usados.append("[SWAP]")
+    usados.extend(disk_info.get("montajes") or [])
+    return list(dict.fromkeys(usados))
 
 
 def partition_and_format(session: InstallSession, ctx: InstallContext,
@@ -59,28 +111,15 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
         session.clean_mounts()
         return None
 
-    # El chequeo de /proc/mounts aplica en ambos modos: en modo manual
-    # protege contra que el dropdown del wizard haya apuntado al disco
-    # equivocado, exactamente igual que en modo automático protege contra
-    # un disco mal seleccionado.
+    # El chequeo de uso aplica en ambos modos: en modo manual protege
+    # contra que el dropdown del wizard haya apuntado al disco equivocado,
+    # exactamente igual que en modo automático protege contra un disco mal
+    # seleccionado. Mira /proc/mounts, /proc/swaps y los montajes en árbol
+    # de list_disks() (ver _in_use).
     session.log(session.t("log-checking-mounted-partitions"), "info")
-    with open("/proc/mounts") as mf:
-        proc_mounts = mf.read()
-    dev_base = dev_name
-    mounted = []
-    for line in proc_mounts.splitlines():
-        if not line.strip():
-            continue
-        parts = line.split()
-        src = parts[0].removeprefix("/dev/")
-        if src.startswith(dev_base) and src != dev_base:
-            suffix = src[len(dev_base):]
-            if suffix and (suffix[0].isdigit() or suffix[0] == 'p'):
-                if parts[0] != dev:
-                    mounted.append(parts[1])
+    mounted = _in_use(dev_name, disk_info)
     if mounted:
-        points = ", ".join(mounted)
-        session.error_fatal(session.t("err-disk-has-mounted-partitions", dev=dev, puntos=points))
+        session.error_fatal(session.t("err-disk-has-mounted-partitions", dev=dev, puntos=", ".join(mounted)))
         return None
     session.log(session.t("log-disk-not-mounted", dev=dev), "ok")
 
@@ -98,6 +137,20 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
         if not root_device:
             session.step("part", "error")
             session.error_step(session.t("err-manual-no-root-selected"))
+            session.clean_mounts()
+            return None
+
+        # Defensa en profundidad: root y EFI tienen que ser particiones de ESTE
+        # disco. El estado manual de la API se fijó con el disco que había
+        # seleccionado al verificar el particionado, y selectDisk() del wizard
+        # no lo reinicia: si el usuario cambia de disco después, llegarían
+        # particiones de un disco con el `dev` de otro (se formatearía una y
+        # el bootloader iría a la otra).
+        ajenas = [p for p in (root_device, efi_device)
+                  if p and not _is_part_of(p.removeprefix("/dev/"), dev_name)]
+        if ajenas:
+            session.step("part", "error")
+            session.error_step(session.t("err-manual-partition-other-disk", dev=dev))
             session.clean_mounts()
             return None
 
@@ -263,8 +316,8 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
                 "set", "1", "esp", "on",
                 "mkpart", "root", "ext4", "513MiB", "100%",
             ])
-            efi_device = dev + ("p1" if "nvme" in dev_name or "mmcblk" in dev_name else "1")
-            root_device = dev + ("p2" if "nvme" in dev_name or "mmcblk" in dev_name else "2")
+            efi_device = f"{dev}{_part_sep(dev_name)}1"
+            root_device = f"{dev}{_part_sep(dev_name)}2"
         else:
             rc, _ = session.run_cmd([
                 "parted", "-s", dev,
@@ -272,7 +325,7 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
                 "mkpart", "primary", "ext4", "1MiB", "100%",
                 "set", "1", "boot", "on",
             ])
-            root_device = dev + ("p1" if "nvme" in dev_name or "mmcblk" in dev_name else "1")
+            root_device = f"{dev}{_part_sep(dev_name)}1"
             efi_device = ""
 
         if rc != 0:
@@ -325,10 +378,13 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
                 return None
 
             subvols = ["@", "@home", "@snapshots", "@log", "@cache", "@tmp"]
+            created = []
             for sv in subvols:
                 rc_sv, _ = session.run_cmd(["btrfs", "subvolume", "create", f"{btrfs_tmp}/{sv}"])
                 if rc_sv != 0:
                     session.log(session.t("log-subvol-create-fail", sv=sv), "warn")
+                else:
+                    created.append(sv)
 
             rc_um, out_um = session.run_cmd(["umount", btrfs_tmp])
             if rc_um != 0:
@@ -336,7 +392,8 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
                     session.t("log-btrfs-tmp-umount-fail", out=out_um.strip()[-200:]),
                     "warn",
                 )
-            session.log(session.t("log-subvols-created", subvols=", ".join(subvols)), "ok")
+            if created:
+                session.log(session.t("log-subvols-created", subvols=", ".join(created)), "ok")
 
         if uefi and ctx.usb_mode:
             fmt_label = "FAT32 + " + session.t("step-fmt-ext4-nojournal")
