@@ -209,19 +209,25 @@ T = STRINGS[LANG]
 
 # ── Chequeos SIN privilegios ─────────────────────────────────────────────
 def _run(cmd, timeout=30):
+    # rc: el del comando; -1 = el programa no existe; -2 = se pasó del timeout. La salida se decodifica
+    # tolerante: un byte raro de checkupdates/yay no debe tumbar el chequeo con un traceback.
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return p.returncode, p.stdout, p.stderr
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+    except FileNotFoundError as e:
         return -1, "", str(e)
+    except subprocess.TimeoutExpired as e:
+        return -2, "", str(e)
 
 
 def _check_system_updates():
     # checkupdates (pacman-contrib): base de datos temporal aparte, nunca
-    # toca /var/lib/pacman real ni pide contraseña. rc=2 = sin novedades.
+    # toca /var/lib/pacman real ni pide contraseña. rc=2 = sin novedades. rc=1 (y todo lo demás:
+    # sin red, timeout, sin el programa) = NO se pudo comprobar: devuelve None, que no es lo mismo
+    # que [] (al día) — antes un equipo sin conexión mostraba "Todo está al día".
     rc, out, _ = _run(["checkupdates"], timeout=60)
     if rc not in (0, 2):
-        return []
+        return None
     items = []
     for line in out.splitlines():
         parts = line.split()
@@ -320,10 +326,13 @@ class UpdateAPI:
 
     def check(self):
         system = _check_system_updates()
+        system_failed = system is None
+        system = system or []
         repo_names = {i["name"] for i in system}
         return json.dumps({
             "strings": T,
             "system": system,
+            "system_failed": system_failed,
             "kernel": _check_kernel_info(),
             "aur": _check_aur_updates(repo_names),
             "flatpak": _check_flatpak_updates(),
@@ -358,7 +367,7 @@ class UpdateAPI:
         try:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
             )
         except FileNotFoundError:
             self._log("pkexec no está disponible en este sistema.", "err")
@@ -407,7 +416,7 @@ class UpdateAPI:
             try:
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1,
+                    text=True, encoding="utf-8", errors="replace", bufsize=1,
                 )
             except FileNotFoundError:
                 self._log("flatpak no está disponible en este sistema.", "err")
@@ -421,6 +430,17 @@ class UpdateAPI:
         return ok
 
     def _apply_worker(self, payload):
+        # Envoltorio: si algo revienta a mitad, el hilo moría en silencio, pyDone nunca llegaba y la
+        # ventana quedaba en "Aplicando…" sin botones de cerrar ni de reintentar.
+        ok_all, kernel_touched = False, bool(payload.get("kernel_variant"))
+        try:
+            ok_all, kernel_touched = self._apply_steps(payload)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"error inesperado: {e}", "err")
+        finally:
+            self._jsc("pyDone", ok_all, kernel_touched)
+
+    def _apply_steps(self, payload):
         ok_all = True
         kernel_touched = False
 
@@ -454,7 +474,7 @@ class UpdateAPI:
         if flatpak_apps:
             ok_all &= self._apply_flatpak(flatpak_apps)
 
-        self._jsc("pyDone", ok_all, kernel_touched)
+        return ok_all, kernel_touched
 
 
 # ── HTML/CSS/JS embebido (mismo patrón que avalos-wallpaper) ───────────────
@@ -675,6 +695,10 @@ function verLine(item) {
 
 function renderSystem() {
   const list = STATE.system;
+  // Re-chequeo ("Buscar de nuevo" tras aplicar): sin esto quedaban la lista y el aviso de la corrida anterior.
+  el('list-system').innerHTML = '';
+  el('none-system').classList.add('hidden');
+  el('cb-system').checked = false;
   el('badge-system').textContent = list.length;
   el('badge-system').classList.toggle('hidden', list.length === 0);
   el('cb-system').disabled = list.length === 0;
@@ -717,13 +741,17 @@ function renderKernel() {
   document.querySelectorAll('input[name=kv]').forEach(r => {
     r.addEventListener('change', () => { el('cb-kernel').checked = true; });
   });
-  if (!k.current_variant) {
-    el('cb-kernel').disabled = true;
-  }
+  // Re-chequeo: el opt-in y el bloqueo se recalculan (antes 'disabled' quedaba pegado, y el checkbox
+  // marcado de la corrida anterior reenviaba el kernel —y retenía el kernel en el system— en el siguiente "Aplicar").
+  el('cb-kernel').checked = false;
+  el('cb-kernel').disabled = !k.current_variant;
 }
 
 function renderAur() {
   const list = STATE.aur;
+  el('list-aur').innerHTML = '';
+  el('none-aur').classList.add('hidden');
+  el('cb-aur-all').checked = false;
   el('badge-aur').textContent = list.length;
   el('badge-aur').classList.toggle('hidden', list.length === 0);
   el('cb-aur-all').disabled = list.length === 0;
@@ -736,13 +764,16 @@ function renderAur() {
     `<label class="item"><input type="checkbox" class="aur-item" value="${escapeHtml(i.name)}" checked><span>${escapeHtml(i.name)}</span>${verLine(i)}</label>`
   ).join('');
   el('cb-aur-all').checked = true;
-  el('cb-aur-all').addEventListener('change', e => {
+  el('cb-aur-all').onchange = e => {  // onchange (no addEventListener): un re-chequeo no acumula handlers
     document.querySelectorAll('.aur-item').forEach(cb => cb.checked = e.target.checked);
-  });
+  };
 }
 
 function renderFlatpak() {
   const list = STATE.flatpak;
+  el('list-flatpak').innerHTML = '';
+  el('none-flatpak').classList.add('hidden');
+  el('cb-flatpak-all').checked = false;
   el('badge-flatpak').textContent = list.length;
   el('badge-flatpak').classList.toggle('hidden', list.length === 0);
   el('cb-flatpak-all').disabled = list.length === 0;
@@ -755,16 +786,22 @@ function renderFlatpak() {
     `<label class="item"><input type="checkbox" class="fp-item" value="${escapeHtml(i.id)}" checked><span>${escapeHtml(i.id)}</span></label>`
   ).join('');
   el('cb-flatpak-all').checked = true;
-  el('cb-flatpak-all').addEventListener('change', e => {
+  el('cb-flatpak-all').onchange = e => {
     document.querySelectorAll('.fp-item').forEach(cb => cb.checked = e.target.checked);
-  });
+  };
 }
 
 function renderConfigs() {
   const c = STATE.configs;
+  // Re-chequeo: estado limpio (antes 'disabled' quedaba pegado tras un chequeo sin red, y el diff viejo seguía a la vista).
+  el('cb-configs').checked = false;
+  el('cb-configs').disabled = !c.reachable;
+  el('badge-configs').className = 'badge';
+  el('diffToggle').classList.add('hidden');
+  el('diffBox').classList.remove('show');
+  el('diffBox').innerHTML = '';
   if (!c.reachable) {
     el('badge-configs').textContent = '?';
-    el('cb-configs').disabled = true;
   } else if (c.changed) {
     el('badge-configs').textContent = T['configs-changed'];
     el('badge-configs').className = 'badge warn';
@@ -835,7 +872,18 @@ function onApply() {
 
 const FALLBACK_T = { 'check-error': 'Could not check for updates.', 'retry-check': 'Retry' };
 
+function showCheckError(e) {
+  const t = Object.keys(T).length ? T : FALLBACK_T;
+  el('spinner').classList.add('hidden');
+  el('checkingTxt').textContent = t['check-error'];
+  el('applyBtn').classList.add('hidden');
+  el('retryBtn').textContent = t['retry-check'];
+  el('retryBtn').classList.remove('hidden');
+  console.error('avalos-update check() failed:', e);
+}
+
 async function runCheck() {
+  el('statusText').textContent = '';
   el('checkingView').classList.remove('hidden');
   el('mainView').classList.add('hidden');
   el('logView').classList.add('hidden');
@@ -851,6 +899,10 @@ async function runCheck() {
     STATE = JSON.parse(raw);
     T = STATE.strings;
     applyStrings();
+    if (STATE.system_failed) {  // checkupdates falló (sin red, base bloqueada…): NO es "todo al día"
+      showCheckError('checkupdates falló');
+      return;
+    }
     renderSystem();
     renderKernel();
     renderAur();
@@ -862,13 +914,7 @@ async function runCheck() {
     const nadaPendiente = STATE.system.length === 0 && STATE.aur.length === 0 && STATE.flatpak.length === 0;
     el('statusText').textContent = nadaPendiente ? T['up-to-date'] : '';
   } catch (e) {
-    const t = Object.keys(T).length ? T : FALLBACK_T;
-    el('spinner').classList.add('hidden');
-    el('checkingTxt').textContent = t['check-error'];
-    el('applyBtn').classList.add('hidden');
-    el('retryBtn').textContent = t['retry-check'];
-    el('retryBtn').classList.remove('hidden');
-    console.error('avalos-update check() failed:', e);
+    showCheckError(e);
   }
 }
 
