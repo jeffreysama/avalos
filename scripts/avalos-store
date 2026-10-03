@@ -442,10 +442,10 @@ def _resolve_icon_name_to_path(icon_name):
 # regla fija. Por eso esto es glob por PREFIJO de pkgname, no una ruta
 # construida a mano como en hicolor: cubre el caso común (pkgname real ==
 # nuestro app["package"], que es la mayoría) pero NO resuelve paquetes cuyo
-# nombre real en el repo difiere del genérico en el catálogo — ej. "freeciv"
-# en avalos-store-catalog.json empaqueta como freeciv-gtk4/freeciv-qt/
-# freeciv-gtk3 en Arch real, ninguno literalmente "freeciv", así que ese caso
-# específico sigue sin ícono real hasta instalarse. Ver resumen de la sesión.
+# nombre real en el repo difiere del genérico en el catálogo. Por eso el
+# catálogo tiene que usar el nombre REAL del paquete: p. ej. "freeciv-gtk4",
+# no el pkgbase "freeciv", que en Arch es un split package sin paquete propio
+# (pacman -S freeciv da "target not found").
 _APPSTREAM_SIZES = ("128x128", "64x64", "48x48")
 _APPSTREAM_ROOTS = (
     Path("/usr/share/swcatalog/icons/archlinux-arch-extra"),
@@ -729,10 +729,17 @@ class StoreAPI:
                 if linea == "":
                     break
                 self._log(app_id, linea.rstrip())
-        except Exception:
-            pass
-        if proc.poll() is None:
+        except Exception as e:
+            # Lectura rota (con errors="replace" no debería pasar): sin poder vigilar la salida, no se
+            # deja al hijo suelto.
+            self._log(app_id, f"error leyendo la salida: {e}")
             proc.kill()
+            proc.wait()
+            return proc.returncode
+        # EOF normal: el hijo terminó o está terminando. NO se consulta poll() para matarlo: en esa
+        # ventana poll() puede devolver None y el kill() convertía un exit 0 en rc=-9, o sea "Falló la
+        # instalación" aunque pacman hubiera terminado bien (y antes, un byte no UTF-8 en la salida
+        # mataba pacman a mitad de la transacción).
         proc.wait()
         return proc.returncode
 
@@ -760,7 +767,7 @@ class StoreAPI:
                 # acción genérica de pkexec (pide contraseña en cada instalación).
                 proc = subprocess.Popen(
                     ["pkexec", "pacman", "-S", "--noconfirm", "--needed", pkg],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                 )
                 rc = self._stream(app_id, proc)
                 ok = rc == 0
@@ -774,7 +781,7 @@ class StoreAPI:
                     return
                 proc = subprocess.Popen(
                     ["flatpak", "install", "--user", "--noninteractive", "-y", "flathub", pkg],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                 )
                 rc = self._stream(app_id, proc)
                 ok = rc == 0
@@ -812,7 +819,7 @@ class StoreAPI:
                 # matchear com.avalos.store.uninstall en avalos-store.policy.
                 proc = subprocess.Popen(
                     ["pkexec", "pacman", "-R", "--noconfirm", pkg],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                 )
                 rc = self._stream(app_id, proc)
                 ok = rc == 0
@@ -823,7 +830,7 @@ class StoreAPI:
             elif source == "flatpak":
                 proc = subprocess.Popen(
                     ["flatpak", "uninstall", "--user", "-y", pkg],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                 )
                 rc = self._stream(app_id, proc)
                 ok = rc == 0
@@ -1171,6 +1178,15 @@ function buildActionArea(appId) {
     label.textContent = prog.status === 'external' ? T.done_external
       : (prog.action === 'uninstall' ? T.status_uninstalling : T.status_installing);
     wrap.appendChild(dot); wrap.appendChild(label);
+    if (prog.status === 'external') {
+      // La terminal del AUR es externa: si se cerró sin instalar, nada resuelve este estado y la tarjeta
+      // quedaba bloqueada hasta reabrir la Store. Se deja volver a intentar.
+      wrap.style.flexWrap = 'wrap';
+      const again = document.createElement('button');
+      again.className = 'btn btn-primary'; again.textContent = T.btn_install;
+      again.addEventListener('click', (e) => { e.stopPropagation(); doInstall(appId); });
+      wrap.appendChild(again);
+    }
     return wrap;
   }
 
@@ -1241,7 +1257,8 @@ function buildModalActionButtons(app) {
   wrap.style.display = 'flex'; wrap.style.gap = '8px'; wrap.style.flex = '1';
   const installed = STATE.installedIds.has(app.id);
   const prog = STATE.progress[app.id];
-  const busy = prog && (prog.status === 'installing' || prog.status === 'external');
+  // Solo bloquea mientras la Store está ejecutando algo ella misma; la terminal externa del AUR no.
+  const busy = prog && prog.status === 'installing';
 
   if (installed) {
     const openBtn = document.createElement('button');

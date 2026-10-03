@@ -304,7 +304,7 @@
     "name": "Freeciv",
     "category": "games",
     "source": "pacman",
-    "package": "freeciv",
+    "package": "freeciv-gtk4",
     "exec": "freeciv-gtk4",
     "icon": "🏙️",
     "icon_name": "freeciv-client",
