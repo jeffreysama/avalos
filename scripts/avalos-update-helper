@@ -18,7 +18,7 @@
 #   segundo mecanismo de privilegio pisando al de flatpak).
 # ────────────────────────────────────────────────────────────────────
 from __future__ import annotations
-import argparse, ctypes, hashlib, json, os, pwd, re, select, subprocess, sys, time, urllib.request
+import argparse, ctypes, fcntl, hashlib, json, os, pwd, re, select, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 # AVALOS_SYNC_REF: SHA (40 hex) del commit desde el que cmd_sync_system_files baja
@@ -42,7 +42,14 @@ REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_R
 BOOT_DIR = Path("/boot")
 MKINITCPIO_D = Path("/etc/mkinitcpio.d")
 GRUB_CFG = BOOT_DIR / "grub" / "grub.cfg"
-SUDOERS_AUR = Path("/etc/sudoers.d/99-avalos-update-aur")
+# /etc/sudoers.d se lee en orden alfabético y GANA LA ÚLTIMA regla que coincide. El instalador deja
+# '%wheel ALL=(ALL:ALL) ALL' en sudoers.d/wheel (pide contraseña): con un nombre "99-…" ese archivo
+# ordena DESPUÉS ('w' > '9') y le ganaba al NOPASSWD, así que yay terminaba pidiendo una contraseña
+# que desde acá no hay cómo escribir. Mismo arreglo (probado con sudo 1.9.15) que system/aur.py:
+# un nombre que ordena después de todo + 'Defaults !authenticate' (ver cmd_apply_aur).
+SUDOERS_AUR = Path("/etc/sudoers.d/zz-avalos-update-aur")
+# flock que mantiene apply-aur mientras existe SUDOERS_AUR: si nadie tiene el lock, el archivo es huérfano.
+AUR_LOCK = Path("/run/avalos-update-aur.lock")
 
 KERNEL_VARIANTS = {
     "eevdf": ("linux-avalos", "linux-avalos-headers"),
@@ -75,9 +82,48 @@ def _require_root_via_pkexec() -> str:
     if uid is None:
         _fail("PKEXEC_UID no está seteado — no se invocó vía pkexec.")
     try:
-        return pwd.getpwuid(int(uid)).pw_name
+        usuario = pwd.getpwuid(int(uid)).pw_name
     except (ValueError, KeyError):
         _fail(f"UID invocador ({uid}) no resuelve a un usuario real.")
+    else:
+        _limpiar_sudoers_aur_huerfano()
+        return usuario
+
+
+def _aur_lock_try() -> int | None:
+    """flock exclusivo y NO bloqueante sobre AUR_LOCK. Devuelve el fd (hay que mantenerlo abierto:
+    el lock se suelta al cerrarlo o al morir el proceso) o None si otro apply-aur lo tiene."""
+    try:
+        fd = os.open(AUR_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _limpiar_sudoers_aur_huerfano() -> None:
+    """apply-aur deja en sudoers.d un NOPASSWD temporal que SIEMPRE borra en su finally. Si el proceso
+    muriera antes (kill -9, corte de luz) quedaría sudo sin contraseña permanente para ese usuario
+    (con el nombre actual el archivo SÍ es efectivo). Todo subcomando lo borra al entrar, salvo que
+    un apply-aur siga vivo (mantiene el lock): ese archivo es suyo."""
+    if not SUDOERS_AUR.exists():
+        return
+    fd = _aur_lock_try()
+    if fd is None:
+        return
+    try:
+        SUDOERS_AUR.unlink()
+        _out(f"eliminado un NOPASSWD temporal huérfano de una corrida anterior ({SUDOERS_AUR.name}).")
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        _out(f"aviso: no se pudo borrar {SUDOERS_AUR} (sudo sin contraseña para ese usuario hasta que se borre): {e}")
+    finally:
+        os.close(fd)
 
 
 def _stream(cmd: list[str], idle_timeout: float | None = None, **kw) -> int:
@@ -100,7 +146,8 @@ def _stream(cmd: list[str], idle_timeout: float | None = None, **kw) -> int:
     print(f"### $ {' '.join(cmd)}", flush=True)
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1, **kw,
+        text=True, encoding="utf-8", errors="replace",  # un byte raro en la salida no debe matar a pacman a mitad
+        bufsize=1, **kw,
     )
     try:
         while True:
@@ -119,10 +166,14 @@ def _stream(cmd: list[str], idle_timeout: float | None = None, **kw) -> int:
             if linea == "":
                 break
             print(linea, end="", flush=True)
-    finally:
-        if proc.poll() is None:
-            proc.kill()
+    except BaseException:
+        # Solo si algo reventó a mitad (p. ej. KeyboardInterrupt): ahí sí se mata al hijo.
+        proc.kill()
         proc.wait()
+        raise
+    # EOF normal: el hijo terminó (o está terminando). Ya no se consulta con poll() para matarlo: en
+    # esa ventana poll() puede devolver None y el kill() convertía un exit 0 en rc=-9.
+    proc.wait()
     return proc.returncode
 
 
@@ -161,10 +212,15 @@ def _pacman_disponible(pkg: str, intentos: int = 4, espera: int = 6) -> bool:
     ultima = ""
     for i in range(intentos):
         cmd = ["pacman", "-Syi" if i == 0 else "-Syyi", "--noconfirm", pkg]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
-        ultima = (p.stdout or "") + (p.stderr or "")
-        if p.returncode == 0:
-            return True
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=25)
+            ultima = (p.stdout or "") + (p.stderr or "")
+            if p.returncode == 0:
+                return True
+        except subprocess.TimeoutExpired:
+            # Un mirror lento no puede tumbar el helper con un traceback: cuenta como un intento
+            # fallido más (para eso existe el reintento).
+            ultima = "timeout de 25 s"
         if i < intentos - 1:
             _out(f"'{pkg}' no disponible todavía (intento {i + 2}/{intentos})…")
             time.sleep(espera)
@@ -207,6 +263,14 @@ def detectar_microcode() -> str:
     try:
         with open("/proc/cpuinfo") as f:
             c = f.read().lower()
+        # Igual que hardware/detection.py del instalador: se decide por la línea vendor_id (buscar
+        # "intel"/"amd" en TODO el archivo también matchea flags y modelo). El substring queda de respaldo.
+        vendor = next((ln.split(":", 1)[1].strip() for ln in c.splitlines()
+                       if ln.startswith("vendor_id") and ":" in ln), "")
+        if vendor == "genuineintel":
+            return "intel-ucode"
+        if vendor == "authenticamd":
+            return "amd-ucode"
         if "genuineintel" in c or "intel" in c:
             return "intel-ucode"
         if "authenticamd" in c or "amd" in c:
@@ -282,13 +346,21 @@ def _actualizar_systemd_boot_entry(kernel_name: str) -> None:
         _out(f"aviso: no se pudo leer {sdboot_entry} para preservar sus opciones: {e} — se omite actualizar la entrada.")
         return
 
-    options_line = "options root=UUID=CHANGEME rw quiet splash loglevel=3\n"
+    options_line = None
     kernel_name_viejo = None
     for line in contenido_actual.splitlines(keepends=True):
         if line.startswith("options"):
             options_line = line if line.endswith("\n") else line + "\n"
         elif line.startswith("linux") and "/AvalOS/vmlinuz-" in line:
             kernel_name_viejo = line.split("/AvalOS/vmlinuz-", 1)[1].strip()
+
+    if options_line is None:
+        # Antes se escribía 'options root=UUID=CHANGEME …': una entrada que garantiza no arrancar.
+        # Sin 'options' no hay de dónde sacar root=UUID, así que no se toca: avalos.conf sigue
+        # apuntando a la copia anterior del kernel, que sigue en la ESP (solo se limpia tras un éxito).
+        _out("aviso: avalos.conf no tiene línea 'options' — no se reescribe (quedaría sin root=UUID y el "
+             "sistema no arrancaría). Sigue apuntando al kernel anterior de la ESP; revisalo a mano.")
+        return
 
     initrd_line = f"initrd  /AvalOS/{ucode}.img\n" if ucode_copied else ""
     nuevo_contenido = (
@@ -331,7 +403,12 @@ def _actualizar_bootloader(kernel_name: str | None = None) -> None:
     el paquete refind se actualiza."""
     if GRUB_CFG.parent.exists() and Path("/etc/default/grub").exists():
         _out("regenerando grub.cfg…")
-        _stream(["grub-mkconfig", "-o", str(GRUB_CFG)], idle_timeout=120)
+        rc = _stream(["grub-mkconfig", "-o", str(GRUB_CFG)], idle_timeout=120)
+        if rc != 0:
+            # La variante vieja ya la quitó pacman: un grub.cfg sin regenerar apunta a un kernel que
+            # ya no existe y el próximo arranque falla, así que esto NO puede terminar en "listo".
+            _fail(f"grub-mkconfig terminó con código {rc}: grub.cfg NO se regeneró y puede apuntar a un "
+                  f"kernel que ya no existe — NO reinicies hasta que 'grub-mkconfig -o {GRUB_CFG}' termine bien.", rc)
     elif kernel_name:
         # _actualizar_systemd_boot_entry ya verifica internamente si
         # existe avalos.conf de systemd-boot; si no hay GRUB ni esa
@@ -434,8 +511,15 @@ def cmd_apply_aur(args: argparse.Namespace) -> None:
     # internamente al instalar lo que compiló) no se quede esperando
     # una contraseña que no tiene cómo pedir desde acá. Limpieza
     # garantizada con try/finally, igual que ahí.
+    lock_fd = _aur_lock_try()
+    if lock_fd is None:
+        _fail("ya hay otra actualización de AUR en curso (o no se pudo tomar el candado) — esperá a que termine.")
     try:
-        SUDOERS_AUR.write_text(f"{usuario} ALL=(ALL:ALL) NOPASSWD: ALL\n")
+        # 'Defaults !authenticate' quita el prompt para este usuario sea cual sea el orden de los archivos.
+        SUDOERS_AUR.write_text(
+            f"Defaults:{usuario} !authenticate\n"
+            f"{usuario} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        )
         SUDOERS_AUR.chmod(0o440)
         _out(f"instalando/actualizando de AUR como {usuario}: {' '.join(args.packages)}")
         rc = 1
@@ -451,6 +535,7 @@ def cmd_apply_aur(args: argparse.Namespace) -> None:
             SUDOERS_AUR.unlink()
         except FileNotFoundError:
             pass
+        os.close(lock_fd)
 
     if rc != 0:
         _fail(f"yay terminó con código {rc}.", rc)
@@ -691,7 +776,7 @@ def _run(cmd: list[str], timeout: int = 20) -> tuple[int, str, str]:
     (findmnt/mount/umount de reconocimiento) donde hace falta el
     resultado, no ir narrando línea por línea."""
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return p.returncode, p.stdout, p.stderr
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         return -1, "", str(e)
@@ -729,7 +814,10 @@ def _root_source_device() -> str:
         _fail(f"no se pudo identificar el dispositivo de / (findmnt: {(err or out).strip()}).")
     device, _, opts = out.strip().partition(" ")
     opts_list = opts.strip().split(",")
-    if "subvol=@" not in opts_list:
+    # findmnt/mountinfo muestran la RUTA del subvolumen con barra inicial ("subvol=/@"), aunque el
+    # fstab diga "subvol=@": comparar contra "subvol=@" a secas hacía fallar SIEMPRE este chequeo.
+    montados = {o.split("=", 1)[1].lstrip("/") for o in opts_list if o.startswith("subvol=")}
+    if "@" not in montados:
         _fail(
             "root no está montado con subvol=@ explícito — este no es el layout "
             "que genera el instalador de AvalOS, y la restauración no está escrita "
