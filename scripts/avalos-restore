@@ -187,12 +187,16 @@ class RestoreAPI:
 
     def list_points(self):
         ok, lines = self._run_helper_capture(["list-restore-points"])
+        # Lo que dijo el helper (su narración, incluido el ERROR:): sin esto un fallo real, p. ej. un
+        # layout no soportado, se veía como "¿está instalado avalos-update-helper?" y el motivo se perdía.
+        detail = "\n".join(self._narration[-6:])
+        fallo = json.dumps({"ok": False, "points": [], "backups": [], "snapper_ok": False, "detail": detail})
         if not ok or not lines:
-            return json.dumps({"ok": False, "points": [], "backups": [], "snapper_ok": False})
+            return fallo
         try:
             data = json.loads(lines[-1])
         except (ValueError, IndexError):
-            return json.dumps({"ok": False, "points": [], "backups": [], "snapper_ok": False})
+            return fallo
         return json.dumps({
             "ok": True,
             "points": data.get("points", []),
@@ -245,13 +249,21 @@ class RestoreAPI:
         la que se devuelve para que el caller la parsee."""
         cmd = ["pkexec", HELPER_BIN, *args]
         self._log(f"$ {' '.join(args)}", "step")
+        self._narration = []
+
+        def note(txt, cls="info"):
+            # Además de mostrarla en el log en vivo, la guarda: si todo falla, list_points se la pasa a
+            # la pantalla (el motivo real no se pierde).
+            self._narration.append(txt)
+            self._log(txt, cls)
+
         try:
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
             )
         except FileNotFoundError:
-            self._log("pkexec no está disponible en este sistema.", "err")
+            note("pkexec no está disponible en este sistema.", "err")
             return False, []
         captured = []
         # idle_timeout: mismo criterio que avalos-update._run_helper — cubre
@@ -262,7 +274,7 @@ class RestoreAPI:
             if not listo:
                 proc.kill()
                 proc.wait()
-                self._log(
+                note(
                     f"sin respuesta por {idle_timeout}s (¿diálogo de "
                     f"contraseña perdido en otro workspace?) — se canceló.",
                     "err",
@@ -275,22 +287,34 @@ class RestoreAPI:
             if line.startswith("### "):
                 rest = line[4:]
                 cls = "err" if rest.startswith("ERROR:") else "step" if rest.startswith("$ ") else "info"
-                self._log(rest, cls)
+                note(rest, cls)
             elif line.strip():
                 captured.append(line)
         proc.wait()
         if proc.returncode != 0:
-            self._log(f"(código de salida {proc.returncode})", "err")
+            note(f"(código de salida {proc.returncode})", "err")
             return False, captured
         return True, captured
 
+    # Los dos workers corren en un hilo: si algo revienta, sin el finally el hilo moría en silencio, el
+    # pyXxxDone nunca llegaba y la pantalla quedaba en "Restaurando…"/"Eliminando…" para siempre.
     def _restore_worker(self, number):
-        ok, _ = self._run_helper_capture(["restore", "--number", str(number)])
-        self._jsc("pyRestoreDone", ok, number)
+        ok = False
+        try:
+            ok, _ = self._run_helper_capture(["restore", "--number", str(number)])
+        except Exception as e:  # noqa: BLE001
+            self._log(f"error inesperado: {e}", "err")
+        finally:
+            self._jsc("pyRestoreDone", ok, number)
 
     def _delete_worker(self, name):
-        ok, _ = self._run_helper_capture(["delete-backup", "--name", name])
-        self._jsc("pyDeleteDone", ok, name)
+        ok = False
+        try:
+            ok, _ = self._run_helper_capture(["delete-backup", "--name", name])
+        except Exception as e:  # noqa: BLE001
+            self._log(f"error inesperado: {e}", "err")
+        finally:
+            self._jsc("pyDeleteDone", ok, name)
 
 
 # ── HTML/CSS/JS embebido (mismo patrón que avalos-update) ──────────────
@@ -407,6 +431,10 @@ async function loadPoints() {
   body.innerHTML = '';
   if (!res.ok) {
     body.appendChild(el('div', 'empty', STR['err-helper']));
+    if (res.detail) {  // lo que dijo el helper (su ERROR:), para no esconder la causa real
+      const why = el('div', 'log', res.detail);
+      body.appendChild(why);
+    }
     return;
   }
   STATE.points = res.points; STATE.backups = res.backups;
@@ -453,6 +481,14 @@ function backupLabel(name) {
   return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5] + ':' + m[6];
 }
 
+function takeLog() {
+  // El log de la corrida que acaba de terminar. pyRestoreDone/pyDeleteDone vacían el cuerpo, y el
+  // panel de fallo creaba un log NUEVO y vacío justo debajo de "mirá el registro de abajo": el error
+  // real se perdía. cloneNode(true) conserva las líneas ya escritas.
+  const old = document.getElementById('active-log');
+  return old ? old.cloneNode(true) : null;
+}
+
 function renderPanel() {
   const body = document.getElementById('body');
   body.innerHTML = '';
@@ -484,6 +520,7 @@ function runRestore(number) {
 }
 
 function pyRestoreDone(ok, number) {
+  const keptLog = takeLog();
   const body = document.getElementById('body');
   body.innerHTML = '';
   const panel = el('div', 'panel');
@@ -501,7 +538,7 @@ function pyRestoreDone(ok, number) {
   } else {
     panel.appendChild(el('div', 'done-icon fail', '✖'));
     panel.appendChild(el('h2', null, STR['restore-failed']));
-    const log = el('div', 'log'); log.id = 'active-log';
+    const log = keptLog || el('div', 'log'); log.id = 'active-log';
     panel.appendChild(log);
     const row = el('div', 'row');
     const back = el('button', 'btn ghost', STR['back']);
@@ -510,6 +547,8 @@ function pyRestoreDone(ok, number) {
     panel.appendChild(row);
   }
   body.appendChild(panel);
+  const kept = document.getElementById('active-log');
+  if (kept) kept.scrollTop = kept.scrollHeight;
 }
 
 function showDeleteConfirm(name) {
@@ -535,12 +574,13 @@ function runDelete(name) {
 
 function pyDeleteDone(ok, name) {
   if (ok) { loadPoints(); return; }
+  const keptLog = takeLog();
   const body = document.getElementById('body');
   body.innerHTML = '';
   const panel = el('div', 'panel');
   panel.appendChild(el('div', 'done-icon fail', '✖'));
   panel.appendChild(el('h2', null, STR['delete-failed']));
-  const log = el('div', 'log'); log.id = 'active-log';
+  const log = keptLog || el('div', 'log'); log.id = 'active-log';
   panel.appendChild(log);
   const row = el('div', 'row');
   const back = el('button', 'btn ghost', STR['back']);
@@ -548,6 +588,8 @@ function pyDeleteDone(ok, name) {
   row.appendChild(back);
   panel.appendChild(row);
   body.appendChild(panel);
+  const kept = document.getElementById('active-log');
+  if (kept) kept.scrollTop = kept.scrollHeight;
 }
 
 window.addEventListener('pywebviewready', loadPoints);
