@@ -37,7 +37,9 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import ntpath
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -572,16 +574,20 @@ def _is_admin() -> bool:
 def _run_ps(cmd: str, timeout: int = 30) -> tuple[int, str]:
     r = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-        capture_output=True, text=True, timeout=timeout
+        capture_output=True, text=True, errors="replace", timeout=timeout
     )
     return r.returncode, (r.stdout + r.stderr).strip()
 
 def _check_net() -> bool:
-    try:
-        urlopen("https://www.google.com", timeout=4)
-        return True
-    except Exception:
-        return False
+    # Dos destinos: google.com está bloqueado en China continental y el badge decía "Sin Red" con
+    # internet funcionando; github.com es de todos modos lo que hace falta para bajar Ventoy.
+    for url in ("https://www.google.com", "https://github.com"):
+        try:
+            urlopen(url, timeout=4)
+            return True
+        except Exception:
+            continue
+    return False
 
 def _get_usb_disks() -> list[dict]:
     rc, out = _run_ps(
@@ -645,16 +651,59 @@ def _get_latest_ventoy_url() -> tuple[str, str]:
         pass
     return VENTOY_FALLBACK, VENTOY_VERSION
 
-def _get_drive_letter(disk_num: int) -> str | None:
-    """Devuelve la letra de la partición data de Ventoy (ExFAT, etiqueta Ventoy)."""
+def _get_drive_letter(disk_num: int, label_only: bool = False) -> str | None:
+    """Devuelve la letra de la partición data de Ventoy (ExFAT, etiqueta Ventoy).
+
+    label_only=True: solo el volumen con etiqueta 'Ventoy'. Se usa cuando Ventoy reportó error: ahí
+    "cualquier exFAT del disco" podía ser una partición vieja ajena y no prueba que Ventoy se instaló."""
+    cond = ("$_.FileSystemLabel -like 'Ventoy'" if label_only
+            else "$_.FileSystem -eq 'exFAT' -or $_.FileSystemLabel -like 'Ventoy'")
     rc, out = _run_ps(
         f"Get-Partition -DiskNumber {disk_num} | Get-Volume | "
-        "Where-Object { $_.FileSystem -eq 'exFAT' -or $_.FileSystemLabel -like 'Ventoy' } | "
+        f"Where-Object {{ {cond} }} | "
         "Select-Object -First 1 -ExpandProperty DriveLetter"
     )
     if rc == 0 and out.strip():
         return out.strip()[0].upper()
     return None
+
+def _disk_of_path(path: str) -> int | None:
+    """Número de disco físico donde vive `path` (por su letra de unidad). None si no se puede saber
+    (ruta de red, sin letra, PowerShell falló…): en ese caso NO se bloquea nada."""
+    drive = ntpath.splitdrive(str(path))[0]
+    if len(drive) != 2 or drive[1] != ":" or not drive[0].isalpha():
+        return None
+    rc, out = _run_ps(f"(Get-Partition -DriveLetter {drive[0]} | Get-Disk).Number")
+    try:
+        return int(out.strip().splitlines()[-1]) if rc == 0 and out.strip() else None
+    except (ValueError, IndexError):
+        return None
+
+def _verify_target(disk_num: int, name: str, size_gb, paths: list[str]) -> tuple[bool, str]:
+    """Antes de borrar nada: ¿el disco N sigue siendo EL MISMO que eligió el usuario y sigue siendo USB?
+
+    Ventoy se corre con /NOUSBCheck, o sea que no hay ninguna otra red: la lista del selector solo se
+    refresca con ↺, y los números de disco de Windows cambian al conectar/desconectar dispositivos, así
+    que "Disk 2" de hace un rato puede ser hoy otro disco. También se rechaza si el ISO o Ventoy2Disk.exe
+    están en el disco que se va a borrar (se borrarían ellos mismos a mitad del proceso)."""
+    actual = {d["number"]: d for d in _get_usb_disks()}.get(disk_num)
+    if actual is None:
+        return False, (f"El Disk {disk_num} ya no aparece como USB (¿lo desconectaste o cambió la numeración?). "
+                       "Pulsa ↺ y vuelve a elegir el disco.")
+    try:
+        size = float(size_gb)
+    except (TypeError, ValueError):
+        return False, "No se pudo confirmar el tamaño del disco elegido (lista desactualizada). Pulsa ↺ y vuelve a elegir."
+    if actual["name"] != name or abs(actual["size_gb"] - size) > 0.2:
+        return False, (f"El Disk {disk_num} ahora es «{actual['name']}» ({actual['size_gb']} GB), no «{name}» "
+                       f"({size} GB) como elegiste. Pulsa ↺ y vuelve a elegir el disco.")
+    for p in paths:
+        if _disk_of_path(p) == disk_num:
+            return False, f"«{p}» está en el disco que se va a borrar (Disk {disk_num}). Muévelo a otro disco y reintenta."
+    return True, ""
+
+class _Abort(Exception):
+    """El usuario pulsó Abortar durante la copia del ISO."""
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  API PYWEBVIEW
@@ -725,7 +774,13 @@ class AvalAPI:
                     pct = int(blocks * bsize / total * 100)
                     self._a._jsc("pyProgress", min(pct, 99), f"Descargando Ventoy… {pct}%")
 
-            urlretrieve(url, tmp_zip, progress)
+            # urlretrieve no tiene timeout propio: una conexión colgada dejaba "Descargando…" para siempre.
+            _prev_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(30)
+            try:
+                urlretrieve(url, tmp_zip, progress)
+            finally:
+                socket.setdefaulttimeout(_prev_timeout)
             # Extraer junto al exe
             dest = _find_exe_dir()
             with zipfile.ZipFile(tmp_zip, "r") as zf:
@@ -738,6 +793,19 @@ class AvalAPI:
             return json.dumps({"ok": False, "error": str(e)})
 
     def confirm_write(self, disk_num: str, disk_name: str, disk_size: str, iso_path: str) -> bool:
+        # Lo que se le muestra al usuario viene del JS, que puede estar desactualizado: se contrasta con
+        # los discos de AHORA antes de preguntarle nada.
+        try:
+            num = int(disk_num)
+        except (TypeError, ValueError):
+            num = -1
+        ventoy = _find_ventoy_exe()
+        ok, why = _verify_target(num, disk_name, disk_size, [iso_path] + ([str(ventoy)] if ventoy else []))
+        if not ok:
+            self._a._confirmed = None
+            self._a._jsc("pyLog", f"[ERR] {why}", "ERR")
+            self._a._jsc("loadDisks")
+            return False
         msg = (
             f"¿Confirmas?\n\n"
             f"  Disco:  Disk {disk_num} · {disk_name} · {disk_size} GB\n"
@@ -745,12 +813,24 @@ class AvalAPI:
             f"⚠  TODOS LOS DATOS del disco serán destruidos por Ventoy.\n"
             f"   Esta acción no se puede deshacer."
         )
-        return bool(self._a.win.create_confirmation_dialog("AvalOS — Confirmar", msg))
+        ok = bool(self._a.win.create_confirmation_dialog("AvalOS — Confirmar", msg))
+        # Lo confirmado queda atado a esta operación: start_process solo arranca con exactamente esto.
+        self._a._confirmed = (num, disk_name, disk_size, iso_path) if ok else None
+        return ok
 
     def start_process(self, disk_num: str, iso_path: str):
+        conf, self._a._confirmed = self._a._confirmed, None   # de un solo uso
+        try:
+            num = int(disk_num)
+        except (TypeError, ValueError):
+            num = -1
+        if conf is None or conf[0] != num or conf[3] != iso_path:
+            self._a._jsc("pyError", "Esta operación no fue confirmada (disco o ISO distintos a los confirmados). "
+                                    "No se tocó nada: vuelve a pulsar ▶ Preparar USB.")
+            return
         threading.Thread(
             target=self._a._run,
-            args=(int(disk_num), iso_path),
+            args=(num, iso_path, conf[1], conf[2]),
             daemon=True
         ).start()
 
@@ -765,6 +845,7 @@ class AvalApp:
     def __init__(self):
         self.win: webview.Window | None = None
         self._aborted = False
+        self._confirmed: tuple | None = None   # (disco, nombre, tamaño, iso) que el usuario aceptó en el diálogo
 
     def _jsc(self, fn: str, *args):
         if not self.win:
@@ -789,7 +870,7 @@ class AvalApp:
 
     # ── Proceso completo ─────────────────────────────────────────────────────
 
-    def _run(self, disk_num: int, iso_path: str):
+    def _run(self, disk_num: int, iso_path: str, disk_name: str, disk_size):
         self._aborted = False
         try:
             # 1. Validar admin
@@ -816,6 +897,13 @@ class AvalApp:
             self._log(f"  ISO:    {iso.name}  ({iso_gb:.2f} GB)", "INF")
             self._log(f"  Disk:   {disk_num}", "INF")
             self._log(f"  Ventoy: {ventoy_exe}", "INF")
+
+            # 3b. Última verificación ANTES de borrar: es el mismo disco confirmado, sigue siendo USB, y
+            # ni el ISO ni Ventoy2Disk.exe viven en él. Ventoy va con /NOUSBCheck: esta es la única red.
+            ok, why = _verify_target(disk_num, disk_name, disk_size, [str(iso), str(ventoy_exe)])
+            if not ok:
+                self._jsc("pyError", why + "\n\nNo se tocó nada.")
+                return
 
             # 4. Instalar Ventoy
             self._step("ventoy", "active")
@@ -853,11 +941,13 @@ class AvalApp:
 
             # Esperar a que Windows monte las nuevas particiones
             time.sleep(3)
-            drive = _get_drive_letter(disk_num)
+            # Si Ventoy falló, solo vale una partición con SU etiqueta (cualquier exFAT vieja no prueba nada).
+            solo_etiqueta = rc.returncode != 0
+            drive = _get_drive_letter(disk_num, solo_etiqueta)
             if not drive:
                 # Segundo intento más lento
                 time.sleep(5)
-                drive = _get_drive_letter(disk_num)
+                drive = _get_drive_letter(disk_num, solo_etiqueta)
 
             if not drive:
                 self._step("ventoy", "err")
@@ -886,20 +976,35 @@ class AvalApp:
             t0 = time.time()
             CHUNK = 4 * 1024 * 1024
 
-            with open(iso, "rb") as src, open(dest_iso, "wb") as dst:
-                while True:
-                    if self._aborted:
-                        self._jsc("pyError", "Abortado durante copia del ISO.")
-                        return
-                    chunk = src.read(CHUNK)
-                    if not chunk:
-                        break
-                    dst.write(chunk)
-                    copied += len(chunk)
-                    pct = 25 + int(copied / iso_size * 55)   # 25-80%
-                    elapsed = max(time.time() - t0, 0.1)
-                    mbs = (copied / 1024**2) / elapsed
-                    self._prog(pct, f"{pct}% · {mbs:.1f} MB/s")
+            try:
+                with open(iso, "rb") as src, open(dest_iso, "wb") as dst:
+                    while True:
+                        if self._aborted:
+                            raise _Abort()
+                        chunk = src.read(CHUNK)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                        copied += len(chunk)
+                        pct = 25 + int(copied / iso_size * 55)   # 25-80%
+                        elapsed = max(time.time() - t0, 0.1)
+                        mbs = (copied / 1024**2) / elapsed
+                        self._prog(pct, f"{pct}% · {mbs:.1f} MB/s")
+                    dst.flush()
+                    os.fsync(dst.fileno())   # que no quede en la caché de Windows si sacan el pendrive al terminar
+                if dest_iso.stat().st_size != iso_size:
+                    raise OSError(f"copia incompleta: {dest_iso.stat().st_size} de {iso_size} bytes")
+            except BaseException as e:
+                # Ni abortando ni ante un error (disco lleno, pendrive sacado…) puede quedar un ISO a medias:
+                # Ventoy lo ofrecería en su menú como si fuera booteable.
+                try:
+                    dest_iso.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                if isinstance(e, _Abort):
+                    self._jsc("pyError", "Abortado durante copia del ISO (se borró la copia parcial).")
+                    return
+                raise
 
             self._step("iso", "done")
             self._prog(82, "ISO copiado")
@@ -977,10 +1082,12 @@ def main():
     # Auto-elevación si no somos admin
     if sys.platform == "win32" and not _is_admin():
         try:
-            ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", sys.executable, " ".join(sys.argv), None, 1
-            )
-            sys.exit(0)
+            # Argumentos bien entrecomillados (una ruta con espacios los partía) y, si es el .exe empaquetado,
+            # sin repetir su propia ruta como primer argumento.
+            params = subprocess.list2cmdline(sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv)
+            rc_uac = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+            if rc_uac > 32:   # >32: arrancó la instancia elevada. Si el usuario canceló el UAC (5) o falló,
+                sys.exit(0)   # se sigue sin admin mostrando el aviso en pantalla (antes la app desaparecía muda).
         except Exception:
             pass
 
