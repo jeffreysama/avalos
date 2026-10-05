@@ -667,7 +667,7 @@ html, body { height: 100%; overflow: hidden; font-size: 13px; cursor: default; u
      PAGE 1 — WELCOME
 ═══════════════════════════════════════════════════════════════════ -->
 <div id="pg-welcome" class="page">
-  <img id="avalos-logo" src="data:image/png;base64,LOGO_PLACEHOLDER"
+  <img id="avalos-logo" alt="AvalOS" src="data:image/png;base64,LOGO_PLACEHOLDER"
        style="width:110px;height:110px;object-fit:contain;margin-bottom:-8px;
               border-radius:16px;box-shadow:0 0 18px 4px rgba(122,162,247,.35);">
   <pre class="welcome-logo" style="display:none;">
@@ -1091,6 +1091,11 @@ function t(key, params) {
 
 function applyLang(code) {
   _lang = code;
+  // <html lang> tiene que seguir al idioma de la UI. Con lang="es" fijo,
+  // WebKit elige la variante regional por defecto de Noto Sans CJK (la JP va
+  // primero) y algunos hanzi del chino se dibujan con la forma japonesa.
+  // «zh» es chino simplificado (botón «中文简体»).
+  document.documentElement.lang = ({ zh: 'zh-CN' })[code] || code;
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.dataset.i18n;
     const val = t(key);
