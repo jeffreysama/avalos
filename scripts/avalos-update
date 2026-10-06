@@ -24,6 +24,7 @@
 # HYPRLAND_PKGS por avalos-wallpaper), pacman-contrib (checkupdates).
 import json
 import os
+import re
 import select
 import subprocess
 import sys
@@ -97,6 +98,14 @@ STRINGS = {
         "reboot-needed": "Kernel changed — reboot when you're ready to boot into it.",
         "done-ok": "Done",
         "done-err": "Finished with errors — check the log above",
+        "wn-title": "What's new in this update",
+        "wn-upgraded": "Updated",
+        "wn-installed": "Installed",
+        "wn-removed": "Removed",
+        "wn-downgraded": "Downgraded",
+        "wn-flatpak": "Flatpak apps updated: {list}",
+        "wn-configs": "AvalOS configuration synced",
+        "wn-details": "Show package list ({n})",
         "close": "Close",
         "retry-check": "Check again",
         "auth-note": "You'll be asked for your password (graphical prompt) for anything that needs root.",
@@ -131,6 +140,14 @@ STRINGS = {
         "reboot-needed": "El kernel cambió — reiniciá cuando quieras arrancar con el nuevo.",
         "done-ok": "Listo",
         "done-err": "Terminó con errores — revisá el log arriba",
+        "wn-title": "Novedades de esta actualización",
+        "wn-upgraded": "Actualizados",
+        "wn-installed": "Instalados",
+        "wn-removed": "Eliminados",
+        "wn-downgraded": "Degradados",
+        "wn-flatpak": "Apps Flatpak actualizadas: {list}",
+        "wn-configs": "Configuración de AvalOS sincronizada",
+        "wn-details": "Ver lista de paquetes ({n})",
         "close": "Cerrar",
         "retry-check": "Buscar de nuevo",
         "auth-note": "Te va a pedir tu contraseña (diálogo gráfico) para lo que necesite root.",
@@ -165,6 +182,14 @@ STRINGS = {
         "reboot-needed": "内核已更改 —— 准备好后重启以使用新内核。",
         "done-ok": "完成",
         "done-err": "完成但有错误 —— 请查看上方日志",
+        "wn-title": "本次更新内容",
+        "wn-upgraded": "已更新",
+        "wn-installed": "已安装",
+        "wn-removed": "已移除",
+        "wn-downgraded": "已降级",
+        "wn-flatpak": "已更新的 Flatpak 应用：{list}",
+        "wn-configs": "AvalOS 配置已同步",
+        "wn-details": "查看软件包列表（{n}）",
         "close": "关闭",
         "retry-check": "重新检查",
         "auth-note": "任何需要 root 权限的操作都会弹出图形密码提示。",
@@ -199,6 +224,14 @@ STRINGS = {
         "reboot-needed": "カーネルが変更されました — 準備ができたら再起動してください。",
         "done-ok": "完了",
         "done-err": "エラーで終了しました — 上のログを確認してください",
+        "wn-title": "今回の更新内容",
+        "wn-upgraded": "更新",
+        "wn-installed": "インストール",
+        "wn-removed": "削除",
+        "wn-downgraded": "ダウングレード",
+        "wn-flatpak": "更新した Flatpak アプリ：{list}",
+        "wn-configs": "AvalOS の設定を同期しました",
+        "wn-details": "パッケージ一覧を表示（{n}）",
         "close": "閉じる",
         "retry-check": "もう一度確認",
         "auth-note": "root 権限が必要な操作にはパスワード（グラフィカルなプロンプト）を求められます。",
@@ -320,9 +353,92 @@ def _check_configs_drift():
     return {"reachable": True, "changed": True, "diff": diff}
 
 
+# ── Novedades de la actualización ("What's new") ───────────────────────────
+# Solo lectura y sin privilegios (pacman.log es 0644). Antes de aplicar se anota hasta dónde llegaba
+# el log; al terminar se resume lo que pacman escribió desde ahí. Cubre sistema, kernel y AUR (yay
+# instala con pacman -U). Flatpak y la sincronización de configs los anota la propia GUI, porque
+# pacman no los ve.
+PACMAN_LOG = Path("/var/log/pacman.log")
+_ALPM_RE = re.compile(r"\[ALPM\] (upgraded|installed|removed|downgraded) (\S+) \(([^)]*)\)\s*$")
+_MAX_LOG_READ = 8 * 1024 * 1024
+_KERNEL_PKGS = {"linux", "linux-lts", "linux-zen", "linux-hardened", *KERNEL_VARIANTS.values()}
+_NOTABLE = frozenset({"hyprland", "mesa", "systemd", "glibc", "pipewire", "wireplumber",
+                      "networkmanager", "grub", "mkinitcpio", "sddm"})
+
+
+def _is_notable(name):
+    # Kernels (y sus headers) y las piezas que más se notan al reiniciar; salen primero en la lista.
+    return name in _NOTABLE or name in _KERNEL_PKGS or name.removesuffix("-headers") in _KERNEL_PKGS
+
+
+def _pacman_log_mark():
+    try:
+        return PACMAN_LOG.stat().st_size
+    except OSError:
+        return None
+
+
+def _whats_new_pkgs(mark):
+    kinds = {"upgraded": [], "installed": [], "removed": [], "downgraded": []}
+    if mark is None:
+        return kinds
+    try:
+        with open(PACMAN_LOG, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            if size < mark:  # logrotate/truncado: todo lo que hay es posterior a la marca
+                mark = 0
+            f.seek(max(mark, size - _MAX_LOG_READ))
+            data = f.read()
+    except OSError:
+        return kinds
+    last = {}  # si un paquete aparece dos veces en la corrida, vale la última línea
+    for line in data.decode("utf-8", errors="replace").splitlines():
+        m = _ALPM_RE.search(line)
+        if not m:
+            continue
+        kind, name, ver = m.groups()
+        if kind in ("upgraded", "downgraded"):
+            old, _, new = ver.partition(" -> ")
+        elif kind == "installed":
+            old, new = "", ver
+        else:
+            old, new = ver, ""
+        last[name] = (kind, old.strip(), new.strip())
+    for name, (kind, old, new) in last.items():
+        kinds[kind].append({"name": name, "old": old, "new": new})
+    for lst in kinds.values():
+        lst.sort(key=lambda it: (not _is_notable(it["name"]), it["name"]))
+    return kinds
+
+
+def _reboot_needed():
+    # Los módulos del kernel EN EJECUCIÓN ya no están en disco = el paquete del kernel se actualizó
+    # (o cambió de variante) y falta reiniciar. /usr/lib/modules/<versión>/kernel lo borra pacman al
+    # reemplazar el paquete; el resto del directorio puede sobrevivir (módulos de DKMS).
+    try:
+        return not (Path("/usr/lib/modules") / os.uname().release / "kernel").is_dir()
+    except (OSError, AttributeError):
+        return False
+
+
+def _whats_new_summary(mark, flatpak_ok, configs_ok):
+    pkgs = _whats_new_pkgs(mark)
+    return {
+        "pkgs": pkgs,
+        "counts": {k: len(v) for k, v in pkgs.items()},
+        "flatpak": list(flatpak_ok),
+        "configs": bool(configs_ok),
+        "reboot": _reboot_needed(),
+    }
+
+
 # ── API expuesta a la GUI ────────────────────────────────────────────────
 class UpdateAPI:
     window = None
+
+    def __init__(self):
+        self._flatpak_ok = []   # apps de Flatpak que terminaron bien en la última corrida
+        self._configs_ok = False  # ¿se sincronizaron las configs de AvalOS en la última corrida?
 
     def check(self):
         system = _check_system_updates()
@@ -427,18 +543,32 @@ class UpdateAPI:
             if proc.returncode != 0:
                 self._log(f"(código de salida {proc.returncode})", "err")
                 ok = False
+            else:
+                self._flatpak_ok.append(app_id)
         return ok
 
     def _apply_worker(self, payload):
         # Envoltorio: si algo revienta a mitad, el hilo moría en silencio, pyDone nunca llegaba y la
         # ventana quedaba en "Aplicando…" sin botones de cerrar ni de reintentar.
         ok_all, kernel_touched = False, bool(payload.get("kernel_variant"))
+        mark = _pacman_log_mark()
+        self._flatpak_ok, self._configs_ok = [], False
         try:
             ok_all, kernel_touched = self._apply_steps(payload)
         except Exception as e:  # noqa: BLE001
             self._log(f"error inesperado: {e}", "err")
         finally:
-            self._jsc("pyDone", ok_all, kernel_touched)
+            # Las novedades son un extra: si algo falla al leer el log, pyDone igual tiene que llegar.
+            reboot = False
+            try:
+                summary = _whats_new_summary(mark, self._flatpak_ok, self._configs_ok)
+                reboot = summary["reboot"]
+                self._jsc("pyWhatsNew", summary)
+            except Exception as e:  # noqa: BLE001
+                print(f"[whats-new] {e}")
+            # reboot cubre también el kernel que se reemplazó dentro de «apply-system» (antes solo
+            # avisaba si el usuario cambiaba de variante a mano).
+            self._jsc("pyDone", ok_all, kernel_touched or reboot)
 
     def _apply_steps(self, payload):
         ok_all = True
@@ -453,7 +583,8 @@ class UpdateAPI:
             ok_all &= self._run_helper(["snapshot", "--description", "avalos-update: antes de actualizar"])
 
         if payload.get("sync_configs"):
-            ok_all &= self._run_helper(["sync-system-files"])
+            self._configs_ok = self._run_helper(["sync-system-files"])
+            ok_all &= self._configs_ok
 
         if payload.get("system"):
             args = ["apply-system"]
@@ -553,6 +684,16 @@ def _build_html():
   .l-err { color: var(--red); }
   .l-ok { color: var(--green); }
 
+  .wn { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; margin-top: 12px; }
+  .wn-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+  .wn-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .wn-line { font-size: 11.5px; color: var(--text-dim); margin-top: 8px; line-height: 1.4; }
+  .wn-line.wn-reboot { color: var(--yellow); }
+  .wn-details { margin-top: 10px; }
+  .wn-details summary { font-size: 11px; color: var(--blue); cursor: pointer; }
+  .wn-list { margin: 8px 0 0; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+
   .checking { display: flex; flex-direction: column; align-items: center; justify-content: center;
     height: 100%; color: var(--text-dim); font-size: 12.5px; gap: 10px; }
   .spinner { width: 22px; height: 22px; border: 2px solid var(--border); border-top-color: var(--blue);
@@ -643,6 +784,15 @@ def _build_html():
 
   <div class="body hidden" id="logView">
     <pre id="logPanel"></pre>
+    <div class="wn hidden" id="whatsNew">
+      <div class="wn-title" id="wn-title"></div>
+      <div class="wn-badges" id="wn-badges"></div>
+      <div id="wn-extra"></div>
+      <details class="wn-details hidden" id="wn-details">
+        <summary id="wn-sum"></summary>
+        <div class="wn-list" id="wn-list"></div>
+      </details>
+    </div>
   </div>
 
   <footer>
@@ -687,6 +837,45 @@ function pyDone(okAll, kernelTouched) {
   if (kernelTouched) {
     pyLog(T['reboot-needed'], okAll ? 'ok' : 'info');
   }
+}
+
+function wnRow(kind, p) {
+  let ver;
+  if (kind === 'installed') ver = `<span class="ver">+ <span class="new">${escapeHtml(p.new)}</span></span>`;
+  else if (kind === 'removed') ver = `<span class="ver">− ${escapeHtml(p.old)}</span>`;
+  else ver = verLine(p);
+  return `<div class="item"><span>${escapeHtml(p.name)}</span>${ver}</div>`;
+}
+
+// Resumen de lo que cambió en ESTA corrida (lo arma Python leyendo pacman.log). Se muestra debajo
+// del log para que quede a la vista cuando el log termina de scrollear.
+function pyWhatsNew(d) {
+  const box = el('whatsNew');
+  if (!box) return;
+  const kinds = ['upgraded', 'installed', 'removed', 'downgraded'];
+  const pk = d.pkgs || {}, c = d.counts || {}, fp = d.flatpak || [];
+  const total = kinds.reduce((n, k) => n + (c[k] || 0), 0);
+  if (!total && !fp.length && !d.configs && !d.reboot) { box.classList.add('hidden'); return; }
+  el('wn-title').textContent = T['wn-title'];
+  el('wn-badges').innerHTML = kinds.filter(k => c[k]).map(k =>
+    `<span class="badge ${k === 'removed' || k === 'downgraded' ? 'warn' : 'n'}">${escapeHtml(T['wn-' + k])} ${c[k]}</span>`).join('');
+  const extra = [];
+  if (fp.length) extra.push(['', T['wn-flatpak'].replace('{list}', fp.join(', '))]);
+  if (d.configs) extra.push(['', T['wn-configs']]);
+  if (d.reboot) extra.push(['wn-reboot', T['reboot-needed']]);
+  el('wn-extra').innerHTML = extra.map(([cls, t]) => `<div class="wn-line ${cls}">${escapeHtml(t)}</div>`).join('');
+  const det = el('wn-details');
+  if (total) {
+    el('wn-sum').textContent = T['wn-details'].replace('{n}', total);
+    el('wn-list').innerHTML = kinds.map(k => (pk[k] || []).map(p => wnRow(k, p)).join('')).join('');
+    det.removeAttribute('open');
+    det.classList.remove('hidden');
+  } else {
+    det.classList.add('hidden');
+  }
+  box.classList.remove('hidden');
+  const lv = el('logView');
+  lv.scrollTop = lv.scrollHeight;
 }
 
 function verLine(item) {
@@ -865,6 +1054,7 @@ function onApply() {
   el('mainView').classList.add('hidden');
   el('logView').classList.remove('hidden');
   el('logPanel').innerHTML = '';
+  el('whatsNew').classList.add('hidden');
   el('statusText').textContent = T['applying'];
   el('applyBtn').disabled = true;
   window.pywebview.api.apply(JSON.stringify(payload));
