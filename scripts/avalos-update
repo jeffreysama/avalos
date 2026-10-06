@@ -38,7 +38,7 @@ import webview
 # completo) — duplicado acá, no se importa uno del otro para no crear una
 # dependencia entre el helper con privilegios y este proceso sin privilegios.
 # `python3 scripts/gen-sync-manifest.py --pin` actualiza los dos juntos.
-AVALOS_SYNC_REF = "c71419ad7381de36a31eac5001950a6c8a895b51"
+AVALOS_SYNC_REF = "58331664c3b55b35ea36d1a70904d9cdd413f43f"
 REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 HELPER_BIN = "/usr/local/bin/avalos-update-helper"
 TEMPLATE_LOCAL = Path("/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template")
