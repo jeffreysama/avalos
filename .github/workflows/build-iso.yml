@@ -435,6 +435,20 @@ jobs:
           cp "$BUILD_DIR/pacman.conf" "$AIROOTFS/etc/pacman.conf"
           echo "IgnorePkg re-sincronizado al airootfs (live booteado tambien protegido)"
 
+          # Live SIN sshd. El overlay releng deja sshd.service habilitado con PermitRootLogin yes y
+          # PasswordAuthentication yes (sshd_config.d/10-archiso.conf), y customize_airootfs.sh le pone a
+          # root la contraseña conocida "avalos" (hace falta para un login tipeado en otra consola).
+          # Juntos = root remoto para cualquiera en la misma red (el live no trae firewall) mientras el
+          # instalador corre como root. Se saca sshd del arranque; para depurar por SSH, a mano desde el
+          # live: `systemctl start sshd`.
+          SSHD_LINK="$AIROOTFS/etc/systemd/system/multi-user.target.wants/sshd.service"
+          rm -f "$SSHD_LINK"
+          if [[ -e "$SSHD_LINK" || -L "$SSHD_LINK" ]]; then
+            echo "[ERROR] sshd.service sigue habilitado en el live: no se publica una ISO con root remoto"
+            exit 1
+          fi
+          echo "OK: sshd fuera del arranque del live"
+
           echo "Iniciando mkarchiso..."
           mkarchiso -v -w "$BUILD_WORK" -o "$OUTPUT_DIR" "$BUILD_DIR"
 
