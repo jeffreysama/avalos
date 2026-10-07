@@ -37,7 +37,7 @@ from pathlib import Path
 # Esto NO cubre un AVALOS_SYNC_REF que apunte a un commit legítimamente
 # comprometido; el arreglo de fondo es distribuir estos archivos como paquete
 # firmado del repo [avalos] en vez de bajarlos de raw.githubusercontent.com.
-AVALOS_SYNC_REF = "58331664c3b55b35ea36d1a70904d9cdd413f43f"
+AVALOS_SYNC_REF = "c6ac897006164bcbfe8c35a1221c676fc3d8c02f"
 REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 BOOT_DIR = Path("/boot")
 MKINITCPIO_D = Path("/etc/mkinitcpio.d")
