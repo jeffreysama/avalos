@@ -267,6 +267,13 @@ hl.window_rule({
     center = true,
     size   = { 620, 640 },
 })
+
+hl.window_rule({
+    match  = { class = "avalos-doctor" },
+    float  = true,
+    center = true,
+    size   = { 700, 720 },
+})
 hl.window_rule({
     match  = { class = "avalos-store" },
     float  = true,

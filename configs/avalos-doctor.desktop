@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AvalOS Doctor
+Name[es]=AvalOS Doctor
+Name[zh_CN]=AvalOS 诊断
+Name[ja]=AvalOS ドクター
+Comment=Check the health of the system
+Comment[es]=Revisa la salud del sistema
+Comment[zh_CN]=检查系统健康状况
+Comment[ja]=システムの健康状態をチェックします
+Exec=avalos-doctor
+Icon=avalos-doctor
+Terminal=false
+NoDisplay=false
+StartupNotify=true
+StartupWMClass=avalos-doctor
+Categories=System;Settings;
+Keywords=doctor;health;diagnostic;check;troubleshoot;salud;diagnóstico;revisar;诊断;检查;健康;診断;チェック;

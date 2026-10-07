@@ -1,0 +1,1205 @@
+#!/usr/bin/env python3
+# ── AvalOS — avalos-doctor ──────────────────────────────────────────
+# Chequeo de salud del sistema en un clic: disco y btrfs, kernel y archivos de
+# arranque, paquetes, GPU y drivers de juegos, red y las propias apps de AvalOS.
+# SOLO LEE: no necesita root, no cambia nada y no abre pkexec. Lo único que
+# puede hacer es abrir otra app de AvalOS (Actualizaciones o Restaurar) cuando
+# el hallazgo se arregla ahí.
+#
+# Un motor, dos caras:
+#   avalos-doctor            ventana (pywebview); sin pantalla cae a la consola
+#   avalos-doctor --text     informe en consola
+#   avalos-doctor --json     lo mismo en JSON (soporte, scripts)
+# Código de salida de la consola: 0 todo bien · 1 hay avisos · 2 hay fallos.
+#
+# Cada chequeo corre en su propio hilo con tope de tiempo y NUNCA tira el
+# informe: si falla, queda como «no se pudo comprobar». Las rutas del sistema
+# son constantes de módulo a propósito (las pruebas las apuntan a un árbol falso).
+#
+# Requiere: python 3.9+. La ventana además python-pywebview, webkit2gtk-4.1 y
+# python-gobject (ya instalados por el instalador); sin ellos --text sigue andando.
+import argparse
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+# ── Rutas del sistema (se pueden redirigir en las pruebas) ─────────────────
+PROC = Path("/proc")
+SYS = Path("/sys")
+ETC = Path("/etc")
+BOOT = Path("/boot")
+ESP = Path("/boot/efi")
+MODULES_DIR = Path("/usr/lib/modules")
+PACMAN_LOCK = Path("/var/lib/pacman/db.lck")
+BIN_DIR = Path("/usr/local/bin")
+APPS_DIR = Path("/usr/share/applications")
+ICON_DIR = Path("/usr/share/icons/hicolor/scalable/apps")
+
+KERNEL_PKGS = ("linux", "linux-lts", "linux-zen", "linux-hardened",
+               "linux-avalos", "linux-avalos-bore", "linux-avalos-compat")
+AVALOS_APPS = ("avalos-settings", "avalos-wallpaper", "avalos-about", "avalos-update",
+               "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor")
+# Mismas apps que validate_app_consistency.NEEDS_DESKTOP: sin .desktop e ícono no aparecen en el menú.
+NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor"}
+# Lo único que la ventana puede lanzar. Cualquier otro nombre se rechaza.
+OPEN_WHITELIST = {"avalos-update": "a-update", "avalos-restore": "a-restore"}
+
+# ── i18n — mismo patrón que avalos-update/avalos-restore ──────────────────
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+_HTML_LANG = {"zh": "zh-CN"}
+
+
+def _detectar_idioma() -> str:
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
+
+STRINGS = {
+    "en": {
+        "title": "Doctor",
+        "subtitle": "System health check — it only reads, nothing is changed",
+        "run": "Check again", "running": "Checking…", "copy": "Copy report",
+        "copied": "Report copied to the clipboard",
+        "saved": "No clipboard tool found — report saved to {path}",
+        "close": "Close", "all-ok": "Everything looks good", "attention": "Needs attention: {n}",
+        "sec-attention": "Needs attention", "sec-rest": "Everything else ({n})",
+        "st-ok": "OK", "st-warn": "Warning", "st-fail": "Problem", "st-info": "Info", "st-skip": "Not checked",
+        "g-system": "System", "g-storage": "Storage", "g-packages": "Packages",
+        "g-hardware": "Hardware", "g-network": "Network", "g-avalos": "AvalOS",
+        "a-update": "Open Updates", "a-restore": "Open Restore",
+        "summary": "{ok} OK · {warn} warnings · {fail} problems",
+        "report-title": "AvalOS Doctor report",
+        "t-kernel": "Kernel", "t-boot-files": "Boot files", "t-time-sync": "System clock",
+        "t-disk-root": "Disk space (/)", "t-btrfs-meta": "btrfs metadata", "t-btrfs-errors": "Disk errors (btrfs)",
+        "t-esp": "EFI partition", "t-snapshots": "Snapshots (snapper)", "t-pacman-lock": "pacman lock",
+        "t-pacnew": ".pacnew files", "t-mirrors": "pacman mirrors", "t-units": "Failed services",
+        "t-gpu": "Graphics", "t-vulkan": "Vulkan (games)", "t-ucode": "CPU microcode",
+        "t-gaming": "Gaming settings", "t-net-route": "Connection", "t-net-dns": "DNS",
+        "t-net-mirror": "Arch mirror", "t-net-avalos": "AvalOS repository", "t-apps": "AvalOS apps",
+        "t-sync": "AvalOS sync pin",
+        "d-kernel-ok": "{rel}",
+        "d-kernel-reboot": "{rel} is running but its files are gone from disk: reboot to use the updated kernel",
+        "d-kernel-bore-cpu": "{rel} (BORE) needs x86-64-v3 and this CPU is {cpu}: switch to the Compat kernel in Updates",
+        "d-boot-files-ok": "{n} kernel(s) with vmlinuz, initramfs and mkinitcpio preset",
+        "d-boot-files-fail": "Missing boot files: {missing}. Do not reboot before regenerating them (mkinitcpio -P)",
+        "d-time-sync-ok": "Synchronized over the network (NTP)",
+        "d-time-sync-warn": "Not synchronized: the clock can drift and HTTPS may fail (timedatectl set-ntp true)",
+        "d-disk-root-ok": "{used}% used · {free} free",
+        "d-disk-root-warn": "{used}% used · only {free} free: free up space or delete old restore backups",
+        "d-disk-root-fail": "{used}% used · only {free} free: updates and snapshots will start failing",
+        "d-btrfs-meta-ok": "{pct}% of allocated metadata in use",
+        "d-btrfs-meta-warn": "{pct}% of allocated metadata in use: btrfs can run out of space even with free disk (btrfs balance -musage=50 /)",
+        "d-btrfs-na": "The root filesystem is not btrfs: not applicable",
+        "d-btrfs-errors-ok": "No read, write or corruption errors recorded",
+        "d-btrfs-errors-fail": "{errs}: check the disk health (btrfs scrub /, smartctl)",
+        "d-esp-ok": "{free} MiB free on /boot/efi",
+        "d-esp-warn": "Only {free} MiB free on /boot/efi: bootloader and kernel copies may fail",
+        "d-esp-none": "/boot/efi is not mounted (BIOS boot?)",
+        "d-snapshots-ok": "snapper 'root' config with the snapshot and cleanup timers enabled",
+        "d-snapshots-noconfig": "snapper has no 'root' config: there will be no restore points",
+        "d-snapshots-nocleanup": "The cleanup timer is off: snapshots pile up and fill the disk (systemctl enable --now snapper-cleanup.timer)",
+        "d-pacman-lock-ok": "No lock",
+        "d-pacman-lock-stale": "Stale lock and pacman is not running: sudo rm /var/lib/pacman/db.lck",
+        "d-pacman-lock-busy": "pacman is working right now (normal during an update)",
+        "d-pacnew-ok": "None pending",
+        "d-pacnew-warn": "{n} unreviewed file(s), e.g. {first}: compare them with pacdiff",
+        "d-mirrors-ok": "Updated {days} day(s) ago",
+        "d-mirrors-warn": "Not updated for {days} days: slow or dead mirrors (reflector)",
+        "d-mirrors-missing": "/etc/pacman.d/mirrorlist is missing",
+        "d-units-ok": "No failed units",
+        "d-units-warn": "{n} failed unit(s): {names}",
+        "d-gpu-ok": "{gpus}",
+        "d-gpu-vm": "{gpus}: virtual or unknown GPU, no 3D acceleration for games",
+        "d-gpu-nvidia": "{gpus}: AvalOS targets AMD and Intel, NVIDIA support is not guaranteed",
+        "d-gpu-nodriver": "{gpus}: no proper kernel driver in use",
+        "d-gpu-none": "No graphics device found",
+        "d-vulkan-ok": "{pkg} and {pkg32} installed",
+        "d-vulkan-noicd": "{pkg} is missing: games get no GPU acceleration",
+        "d-vulkan-no32": "{pkg32} is missing: many Steam/Proton games need it",
+        "d-vulkan-na": "Not applicable without an AMD or Intel GPU",
+        "d-ucode-ok": "{pkg} installed (revision {rev})",
+        "d-ucode-warn": "{pkg} is missing: the CPU boots without its security fixes",
+        "d-ucode-unknown": "CPU vendor not recognized",
+        "d-gaming-ok": "vm.max_map_count = {n}",
+        "d-gaming-warn": "vm.max_map_count = {n}: some Proton/Wine games crash (set 1048576 in /etc/sysctl.d)",
+        "d-net-route-ok": "Connected through {iface}",
+        "d-net-route-fail": "No default route: you are offline (check the cable or Wi-Fi)",
+        "d-net-dns-ok": "archlinux.org resolves ({ms} ms)",
+        "d-net-dns-fail": "Names do not resolve ({err}): check DNS (resolvectl status)",
+        "d-net-mirror-ok": "{host} answers ({ms} ms)",
+        "d-net-mirror-warn": "{host} does not answer ({err}): try another mirror (reflector)",
+        "d-net-avalos-ok": "{host} answers ({ms} ms)",
+        "d-net-avalos-warn": "{host} does not answer ({err}): AvalOS kernels cannot be downloaded",
+        "d-net-avalos-norepo": "[avalos] is not in /etc/pacman.conf: AvalOS kernels will not arrive",
+        "d-apps-ok": "{n} apps installed with their launcher entries",
+        "d-apps-warn": "Missing: {missing}",
+        "d-sync-ok": "Both point to {sha}",
+        "d-sync-mismatch": "avalos-update-helper ({a}) and avalos-update ({b}) point to different versions: copy both together",
+        "d-skip-noroute": "No network: not checked",
+        "d-error": "Could not check: {err}",
+    },
+    "es": {
+        "title": "Doctor",
+        "subtitle": "Chequeo de salud del sistema — solo lee, no cambia nada",
+        "run": "Revisar de nuevo", "running": "Revisando…", "copy": "Copiar informe",
+        "copied": "Informe copiado al portapapeles",
+        "saved": "No hay herramienta de portapapeles — informe guardado en {path}",
+        "close": "Cerrar", "all-ok": "Todo en orden", "attention": "Requiere atención: {n}",
+        "sec-attention": "Requiere atención", "sec-rest": "Todo lo demás ({n})",
+        "st-ok": "OK", "st-warn": "Aviso", "st-fail": "Problema", "st-info": "Info", "st-skip": "Sin comprobar",
+        "g-system": "Sistema", "g-storage": "Almacenamiento", "g-packages": "Paquetes",
+        "g-hardware": "Hardware", "g-network": "Red", "g-avalos": "AvalOS",
+        "a-update": "Abrir Actualizaciones", "a-restore": "Abrir Restaurar",
+        "summary": "{ok} OK · {warn} avisos · {fail} problemas",
+        "report-title": "Informe de AvalOS Doctor",
+        "t-kernel": "Kernel", "t-boot-files": "Archivos de arranque", "t-time-sync": "Hora del sistema",
+        "t-disk-root": "Espacio en disco (/)", "t-btrfs-meta": "Metadatos de btrfs", "t-btrfs-errors": "Errores de disco (btrfs)",
+        "t-esp": "Partición EFI", "t-snapshots": "Snapshots (snapper)", "t-pacman-lock": "Bloqueo de pacman",
+        "t-pacnew": "Archivos .pacnew", "t-mirrors": "Mirrors de pacman", "t-units": "Servicios fallidos",
+        "t-gpu": "Gráficos", "t-vulkan": "Vulkan (juegos)", "t-ucode": "Microcódigo de la CPU",
+        "t-gaming": "Ajustes para juegos", "t-net-route": "Conexión", "t-net-dns": "DNS",
+        "t-net-mirror": "Mirror de Arch", "t-net-avalos": "Repositorio de AvalOS", "t-apps": "Apps de AvalOS",
+        "t-sync": "Pin de sincronización de AvalOS",
+        "d-kernel-ok": "{rel}",
+        "d-kernel-reboot": "{rel} está en ejecución pero sus archivos ya no están en disco: reinicia para usar el kernel actualizado",
+        "d-kernel-bore-cpu": "{rel} (BORE) necesita x86-64-v3 y esta CPU es {cpu}: cambia al kernel Compat en Actualizaciones",
+        "d-boot-files-ok": "{n} kernel(s) con vmlinuz, initramfs y preset de mkinitcpio",
+        "d-boot-files-fail": "Faltan archivos de arranque: {missing}. No reinicies antes de regenerarlos (mkinitcpio -P)",
+        "d-time-sync-ok": "Sincronizada por red (NTP)",
+        "d-time-sync-warn": "Sin sincronizar: el reloj puede desviarse y HTTPS fallar (timedatectl set-ntp true)",
+        "d-disk-root-ok": "{used}% usado · {free} libres",
+        "d-disk-root-warn": "{used}% usado · solo {free} libres: libera espacio o borra respaldos viejos de restauración",
+        "d-disk-root-fail": "{used}% usado · solo {free} libres: las actualizaciones y los snapshots van a empezar a fallar",
+        "d-btrfs-meta-ok": "{pct}% de los metadatos asignados en uso",
+        "d-btrfs-meta-warn": "{pct}% de los metadatos asignados en uso: btrfs puede quedarse sin espacio aunque haya disco libre (btrfs balance -musage=50 /)",
+        "d-btrfs-na": "La raíz no es btrfs: no aplica",
+        "d-btrfs-errors-ok": "Sin errores de lectura, escritura ni corrupción registrados",
+        "d-btrfs-errors-fail": "{errs}: revisa la salud del disco (btrfs scrub /, smartctl)",
+        "d-esp-ok": "{free} MiB libres en /boot/efi",
+        "d-esp-warn": "Solo {free} MiB libres en /boot/efi: pueden fallar las copias del bootloader y del kernel",
+        "d-esp-none": "/boot/efi no está montada (¿arranque BIOS?)",
+        "d-snapshots-ok": "Configuración 'root' de snapper con los timers de snapshots y de limpieza activos",
+        "d-snapshots-noconfig": "snapper no tiene la configuración 'root': no habrá puntos de restauración",
+        "d-snapshots-nocleanup": "El timer de limpieza está apagado: los snapshots se acumulan y llenan el disco (systemctl enable --now snapper-cleanup.timer)",
+        "d-pacman-lock-ok": "Sin bloqueo",
+        "d-pacman-lock-stale": "Bloqueo viejo y pacman no está corriendo: sudo rm /var/lib/pacman/db.lck",
+        "d-pacman-lock-busy": "pacman está trabajando ahora (normal durante una actualización)",
+        "d-pacnew-ok": "Ninguno pendiente",
+        "d-pacnew-warn": "{n} archivo(s) sin revisar, p. ej. {first}: compáralos con pacdiff",
+        "d-mirrors-ok": "Actualizados hace {days} día(s)",
+        "d-mirrors-warn": "Sin actualizar hace {days} días: mirrors lentos o caídos (reflector)",
+        "d-mirrors-missing": "Falta /etc/pacman.d/mirrorlist",
+        "d-units-ok": "Ninguna unidad fallida",
+        "d-units-warn": "{n} unidad(es) fallida(s): {names}",
+        "d-gpu-ok": "{gpus}",
+        "d-gpu-vm": "{gpus}: GPU virtual o desconocida, sin aceleración 3D para juegos",
+        "d-gpu-nvidia": "{gpus}: AvalOS apunta a AMD e Intel, el soporte de NVIDIA no está garantizado",
+        "d-gpu-nodriver": "{gpus}: no hay un driver de kernel adecuado en uso",
+        "d-gpu-none": "No se encontró ningún dispositivo gráfico",
+        "d-vulkan-ok": "{pkg} y {pkg32} instalados",
+        "d-vulkan-noicd": "Falta {pkg}: los juegos no tendrán aceleración de GPU",
+        "d-vulkan-no32": "Falta {pkg32}: muchos juegos de Steam/Proton lo necesitan",
+        "d-vulkan-na": "No aplica sin una GPU AMD o Intel",
+        "d-ucode-ok": "{pkg} instalado (revisión {rev})",
+        "d-ucode-warn": "Falta {pkg}: la CPU arranca sin sus correcciones de seguridad",
+        "d-ucode-unknown": "Fabricante de CPU no reconocido",
+        "d-gaming-ok": "vm.max_map_count = {n}",
+        "d-gaming-warn": "vm.max_map_count = {n}: algunos juegos de Proton/Wine se cierran (pon 1048576 en /etc/sysctl.d)",
+        "d-net-route-ok": "Conectado por {iface}",
+        "d-net-route-fail": "Sin ruta por defecto: no hay conexión (revisa el cable o el Wi-Fi)",
+        "d-net-dns-ok": "archlinux.org resuelve ({ms} ms)",
+        "d-net-dns-fail": "No se resuelven nombres ({err}): revisa el DNS (resolvectl status)",
+        "d-net-mirror-ok": "{host} responde ({ms} ms)",
+        "d-net-mirror-warn": "{host} no responde ({err}): prueba otro mirror (reflector)",
+        "d-net-avalos-ok": "{host} responde ({ms} ms)",
+        "d-net-avalos-warn": "{host} no responde ({err}): no se pueden bajar los kernels de AvalOS",
+        "d-net-avalos-norepo": "[avalos] no está en /etc/pacman.conf: no llegarán los kernels de AvalOS",
+        "d-apps-ok": "{n} apps instaladas con su entrada de menú",
+        "d-apps-warn": "Faltan: {missing}",
+        "d-sync-ok": "Ambos apuntan a {sha}",
+        "d-sync-mismatch": "avalos-update-helper ({a}) y avalos-update ({b}) apuntan a versiones distintas: cópialos juntos",
+        "d-skip-noroute": "Sin red: no se comprobó",
+        "d-error": "No se pudo comprobar: {err}",
+    },
+    "zh": {
+        "title": "Doctor",
+        "subtitle": "系统健康检查 —— 只读取，不做任何更改",
+        "run": "重新检查", "running": "正在检查…", "copy": "复制报告",
+        "copied": "报告已复制到剪贴板",
+        "saved": "未找到剪贴板工具 —— 报告已保存到 {path}",
+        "close": "关闭", "all-ok": "一切正常", "attention": "需要关注：{n}",
+        "sec-attention": "需要关注", "sec-rest": "其他项目（{n}）",
+        "st-ok": "正常", "st-warn": "警告", "st-fail": "问题", "st-info": "信息", "st-skip": "未检查",
+        "g-system": "系统", "g-storage": "存储", "g-packages": "软件包",
+        "g-hardware": "硬件", "g-network": "网络", "g-avalos": "AvalOS",
+        "a-update": "打开更新", "a-restore": "打开还原",
+        "summary": "{ok} 正常 · {warn} 警告 · {fail} 问题",
+        "report-title": "AvalOS Doctor 报告",
+        "t-kernel": "内核", "t-boot-files": "启动文件", "t-time-sync": "系统时钟",
+        "t-disk-root": "磁盘空间 (/)", "t-btrfs-meta": "btrfs 元数据", "t-btrfs-errors": "磁盘错误 (btrfs)",
+        "t-esp": "EFI 分区", "t-snapshots": "快照 (snapper)", "t-pacman-lock": "pacman 锁",
+        "t-pacnew": ".pacnew 文件", "t-mirrors": "pacman 镜像源", "t-units": "失败的服务",
+        "t-gpu": "显卡", "t-vulkan": "Vulkan（游戏）", "t-ucode": "CPU 微码",
+        "t-gaming": "游戏相关设置", "t-net-route": "网络连接", "t-net-dns": "DNS",
+        "t-net-mirror": "Arch 镜像源", "t-net-avalos": "AvalOS 软件源", "t-apps": "AvalOS 应用",
+        "t-sync": "AvalOS 同步版本锁定",
+        "d-kernel-ok": "{rel}",
+        "d-kernel-reboot": "正在运行 {rel}，但它的文件已不在磁盘上：请重启以使用更新后的内核",
+        "d-kernel-bore-cpu": "{rel} (BORE) 需要 x86-64-v3，而此 CPU 是 {cpu}：请在“更新”中切换到 Compat 内核",
+        "d-boot-files-ok": "{n} 个内核具备 vmlinuz、initramfs 和 mkinitcpio 预设",
+        "d-boot-files-fail": "缺少启动文件：{missing}。重新生成之前不要重启 (mkinitcpio -P)",
+        "d-time-sync-ok": "已通过网络同步 (NTP)",
+        "d-time-sync-warn": "未同步：时钟可能漂移，HTTPS 可能失败 (timedatectl set-ntp true)",
+        "d-disk-root-ok": "已用 {used}% · 剩余 {free}",
+        "d-disk-root-warn": "已用 {used}% · 仅剩 {free}：请释放空间或删除旧的还原备份",
+        "d-disk-root-fail": "已用 {used}% · 仅剩 {free}：更新和快照即将开始失败",
+        "d-btrfs-meta-ok": "已分配的元数据使用了 {pct}%",
+        "d-btrfs-meta-warn": "已分配的元数据使用了 {pct}%：即使磁盘有空闲，btrfs 也可能提示空间不足 (btrfs balance -musage=50 /)",
+        "d-btrfs-na": "根文件系统不是 btrfs：不适用",
+        "d-btrfs-errors-ok": "未记录读取、写入或损坏错误",
+        "d-btrfs-errors-fail": "{errs}：请检查磁盘健康状况 (btrfs scrub /, smartctl)",
+        "d-esp-ok": "/boot/efi 剩余 {free} MiB",
+        "d-esp-warn": "/boot/efi 仅剩 {free} MiB：引导程序和内核的复制可能失败",
+        "d-esp-none": "/boot/efi 未挂载（BIOS 启动？）",
+        "d-snapshots-ok": "snapper 的 'root' 配置已就绪，快照和清理定时器均已启用",
+        "d-snapshots-noconfig": "snapper 没有 'root' 配置：将没有还原点",
+        "d-snapshots-nocleanup": "清理定时器已关闭：快照会不断堆积并占满磁盘 (systemctl enable --now snapper-cleanup.timer)",
+        "d-pacman-lock-ok": "没有锁",
+        "d-pacman-lock-stale": "存在过期的锁，且 pacman 未在运行：sudo rm /var/lib/pacman/db.lck",
+        "d-pacman-lock-busy": "pacman 正在工作（更新期间属正常现象）",
+        "d-pacnew-ok": "没有待处理的文件",
+        "d-pacnew-warn": "{n} 个文件尚未处理，例如 {first}：请用 pacdiff 比较",
+        "d-mirrors-ok": "{days} 天前更新",
+        "d-mirrors-warn": "已 {days} 天未更新：镜像可能很慢或已失效 (reflector)",
+        "d-mirrors-missing": "缺少 /etc/pacman.d/mirrorlist",
+        "d-units-ok": "没有失败的单元",
+        "d-units-warn": "{n} 个失败的单元：{names}",
+        "d-gpu-ok": "{gpus}",
+        "d-gpu-vm": "{gpus}：虚拟或未知显卡，游戏没有 3D 加速",
+        "d-gpu-nvidia": "{gpus}：AvalOS 面向 AMD 和 Intel，不保证支持 NVIDIA",
+        "d-gpu-nodriver": "{gpus}：当前没有合适的内核驱动",
+        "d-gpu-none": "未找到显示设备",
+        "d-vulkan-ok": "已安装 {pkg} 和 {pkg32}",
+        "d-vulkan-noicd": "缺少 {pkg}：游戏无法使用 GPU 加速",
+        "d-vulkan-no32": "缺少 {pkg32}：许多 Steam/Proton 游戏需要它",
+        "d-vulkan-na": "没有 AMD 或 Intel 显卡，不适用",
+        "d-ucode-ok": "已安装 {pkg}（版本 {rev}）",
+        "d-ucode-warn": "缺少 {pkg}：CPU 启动时没有安全修复",
+        "d-ucode-unknown": "无法识别 CPU 厂商",
+        "d-gaming-ok": "vm.max_map_count = {n}",
+        "d-gaming-warn": "vm.max_map_count = {n}：部分 Proton/Wine 游戏会崩溃（在 /etc/sysctl.d 中设为 1048576）",
+        "d-net-route-ok": "已通过 {iface} 连接",
+        "d-net-route-fail": "没有默认路由：当前离线（请检查网线或 Wi-Fi）",
+        "d-net-dns-ok": "archlinux.org 解析正常（{ms} ms）",
+        "d-net-dns-fail": "无法解析域名（{err}）：请检查 DNS (resolvectl status)",
+        "d-net-mirror-ok": "{host} 响应正常（{ms} ms）",
+        "d-net-mirror-warn": "{host} 无响应（{err}）：请换一个镜像源 (reflector)",
+        "d-net-avalos-ok": "{host} 响应正常（{ms} ms）",
+        "d-net-avalos-warn": "{host} 无响应（{err}）：无法下载 AvalOS 内核",
+        "d-net-avalos-norepo": "/etc/pacman.conf 中没有 [avalos]：将收不到 AvalOS 内核",
+        "d-apps-ok": "已安装 {n} 个应用及其菜单入口",
+        "d-apps-warn": "缺少：{missing}",
+        "d-sync-ok": "两者都指向 {sha}",
+        "d-sync-mismatch": "avalos-update-helper（{a}）和 avalos-update（{b}）指向不同版本：请一起复制",
+        "d-skip-noroute": "没有网络：未检查",
+        "d-error": "无法检查：{err}",
+    },
+    "ja": {
+        "title": "Doctor",
+        "subtitle": "システムの健康チェック — 読み取りのみで、何も変更しません",
+        "run": "再チェック", "running": "チェック中…", "copy": "レポートをコピー",
+        "copied": "レポートをクリップボードにコピーしました",
+        "saved": "クリップボードツールが見つかりません — レポートを {path} に保存しました",
+        "close": "閉じる", "all-ok": "すべて正常です", "attention": "要確認：{n}",
+        "sec-attention": "要確認", "sec-rest": "その他（{n}）",
+        "st-ok": "正常", "st-warn": "警告", "st-fail": "問題", "st-info": "情報", "st-skip": "未チェック",
+        "g-system": "システム", "g-storage": "ストレージ", "g-packages": "パッケージ",
+        "g-hardware": "ハードウェア", "g-network": "ネットワーク", "g-avalos": "AvalOS",
+        "a-update": "アップデートを開く", "a-restore": "復元を開く",
+        "summary": "正常 {ok} · 警告 {warn} · 問題 {fail}",
+        "report-title": "AvalOS Doctor レポート",
+        "t-kernel": "カーネル", "t-boot-files": "起動ファイル", "t-time-sync": "システム時刻",
+        "t-disk-root": "ディスク容量 (/)", "t-btrfs-meta": "btrfs メタデータ", "t-btrfs-errors": "ディスクエラー (btrfs)",
+        "t-esp": "EFI パーティション", "t-snapshots": "スナップショット (snapper)", "t-pacman-lock": "pacman ロック",
+        "t-pacnew": ".pacnew ファイル", "t-mirrors": "pacman ミラー", "t-units": "失敗したサービス",
+        "t-gpu": "グラフィックス", "t-vulkan": "Vulkan（ゲーム）", "t-ucode": "CPU マイクロコード",
+        "t-gaming": "ゲーム向け設定", "t-net-route": "接続", "t-net-dns": "DNS",
+        "t-net-mirror": "Arch ミラー", "t-net-avalos": "AvalOS リポジトリ", "t-apps": "AvalOS アプリ",
+        "t-sync": "AvalOS 同期ピン",
+        "d-kernel-ok": "{rel}",
+        "d-kernel-reboot": "{rel} が動作中ですが、そのファイルはディスク上にありません：更新後のカーネルを使うには再起動してください",
+        "d-kernel-bore-cpu": "{rel} (BORE) には x86-64-v3 が必要ですが、この CPU は {cpu} です：アップデートで Compat カーネルに切り替えてください",
+        "d-boot-files-ok": "{n} 個のカーネルに vmlinuz、initramfs、mkinitcpio プリセットがあります",
+        "d-boot-files-fail": "起動ファイルが不足しています：{missing}。再生成するまで再起動しないでください (mkinitcpio -P)",
+        "d-time-sync-ok": "ネットワークで同期済み (NTP)",
+        "d-time-sync-warn": "未同期：時計がずれ、HTTPS が失敗する可能性があります (timedatectl set-ntp true)",
+        "d-disk-root-ok": "{used}% 使用 · 空き {free}",
+        "d-disk-root-warn": "{used}% 使用 · 空きは {free} のみ：容量を空けるか、古い復元バックアップを削除してください",
+        "d-disk-root-fail": "{used}% 使用 · 空きは {free} のみ：アップデートとスナップショットが失敗し始めます",
+        "d-btrfs-meta-ok": "割り当て済みメタデータの {pct}% を使用中",
+        "d-btrfs-meta-warn": "割り当て済みメタデータの {pct}% を使用中：ディスクに空きがあっても btrfs の容量が尽きることがあります (btrfs balance -musage=50 /)",
+        "d-btrfs-na": "ルートファイルシステムが btrfs ではありません：対象外です",
+        "d-btrfs-errors-ok": "読み取り・書き込み・破損エラーの記録はありません",
+        "d-btrfs-errors-fail": "{errs}：ディスクの状態を確認してください (btrfs scrub /, smartctl)",
+        "d-esp-ok": "/boot/efi の空き {free} MiB",
+        "d-esp-warn": "/boot/efi の空きは {free} MiB のみ：ブートローダーやカーネルのコピーが失敗する可能性があります",
+        "d-esp-none": "/boot/efi がマウントされていません（BIOS 起動？）",
+        "d-snapshots-ok": "snapper の 'root' 設定があり、スナップショットとクリーンアップのタイマーが有効です",
+        "d-snapshots-noconfig": "snapper に 'root' 設定がありません：復元ポイントが作られません",
+        "d-snapshots-nocleanup": "クリーンアップのタイマーが無効です：スナップショットが溜まりディスクを埋めます (systemctl enable --now snapper-cleanup.timer)",
+        "d-pacman-lock-ok": "ロックなし",
+        "d-pacman-lock-stale": "古いロックが残り、pacman は動いていません：sudo rm /var/lib/pacman/db.lck",
+        "d-pacman-lock-busy": "pacman が作業中です（アップデート中は正常）",
+        "d-pacnew-ok": "未処理のものはありません",
+        "d-pacnew-warn": "未確認のファイルが {n} 件（例：{first}）：pacdiff で比較してください",
+        "d-mirrors-ok": "{days} 日前に更新",
+        "d-mirrors-warn": "{days} 日間更新されていません：ミラーが遅い、または停止している可能性があります (reflector)",
+        "d-mirrors-missing": "/etc/pacman.d/mirrorlist がありません",
+        "d-units-ok": "失敗したユニットはありません",
+        "d-units-warn": "失敗したユニットが {n} 件：{names}",
+        "d-gpu-ok": "{gpus}",
+        "d-gpu-vm": "{gpus}：仮想または不明な GPU のため、ゲーム用の 3D アクセラレーションはありません",
+        "d-gpu-nvidia": "{gpus}：AvalOS は AMD と Intel が対象で、NVIDIA の動作は保証されません",
+        "d-gpu-nodriver": "{gpus}：適切なカーネルドライバーが使われていません",
+        "d-gpu-none": "グラフィックスデバイスが見つかりません",
+        "d-vulkan-ok": "{pkg} と {pkg32} がインストール済み",
+        "d-vulkan-noicd": "{pkg} がありません：ゲームで GPU アクセラレーションが使えません",
+        "d-vulkan-no32": "{pkg32} がありません：多くの Steam/Proton ゲームで必要です",
+        "d-vulkan-na": "AMD または Intel の GPU がないため対象外です",
+        "d-ucode-ok": "{pkg} がインストール済み（リビジョン {rev}）",
+        "d-ucode-warn": "{pkg} がありません：CPU がセキュリティ修正なしで起動します",
+        "d-ucode-unknown": "CPU のベンダーを認識できません",
+        "d-gaming-ok": "vm.max_map_count = {n}",
+        "d-gaming-warn": "vm.max_map_count = {n}：一部の Proton/Wine ゲームが終了します（/etc/sysctl.d で 1048576 に設定）",
+        "d-net-route-ok": "{iface} で接続中",
+        "d-net-route-fail": "デフォルトルートがありません：オフラインです（ケーブルまたは Wi-Fi を確認）",
+        "d-net-dns-ok": "archlinux.org を解決できます（{ms} ms）",
+        "d-net-dns-fail": "名前を解決できません（{err}）：DNS を確認してください (resolvectl status)",
+        "d-net-mirror-ok": "{host} が応答しています（{ms} ms）",
+        "d-net-mirror-warn": "{host} が応答しません（{err}）：別のミラーを試してください (reflector)",
+        "d-net-avalos-ok": "{host} が応答しています（{ms} ms）",
+        "d-net-avalos-warn": "{host} が応答しません（{err}）：AvalOS のカーネルをダウンロードできません",
+        "d-net-avalos-norepo": "/etc/pacman.conf に [avalos] がありません：AvalOS のカーネルが届きません",
+        "d-apps-ok": "{n} 個のアプリがメニュー項目付きでインストール済み",
+        "d-apps-warn": "不足：{missing}",
+        "d-sync-ok": "どちらも {sha} を指しています",
+        "d-sync-mismatch": "avalos-update-helper（{a}）と avalos-update（{b}）が別のバージョンを指しています：2 つを一緒にコピーしてください",
+        "d-skip-noroute": "ネットワークなし：未チェック",
+        "d-error": "チェックできませんでした：{err}",
+    },
+}
+
+
+# ── Utilidades ─────────────────────────────────────────────────────────────
+def _run(cmd, timeout=6):
+    """Corre un comando sin shell; devuelve (rc, stdout). 127 si no existe o se pasa del tiempo."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 127, ""
+
+
+def _read(path) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+_LOCK = threading.Lock()
+_CACHE = {}
+
+
+def _cached(key, fn):
+    # Varios chequeos comparten datos (lista de paquetes, filesystem de /): se calculan una vez por corrida.
+    with _LOCK:
+        if key not in _CACHE:
+            _CACHE[key] = fn()
+        return _CACHE[key]
+
+
+def _installed_pkgs():
+    """Conjunto de paquetes instalados, o None si pacman no responde (los chequeos de paquetes se saltan)."""
+    def go():
+        rc, out = _run(["pacman", "-Qq"], timeout=10)
+        return set(out.split()) if rc == 0 else None
+    return _cached("pkgs", go)
+
+
+def R(status, key, action=None, **args):
+    """Resultado de un chequeo: (estado, clave del texto, argumentos, app a abrir)."""
+    return status, key, args, action
+
+
+def _gib(n) -> str:
+    return f"{n / 2**30:.1f} GiB"
+
+
+def _cpu_arch() -> str:
+    # Misma lógica que avalos-update (_check_kernel_info): «lzcnt» se expone como «abm» en /proc/cpuinfo.
+    flags = set()
+    for line in _read(PROC / "cpuinfo").splitlines():
+        if line.startswith("flags"):
+            flags = set(line.split(":", 1)[1].lower().split())
+            break
+    if not flags:
+        return "x86-64"
+    if "lzcnt" in flags:
+        flags.add("abm")
+    v3 = {"avx", "avx2", "bmi1", "bmi2", "f16c", "fma", "abm", "movbe", "xsave"}
+    v4 = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
+    return "x86-64-v4" if v4 <= flags else "x86-64-v3" if v3 <= flags else "x86-64-v2"
+
+
+def _root_fs():
+    def go():
+        rc, out = _run(["findmnt", "-no", "FSTYPE,UUID", "/"])
+        parts = out.split()
+        return (parts[0], parts[1]) if rc == 0 and len(parts) >= 2 else ("", "")
+    return _cached("rootfs", go)
+
+
+def _default_route() -> str:
+    """Interfaz de la ruta por defecto (IPv4 o IPv6) leyendo /proc; '' si no hay."""
+    for line in _read(PROC / "net" / "route").splitlines()[1:]:
+        f = line.split()
+        try:
+            if len(f) >= 4 and f[1] == "00000000" and int(f[3], 16) & 2:
+                return f[0]
+        except ValueError:
+            continue
+    for line in _read(PROC / "net" / "ipv6_route").splitlines():
+        f = line.split()
+        try:
+            if (len(f) >= 10 and f[0] == "0" * 32 and f[1] == "00"
+                    and int(f[8], 16) & 1 and not int(f[8], 16) & 0x200):
+                return f[9]
+        except ValueError:
+            continue
+    return ""
+
+
+def _probe(url, timeout=6):
+    """GET de 1 byte (Range) — algunos CDN rechazan HEAD. Devuelve (ok, ms | motivo)."""
+    req = urllib.request.Request(url, headers={"Range": "bytes=0-0", "User-Agent": "avalos-doctor"})
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            r.read(1)
+        return True, int((time.time() - t0) * 1000)
+    except Exception as e:  # noqa: BLE001 — cualquier fallo de red es un hallazgo, no un crash
+        return False, str(getattr(e, "reason", e))[:80]
+
+
+# ── Chequeos: cada uno devuelve R(...) ─────────────────────────────────────
+def chk_kernel():
+    rel = os.uname().release
+    if "bore" in rel.lower() and _cpu_arch() not in ("x86-64-v3", "x86-64-v4"):
+        return R("fail", "d-kernel-bore-cpu", "avalos-update", rel=rel, cpu=_cpu_arch())
+    # pacman borra /usr/lib/modules/<versión>/kernel al reemplazar el paquete del kernel; el resto del
+    # directorio puede sobrevivir (módulos de DKMS), por eso se mira solo «kernel».
+    if not (MODULES_DIR / rel / "kernel").is_dir():
+        others = list(MODULES_DIR.glob("*/kernel")) if MODULES_DIR.is_dir() else []
+        if others:  # hay otro kernel instalado y el que corre ya no está: se actualizó
+            return R("warn", "d-kernel-reboot", rel=rel)
+        return R("info", "d-kernel-ok", rel=rel)  # nada con qué comparar (contenedor, live raro)
+    return R("ok", "d-kernel-ok", rel=rel)
+
+
+def chk_boot_files():
+    have = _installed_pkgs()
+    pkgs = [p for p in KERNEL_PKGS if have and p in have]
+    if not pkgs:
+        return R("skip", "d-error", err="pacman -Qq")
+    missing = []
+    for p in pkgs:
+        for f in (BOOT / f"vmlinuz-{p}", BOOT / f"initramfs-{p}.img", ETC / "mkinitcpio.d" / f"{p}.preset"):
+            try:
+                good = f.stat().st_size > 0
+            except OSError:
+                good = False
+            if not good:
+                missing.append(f.name)
+    if missing:
+        return R("fail", "d-boot-files-fail", missing=", ".join(missing))
+    return R("ok", "d-boot-files-ok", n=len(pkgs))
+
+
+def chk_time_sync():
+    rc, out = _run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
+    if rc != 0:
+        return R("skip", "d-error", err="timedatectl")
+    return R("ok", "d-time-sync-ok") if out.strip() == "yes" else R("warn", "d-time-sync-warn")
+
+
+def chk_disk_root():
+    du = shutil.disk_usage("/")
+    free_pct = du.free * 100 / du.total if du.total else 100
+    args = {"used": round(100 - free_pct), "free": _gib(du.free)}
+    if free_pct < 5 or du.free < 3 * 2**30:
+        return R("fail", "d-disk-root-fail", "avalos-restore", **args)
+    if free_pct < 15 or du.free < 10 * 2**30:
+        return R("warn", "d-disk-root-warn", "avalos-restore", **args)
+    return R("ok", "d-disk-root-ok", **args)
+
+
+def chk_btrfs_meta():
+    fstype, uuid = _root_fs()
+    if fstype != "btrfs" or not uuid:
+        return R("info", "d-btrfs-na")
+    base = SYS / "fs" / "btrfs" / uuid / "allocation" / "metadata"
+    try:
+        total = int(_read(base / "total_bytes").strip())
+        used = int(_read(base / "bytes_used").strip())
+    except ValueError:
+        return R("skip", "d-error", err="sysfs allocation/metadata")
+    pct = round(used * 100 / total) if total else 0
+    return R("warn", "d-btrfs-meta-warn", pct=pct) if pct >= 90 else R("ok", "d-btrfs-meta-ok", pct=pct)
+
+
+def chk_btrfs_errors():
+    fstype, uuid = _root_fs()
+    if fstype != "btrfs" or not uuid:
+        return R("info", "d-btrfs-na")
+    files = sorted((SYS / "fs" / "btrfs" / uuid / "devinfo").glob("*/error_stats"))
+    if not files:
+        return R("skip", "d-error", err="devinfo/*/error_stats")
+    bad = []
+    for f in files:
+        counts = {}
+        for line in _read(f).splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1].isdigit():
+                counts[parts[0].replace("_errs", "")] = int(parts[1])
+        nonzero = [f"{k}={v}" for k, v in counts.items() if v]
+        if nonzero:
+            bad.append(f"devid {f.parent.name}: " + ", ".join(nonzero))
+    return R("fail", "d-btrfs-errors-fail", errs="; ".join(bad)) if bad else R("ok", "d-btrfs-errors-ok")
+
+
+def chk_esp():
+    if not os.path.ismount(ESP):
+        return R("info", "d-esp-none")
+    free = shutil.disk_usage(ESP).free // 2**20
+    return R("warn", "d-esp-warn", free=free) if free < 50 else R("ok", "d-esp-ok", free=free)
+
+
+def chk_snapshots():
+    if not (ETC / "snapper" / "configs" / "root").exists():
+        return R("warn", "d-snapshots-noconfig", "avalos-restore")
+    if _run(["systemctl", "is-enabled", "snapper-cleanup.timer"])[1].strip() != "enabled":
+        return R("warn", "d-snapshots-nocleanup")
+    return R("ok", "d-snapshots-ok", "avalos-restore")
+
+
+def chk_pacman_lock():
+    if not PACMAN_LOCK.exists():
+        return R("ok", "d-pacman-lock-ok")
+    busy = _run(["pgrep", "-x", "pacman|yay|paru"])[0] == 0
+    return R("info", "d-pacman-lock-busy") if busy else R("warn", "d-pacman-lock-stale")
+
+
+def chk_pacnew():
+    found = []
+    for root, _dirs, files in os.walk(ETC):
+        found += [os.path.join(root, f) for f in files if f.endswith((".pacnew", ".pacsave"))]
+    if not found:
+        return R("ok", "d-pacnew-ok")
+    return R("warn", "d-pacnew-warn", n=len(found), first=sorted(found)[0])
+
+
+def chk_mirrors():
+    try:
+        age = (time.time() - (ETC / "pacman.d" / "mirrorlist").stat().st_mtime) / 86400
+    except OSError:
+        return R("fail", "d-mirrors-missing")
+    days = int(age)
+    return R("warn", "d-mirrors-warn", days=days) if days > 120 else R("ok", "d-mirrors-ok", days=days)
+
+
+def chk_units():
+    names = []
+    for scope in ([], ["--user"]):
+        rc, out = _run(["systemctl", *scope, "--failed", "--no-legend", "--plain", "--no-pager"])
+        if rc != 0 and not scope:
+            return R("skip", "d-error", err="systemctl")
+        names += [ln.split()[0] for ln in out.splitlines() if ln.strip()]
+    if not names:
+        return R("ok", "d-units-ok")
+    return R("warn", "d-units-warn", n=len(names), names=", ".join(names[:5]) + (" …" if len(names) > 5 else ""))
+
+
+_VENDORS = {"0x1002": "AMD", "0x8086": "Intel", "0x10de": "NVIDIA"}
+_GOOD_DRIVERS = {"amdgpu", "radeon", "i915", "xe", "nvidia", "nouveau"}
+
+
+def _gpus():
+    found = []
+    for card in sorted((SYS / "class" / "drm").glob("card[0-9]*")):
+        if "-" in card.name:  # card0-DP-1 y similares son conectores, no GPUs
+            continue
+        vendor = _read(card / "device" / "vendor").strip().lower()
+        try:
+            driver = os.path.basename(os.readlink(card / "device" / "driver"))
+        except OSError:
+            driver = ""
+        found.append((vendor, driver))
+    return found
+
+
+def chk_gpu():
+    gpus = _gpus()
+    if not gpus:
+        return R("warn", "d-gpu-none")
+    names = ", ".join(f"{_VENDORS.get(v, v or '?')} ({d or '—'})" for v, d in gpus)
+    if not any(v in _VENDORS for v, _ in gpus):
+        return R("info", "d-gpu-vm", gpus=names)
+    if any(_VENDORS.get(v) == "NVIDIA" for v, _ in gpus):
+        return R("warn", "d-gpu-nvidia", gpus=names)
+    if any(v in _VENDORS and d not in _GOOD_DRIVERS for v, d in gpus):
+        return R("warn", "d-gpu-nodriver", gpus=names)
+    return R("ok", "d-gpu-ok", gpus=names)
+
+
+_VULKAN = {"AMD": ("vulkan-radeon", "lib32-vulkan-radeon"), "Intel": ("vulkan-intel", "lib32-vulkan-intel")}
+
+
+def chk_vulkan():
+    vendors = sorted({_VENDORS.get(v) for v, _ in _gpus()} & set(_VULKAN))
+    if not vendors:
+        return R("info", "d-vulkan-na")
+    pkgs = _installed_pkgs()
+    if pkgs is None:
+        return R("skip", "d-error", err="pacman -Qq")
+    for v in vendors:
+        p, p32 = _VULKAN[v]
+        if p not in pkgs:
+            return R("warn", "d-vulkan-noicd", pkg=p)
+        if p32 not in pkgs:
+            return R("warn", "d-vulkan-no32", pkg32=p32)
+    return R("ok", "d-vulkan-ok", pkg=", ".join(_VULKAN[v][0] for v in vendors),
+             pkg32=", ".join(_VULKAN[v][1] for v in vendors))
+
+
+def chk_ucode():
+    vendor = ""
+    for line in _read(PROC / "cpuinfo").splitlines():
+        if line.startswith("vendor_id"):
+            vendor = line.split(":", 1)[1].strip()
+            break
+    pkg = {"GenuineIntel": "intel-ucode", "AuthenticAMD": "amd-ucode"}.get(vendor)
+    if not pkg:
+        return R("info", "d-ucode-unknown")
+    have = _installed_pkgs()
+    if have is None:
+        return R("skip", "d-error", err="pacman -Qq")
+    if pkg not in have or not (BOOT / f"{pkg}.img").exists():
+        return R("warn", "d-ucode-warn", pkg=pkg)
+    rev = _read(SYS / "devices" / "system" / "cpu" / "cpu0" / "microcode" / "version").strip() or "?"
+    return R("ok", "d-ucode-ok", pkg=pkg, rev=rev)
+
+
+def chk_gaming():
+    try:
+        n = int(_read(PROC / "sys" / "vm" / "max_map_count").strip())
+    except ValueError:
+        return R("skip", "d-error", err="vm.max_map_count")
+    return R("ok", "d-gaming-ok", n=n) if n >= 1048576 else R("warn", "d-gaming-warn", n=n)
+
+
+def chk_net_route():
+    iface = _default_route()
+    return R("ok", "d-net-route-ok", iface=iface) if iface else R("fail", "d-net-route-fail")
+
+
+def chk_net_dns():
+    if not _default_route():
+        return R("skip", "d-skip-noroute")
+    box = {}
+
+    def go():
+        t0 = time.time()
+        try:
+            socket.getaddrinfo("archlinux.org", 443, type=socket.SOCK_STREAM)
+            box["ms"] = int((time.time() - t0) * 1000)
+        except OSError as e:
+            box["err"] = str(e)[:80]
+
+    th = threading.Thread(target=go, daemon=True)  # getaddrinfo no tiene timeout propio
+    th.start()
+    th.join(5)
+    if "ms" in box:
+        return R("ok", "d-net-dns-ok", ms=box["ms"])
+    return R("fail", "d-net-dns-fail", err=box.get("err", "timeout"))
+
+
+def _first_mirror() -> str:
+    for line in _read(ETC / "pacman.d" / "mirrorlist").splitlines():
+        m = re.match(r"\s*Server\s*=\s*(\S+)", line)
+        if m:
+            return m.group(1).replace("$repo", "core").replace("$arch", "x86_64").rstrip("/") + "/core.db"
+    return ""
+
+
+def chk_net_mirror():
+    url = _first_mirror()
+    if not url:
+        return R("skip", "d-error", err="mirrorlist")
+    if not _default_route():
+        return R("skip", "d-skip-noroute")
+    ok, info = _probe(url)
+    host = urllib.parse.urlsplit(url).hostname
+    return R("ok", "d-net-mirror-ok", host=host, ms=info) if ok else R("warn", "d-net-mirror-warn", host=host, err=info)
+
+
+def _avalos_repo_url() -> str:
+    section = None
+    for line in _read(ETC / "pacman.conf").splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            section = s[1:-1]
+        elif section == "avalos":
+            m = re.match(r"Server\s*=\s*(\S+)", s)
+            if m:
+                return m.group(1).replace("$repo", "avalos").replace("$arch", "x86_64").rstrip("/")
+    return ""
+
+
+def chk_net_avalos():
+    base = _avalos_repo_url()
+    if not base:
+        return R("warn", "d-net-avalos-norepo")
+    if not _default_route():
+        return R("skip", "d-skip-noroute")
+    ok, info = _probe(base + "/avalos.db")
+    host = urllib.parse.urlsplit(base).hostname
+    return R("ok", "d-net-avalos-ok", host=host, ms=info) if ok else R("warn", "d-net-avalos-warn", host=host, err=info)
+
+
+def chk_apps():
+    missing = []
+    for app in AVALOS_APPS:
+        p = BIN_DIR / app
+        if not (p.is_file() and os.access(p, os.X_OK)):
+            missing.append(app)
+        if app in NEEDS_DESKTOP:
+            if not (APPS_DIR / f"{app}.desktop").is_file():
+                missing.append(f"{app}.desktop")
+            if not (ICON_DIR / f"{app}.svg").is_file():
+                missing.append(f"{app}.svg")
+    if missing:
+        shown = ", ".join(missing[:6]) + (f" … (+{len(missing) - 6})" if len(missing) > 6 else "")
+        return R("warn", "d-apps-warn", "avalos-update", missing=shown)
+    return R("ok", "d-apps-ok", n=len(AVALOS_APPS))
+
+
+_PIN_RE = re.compile(r'^AVALOS_SYNC_REF\s*=\s*"([0-9a-f]{40})"', re.M)
+
+
+def chk_sync():
+    pins = {}
+    for app in ("avalos-update-helper", "avalos-update"):
+        m = _PIN_RE.search(_read(BIN_DIR / app))
+        pins[app] = m.group(1)[:7] if m else ""
+    if not all(pins.values()):
+        return R("skip", "d-error", err="AVALOS_SYNC_REF")
+    a, b = pins["avalos-update-helper"], pins["avalos-update"]
+    if a != b:
+        return R("warn", "d-sync-mismatch", "avalos-update", a=a, b=b)
+    return R("ok", "d-sync-ok", sha=a)
+
+
+# (id, grupo, función, ¿toca la red?) — el orden es el del informe
+CHECKS = [
+    ("kernel", "system", chk_kernel, False),
+    ("boot-files", "system", chk_boot_files, False),
+    ("time-sync", "system", chk_time_sync, False),
+    ("disk-root", "storage", chk_disk_root, False),
+    ("btrfs-meta", "storage", chk_btrfs_meta, False),
+    ("btrfs-errors", "storage", chk_btrfs_errors, False),
+    ("esp", "storage", chk_esp, False),
+    ("snapshots", "storage", chk_snapshots, False),
+    ("pacman-lock", "packages", chk_pacman_lock, False),
+    ("pacnew", "packages", chk_pacnew, False),
+    ("mirrors", "packages", chk_mirrors, False),
+    ("units", "packages", chk_units, False),
+    ("gpu", "hardware", chk_gpu, False),
+    ("vulkan", "hardware", chk_vulkan, False),
+    ("ucode", "hardware", chk_ucode, False),
+    ("gaming", "hardware", chk_gaming, False),
+    ("net-route", "network", chk_net_route, False),
+    ("net-dns", "network", chk_net_dns, True),
+    ("net-mirror", "network", chk_net_mirror, True),
+    ("net-avalos", "network", chk_net_avalos, True),
+    ("apps", "avalos", chk_apps, False),
+    ("sync", "avalos", chk_sync, False),
+]
+
+# ── Motor: corre todo en paralelo y arma el informe ya traducido ───────────
+_STATUS_ORDER = ("fail", "warn", "info", "skip", "ok")
+
+
+def _fmt(T, key, args):
+    try:
+        return T[key].format(**args)
+    except (KeyError, IndexError, ValueError):
+        return f"{key} {args}"
+
+
+def run_checks(lang=None, network=True):
+    T = STRINGS.get(lang or LANG, STRINGS["en"])
+    with _LOCK:
+        _CACHE.clear()
+    pool = ThreadPoolExecutor(max_workers=8)
+    futs = [(c, pool.submit(c[2])) for c in CHECKS if network or not c[3]]
+    findings = []
+    for (cid, group, _fn, _net), fut in futs:
+        try:
+            status, key, args, action = fut.result(timeout=25)
+        except Exception as e:  # noqa: BLE001 — un chequeo roto no puede tirar el informe
+            status, key, args, action = "skip", "d-error", {"err": f"{type(e).__name__}: {e}"[:100]}, None
+        act = None
+        if action in OPEN_WHITELIST and status in ("warn", "fail"):
+            act = {"app": action, "label": T[OPEN_WHITELIST[action]]}
+        findings.append({"id": cid, "group": group, "gname": T["g-" + group], "status": status,
+                         "title": T["t-" + cid], "detail": _fmt(T, key, args), "action": act})
+    pool.shutdown(wait=False, cancel_futures=True)  # un hilo colgado no frena el informe
+    summary = {s: sum(1 for f in findings if f["status"] == s) for s in _STATUS_ORDER}
+    return {"findings": findings, "summary": summary, "when": time.strftime("%Y-%m-%d %H:%M"),
+            "kernel": os.uname().release, "lang": lang or LANG}
+
+
+_MARK = {"ok": " OK ", "info": "INFO", "skip": "SKIP", "warn": "WARN", "fail": "FAIL"}
+_ANSI = {"ok": "32", "info": "34", "skip": "90", "warn": "33", "fail": "31"}
+
+
+def format_report(res, lang=None, color=False):
+    T = STRINGS.get(lang or res.get("lang") or LANG, STRINGS["en"])
+    s = res["summary"]
+    lines = [f"{T['report-title']} — {res['when']} — kernel {res['kernel']}",
+             _fmt(T, "summary", {"ok": s["ok"], "warn": s["warn"], "fail": s["fail"]}), ""]
+    for st in _STATUS_ORDER:
+        for f in res["findings"]:
+            if f["status"] != st:
+                continue
+            mark = f"[{_MARK[st]}]"
+            if color:
+                mark = f"\033[{_ANSI[st]}m{mark}\033[0m"
+            lines.append(f"{mark} {f['title']} ({f['id']}): {f['detail']}")
+    return "\n".join(lines)
+
+
+def exit_code(res) -> int:
+    s = res["summary"]
+    return 2 if s["fail"] else 1 if s["warn"] else 0
+
+
+# ── API expuesta a la ventana ──────────────────────────────────────────────
+class DoctorAPI:
+    window = None
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._last = None
+
+    def run(self):
+        with self._lock:
+            self._last = run_checks(LANG)
+            return self._last
+
+    def copy_report(self):
+        T = STRINGS[LANG]
+        if not self._last:
+            return {"ok": False, "msg": ""}
+        text = format_report(self._last, LANG)
+        for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"]):
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.run(cmd, input=text, text=True, timeout=5, check=True)
+                    return {"ok": True, "msg": T["copied"]}
+                except (OSError, subprocess.SubprocessError):
+                    continue
+        path = Path.home() / "avalos-doctor-report.txt"
+        try:
+            path.write_text(text + "\n", encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "msg": str(e)}
+        return {"ok": True, "msg": T["saved"].format(path=path)}
+
+    def open_app(self, name):
+        # Lista cerrada: la página nunca puede lanzar otra cosa que estas dos apps.
+        if name not in OPEN_WHITELIST or not shutil.which(name):
+            return False
+        try:
+            subprocess.Popen([name], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            return True
+        except OSError:
+            return False
+
+    def close(self):
+        if self.window:
+            self.window.destroy()
+
+
+def _build_html():
+    return r"""<!DOCTYPE html>
+<html lang="LANG_PLACEHOLDER">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
+    --border: #414868; --text: #c0caf5; --text-dim: #565f89;
+    --blue: #7aa2f7; --purple: #bb9af7; --green: #9ece6a; --red: #f7768e; --yellow: #e0af68;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
+    overflow: hidden; height: 100%; font-size: 13px; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+  .hidden { display: none !important; }
+
+  header { padding: 16px 22px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  header .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  header h1 { font-size: 16px; margin: 0 0 2px; font-weight: 600; letter-spacing: .2px; }
+  header h1 .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header .sub { font-size: 11.5px; color: var(--text-dim); }
+  header .actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+  .banner { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 12px; padding: 9px 12px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--surface); }
+  .banner .cnt { font-weight: 400; font-size: 11.5px; color: var(--text-dim); }
+  .banner.ok { color: var(--green); border-color: rgba(158,206,106,.4); background: rgba(158,206,106,.08); }
+  .banner.warn { color: var(--yellow); border-color: rgba(224,175,104,.4); background: rgba(224,175,104,.1); }
+  .banner.fail { color: var(--red); border-color: rgba(247,118,142,.45); background: rgba(247,118,142,.1); }
+
+  .body { flex: 1; overflow-y: auto; padding: 14px 22px; }
+  .loading { color: var(--text-dim); padding: 30px 4px; font-size: 12.5px; }
+  .sec-title { font-weight: 600; font-size: 13px; margin: 2px 0 8px; }
+
+  .row { display: flex; align-items: flex-start; gap: 12px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 7px; }
+  .row .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; background: var(--text-dim); }
+  .row.st-ok .dot { background: var(--green); }
+  .row.st-info .dot { background: var(--blue); }
+  .row.st-warn .dot { background: var(--yellow); }
+  .row.st-fail .dot { background: var(--red); }
+  .row.st-warn { border-color: rgba(224,175,104,.45); }
+  .row.st-fail { border-color: rgba(247,118,142,.55); }
+  .row .info { flex: 1; min-width: 0; }
+  .row .ttl { font-size: 12.5px; font-weight: 600; }
+  .row .grp { font-size: 10.5px; font-weight: 400; color: var(--text-dim); margin-left: 8px; }
+  .row .det { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; line-height: 1.5; word-break: break-word; }
+  .row.st-warn .det, .row.st-fail .det { color: var(--text); }
+
+  details.rest { margin-top: 12px; }
+  details.rest > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--blue); margin-bottom: 8px; }
+
+  button.btn { font-family: inherit; font-size: 11.5px; font-weight: 600; padding: 6px 13px;
+    border-radius: 7px; border: 1px solid var(--border); background: var(--surface-hi);
+    color: var(--text); cursor: pointer; white-space: nowrap; align-self: center; }
+  button.btn:hover { border-color: var(--blue); }
+  button.btn:disabled { opacity: .45; cursor: not-allowed; }
+  button.btn.primary { background: linear-gradient(135deg, var(--blue), var(--purple)); color: var(--bg-alt); border: none; }
+  button.btn.ghost { background: transparent; }
+
+  footer { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 22px; border-top: 1px solid var(--border); flex-shrink: 0; min-height: 46px; }
+  #toast { font-size: 11.5px; color: var(--green); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="top">
+      <div>
+        <h1><span class="accent">AvalOS</span> STR_TITLE</h1>
+        <div class="sub">STR_SUBTITLE</div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="copyBtn" disabled></button>
+        <button class="btn primary" id="runBtn" disabled></button>
+      </div>
+    </div>
+    <div class="banner hidden" id="banner"></div>
+  </header>
+  <div class="body">
+    <div class="loading" id="loading"></div>
+    <div class="hidden" id="result">
+      <div class="sec-title hidden" id="attTitle"></div>
+      <div id="attList"></div>
+      <details class="rest hidden" id="rest">
+        <summary id="restSum"></summary>
+        <div id="restList"></div>
+      </details>
+    </div>
+  </div>
+  <footer>
+    <span id="toast"></span>
+    <button class="btn ghost" id="closeBtn"></button>
+  </footer>
+</div>
+<script>
+const T = STRINGS_PLACEHOLDER;
+const el = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const fmt = (s, o) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in o ? o[k] : m));
+let busy = false, toastTimer = null;
+
+function row(f) {
+  const act = f.action ? `<button class="btn" data-app="${esc(f.action.app)}">${esc(f.action.label)}</button>` : '';
+  return `<div class="row st-${esc(f.status)}"><span class="dot"></span><div class="info">` +
+         `<div class="ttl">${esc(f.title)}<span class="grp">${esc(f.gname)}</span></div>` +
+         `<div class="det">${esc(f.detail)}</div></div>${act}</div>`;
+}
+
+function render(d) {
+  const bad = f => f.status === 'fail' || f.status === 'warn';
+  const att = d.findings.filter(bad).sort((a, b) => (a.status === 'fail' ? 0 : 1) - (b.status === 'fail' ? 0 : 1));
+  const rest = d.findings.filter(f => !bad(f));
+  const s = d.summary;
+  const b = el('banner');
+  b.className = 'banner ' + (s.fail ? 'fail' : s.warn ? 'warn' : 'ok');
+  b.innerHTML = `<span class="msg">${esc(att.length ? fmt(T['attention'], {n: att.length}) : '✓ ' + T['all-ok'])}</span>` +
+                `<span class="cnt">${esc(fmt(T['summary'], s))}</span>`;
+  el('attTitle').textContent = T['sec-attention'];
+  el('attTitle').classList.toggle('hidden', !att.length);
+  el('attList').innerHTML = att.map(row).join('');
+  el('restSum').textContent = fmt(T['sec-rest'], {n: rest.length});
+  el('restList').innerHTML = rest.map(row).join('');
+  const det = el('rest');
+  det.classList.toggle('hidden', !rest.length);
+  if (att.length) det.removeAttribute('open'); else det.setAttribute('open', '');
+  el('loading').classList.add('hidden');
+  el('result').classList.remove('hidden');
+}
+
+async function run() {
+  if (busy) return;
+  busy = true;
+  el('loading').textContent = T['running'];
+  el('loading').classList.remove('hidden');
+  el('result').classList.add('hidden');
+  el('banner').classList.add('hidden');
+  el('runBtn').disabled = true;
+  el('copyBtn').disabled = true;
+  try {
+    render(await pywebview.api.run());
+    el('copyBtn').disabled = false;
+  } catch (e) {
+    el('loading').textContent = String(e);
+  }
+  el('runBtn').disabled = false;
+  busy = false;
+}
+
+function toast(msg) {
+  const t = el('toast');
+  t.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.textContent = ''; }, 5000);
+}
+
+async function copyReport() {
+  const r = await pywebview.api.copy_report();
+  if (r && r.msg) toast(r.msg);
+}
+
+el('runBtn').textContent = T['run'];
+el('copyBtn').textContent = T['copy'];
+el('closeBtn').textContent = T['close'];
+el('runBtn').addEventListener('click', run);
+el('copyBtn').addEventListener('click', copyReport);
+el('closeBtn').addEventListener('click', () => pywebview.api.close());
+document.addEventListener('click', e => {
+  const b = e.target.closest('button[data-app]');
+  if (b) pywebview.api.open_app(b.dataset.app);
+});
+window.addEventListener('pywebviewready', run);
+</script>
+</body>
+</html>"""
+
+
+def _gui():
+    import webview  # solo la ventana lo necesita: --text sigue andando sin pywebview
+    T = STRINGS[LANG]
+    html = (_build_html()
+            .replace("LANG_PLACEHOLDER", _HTML_LANG.get(LANG, LANG))
+            .replace("STR_TITLE", T["title"])
+            .replace("STR_SUBTITLE", T["subtitle"])
+            .replace("STRINGS_PLACEHOLDER", json.dumps(T, ensure_ascii=False)))
+
+    # Mismo fix que avalos-update/avalos-restore: sin esto GTK usa "python3" como app_id en Wayland
+    # y la window rule (class = "avalos-doctor") nunca matchea.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-doctor")
+    except Exception:
+        pass
+
+    api = DoctorAPI()
+    win = webview.create_window(
+        title            = f"AvalOS — {T['title']}",
+        html             = html,
+        js_api           = api,
+        width            = 700,
+        height           = 720,
+        min_size         = (520, 480),
+        resizable        = True,
+        background_color = "#1a1b26",
+    )
+    api.window = win
+    try:
+        webview.start(debug=False)
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR al iniciar pywebview: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv=None):
+    global LANG
+    ap = argparse.ArgumentParser(prog="avalos-doctor", description="AvalOS system health check (read-only).")
+    ap.add_argument("--text", action="store_true", help="print the report to the console")
+    ap.add_argument("--json", action="store_true", help="print the report as JSON")
+    ap.add_argument("--gui", action="store_true", help="force the window")
+    ap.add_argument("--no-network", action="store_true", help="skip the checks that need Internet")
+    ap.add_argument("--lang", choices=_SUPPORTED, help="language of the report")
+    a = ap.parse_args(argv)
+    if a.lang:
+        LANG = a.lang
+    has_display = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+    if a.gui or (not a.text and not a.json and has_display):
+        return _gui()
+    res = run_checks(LANG, network=not a.no_network)
+    print(json.dumps(res, ensure_ascii=False, indent=2) if a.json
+          else format_report(res, LANG, color=sys.stdout.isatty()))
+    return exit_code(res)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

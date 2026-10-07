@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7aa2f7"/>
+      <stop offset="100%" stop-color="#bb9af7"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="#1a1b26"/>
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="url(#bg)" opacity="0.92"/>
+  <!-- latido: la señal que un doctor mira primero -->
+  <path d="M15 54 H33 L41 33 L53 72 L62 45 L67 54 H85" fill="none" stroke="#1a1b26" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+</svg>

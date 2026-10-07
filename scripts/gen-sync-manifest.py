@@ -58,6 +58,7 @@ RUTAS = [
     "scripts/avalos-about",
     "scripts/avalos-store",
     "scripts/avalos-restore",
+    "scripts/avalos-doctor",
     "configs/avalos-store-catalog.json",
     "configs/avalos-settings.desktop",
     "configs/avalos-store.desktop",
@@ -68,6 +69,8 @@ RUTAS = [
     "configs/avalos-update.svg",
     "configs/avalos-restore.desktop",
     "configs/avalos-restore.svg",
+    "configs/avalos-doctor.desktop",
+    "configs/avalos-doctor.svg",
     "configs/hyprland/hyprland_conf_lua.template",
     "configs/hyprland/hyprpaper.conf",
     "configs/hyprland/hypridle.conf",
@@ -119,8 +122,8 @@ def _parse_manifest(texto: str) -> dict[str, str]:
     return hashes
 
 
-def _rutas_del_helper(root: Path) -> list[str]:
-    tree = ast.parse((root / HELPER).read_text(encoding="utf-8"))
+def _rutas_del_helper_texto(texto: str) -> list[str]:
+    tree = ast.parse(texto)
     for fn in ast.walk(tree):
         if isinstance(fn, ast.FunctionDef) and fn.name == "cmd_sync_system_files":
             for nodo in ast.walk(fn):
@@ -131,9 +134,15 @@ def _rutas_del_helper(root: Path) -> list[str]:
     raise RuntimeError("no encontré `manifest = [...]` dentro de cmd_sync_system_files")
 
 
-def _verificar_ref(root: Path, ref: str) -> list[str]:
+def _rutas_del_helper(root: Path) -> list[str]:
+    return _rutas_del_helper_texto((root / HELPER).read_text(encoding="utf-8"))
+
+
+def _verificar_ref(root: Path, ref: str, rutas: list[str] | None = None) -> list[str]:
     """Problemas de `ref` como commit sincronizable: tiene que traer MANIFEST.sha256,
-    listar exactamente RUTAS, y cada hash tiene que coincidir con el archivo de ESE commit."""
+    listar exactamente `rutas` (por defecto las de HEAD), y cada hash tiene que coincidir con
+    el archivo de ESE commit."""
+    rutas = RUTAS if rutas is None else rutas
     corto = ref[:12]
     m = _git(root, "show", f"{ref}:{MANIFEST}", check=False)
     if m.returncode != 0:
@@ -143,10 +152,10 @@ def _verificar_ref(root: Path, ref: str) -> list[str]:
         hashes = _parse_manifest(m.stdout.decode("utf-8"))
     except ValueError as e:
         return [f"{MANIFEST} en {corto}: {e}"]
-    if set(hashes) != set(RUTAS):
+    if set(hashes) != set(rutas):
         return [f"{MANIFEST} en {corto} no lista exactamente RUTAS — regenerá y commiteá"]
     malos = []
-    for r in RUTAS:
+    for r in rutas:
         f = _git(root, "show", f"{ref}:{r}", check=False)
         if f.returncode != 0 or _sha(f.stdout) != hashes[r]:
             malos.append(r)
@@ -178,7 +187,17 @@ def _check_pin(root: Path) -> list[str]:
         if _git(root, *existe, check=False).returncode != 0:
             print(f"aviso: no pude verificar el commit pineado {pin[:12]} (no está en el clon y no se pudo traer de origin)")
             return []
-    problemas = _verificar_ref(root, pin)
+    # RUTAS pudo crecer DESPUÉS del pin: el commit pineado se valida contra las RUTAS que tenía él (el
+    # `manifest` de su propio helper), no contra las de HEAD. Contra las de HEAD, agregar un archivo
+    # sincronizable dejaría --check en rojo hasta cortar la release, y sync-release.yml corre --check ANTES.
+    rutas_ref = None
+    h = _git(root, "show", f"{pin}:{HELPER}", check=False)
+    if h.returncode == 0:
+        try:
+            rutas_ref = _rutas_del_helper_texto(h.stdout.decode("utf-8"))
+        except (RuntimeError, SyntaxError, UnicodeDecodeError):
+            rutas_ref = None  # helper ilegible en ese commit: se cae a las RUTAS de HEAD (más estricto)
+    problemas = _verificar_ref(root, pin, rutas_ref)
     if not problemas:
         _avisar_release_pendiente(root, pin)
     return problemas
@@ -247,7 +266,13 @@ def cmd_check(root: Path) -> int:
             errores.append(f"{MANIFEST}: {e}")
         else:
             if set(hashes) != set(RUTAS):
-                errores.append(f"{MANIFEST} no lista exactamente RUTAS — regenerar")
+                # aviso, no error: RUTAS puede crecer (o achicarse) en un commit y el manifiesto se rehace al
+                # cortar la release. Que algo así NO se pueda pinear lo garantizan --pin/--release
+                # (_verificar_ref de HEAD) y --verify-remote.
+                faltan = sorted(set(RUTAS) - set(hashes))
+                sobran = sorted(set(hashes) - set(RUTAS))
+                print(f"aviso: {MANIFEST} no lista exactamente RUTAS (faltan: {', '.join(faltan) or '—'}; "
+                      f"sobran: {', '.join(sobran) or '—'}) — se rehace al cortar release")
             else:
                 viejos = [r for r in RUTAS if (root / r).is_file() and _sha((root / r).read_bytes()) != hashes[r]]
                 if viejos:  # aviso, no error: el manifiesto solo tiene que estar al día al cortar una release
