@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AvalOS Welcome
+Name[es]=Bienvenido a AvalOS
+Name[zh_CN]=欢迎使用 AvalOS
+Name[ja]=AvalOS へようこそ
+Comment=First steps and key shortcuts
+Comment[es]=Primeros pasos y atajos de teclado
+Comment[zh_CN]=开始使用与常用快捷键
+Comment[ja]=はじめにとショートカット
+Exec=avalos-welcome
+Icon=avalos-welcome
+Terminal=false
+NoDisplay=false
+StartupNotify=true
+StartupWMClass=avalos-welcome
+Categories=System;Settings;
+Keywords=welcome;start;getting started;intro;tutorial;bienvenida;empezar;primeros pasos;欢迎;开始;ようこそ;はじめに;

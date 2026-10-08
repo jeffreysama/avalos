@@ -39,6 +39,7 @@ case "$LANG_CODE" in
     T_USERS="  Usuario  Contraseña · Perfil"
     T_SNAPSHOTS=" Snapshots  Instantáneas del sistema"
     T_DOCTOR=" Doctor  Salud del sistema"
+    T_WELCOME=" Bienvenida  Primeros pasos"
     T_ABOUT="  Acerca de  Info del sistema"
     T_NO_APP="❌ Aplicación no instalada"
     ;;
@@ -54,6 +55,7 @@ case "$LANG_CODE" in
     T_USERS="  用户  密码 · 个人设置"
     T_SNAPSHOTS=" 快照  系统快照管理"
     T_DOCTOR=" 诊断  系统健康检查"
+    T_WELCOME=" 欢迎  开始使用"
     T_ABOUT="  关于  系统信息"
     T_NO_APP="❌ 未安装该应用程序"
     ;;
@@ -69,6 +71,7 @@ case "$LANG_CODE" in
     T_USERS="  ユーザー  パスワード・プロフィール"
     T_SNAPSHOTS=" スナップショット  システムのスナップショット"
     T_DOCTOR=" 診断  システムの健康チェック"
+    T_WELCOME=" ようこそ  はじめに"
     T_ABOUT="  情報  システム情報"
     T_NO_APP="❌ アプリケーションがインストールされていません"
     ;;
@@ -84,6 +87,7 @@ case "$LANG_CODE" in
     T_USERS="  User  Password · Profile"
     T_SNAPSHOTS=" Snapshots  System snapshots"
     T_DOCTOR=" Doctor  System health"
+    T_WELCOME=" Welcome  Getting started"
     T_ABOUT="  About  System info"
     T_NO_APP="❌ Application not installed"
     ;;
@@ -114,12 +118,13 @@ chosen=$(printf '%s\n' \
     "$T_USERS"      \
     "$T_SNAPSHOTS"  \
     "$T_DOCTOR"     \
+    "$T_WELCOME"    \
     "$T_ABOUT"      \
   | rofi -dmenu \
          -i \
          -no-custom \
          -p "$T_TITLE" \
-         -theme-str 'window {width: 480px;} listview {lines: 11;}')
+         -theme-str 'window {width: 480px;} listview {lines: 12;}')
 
 [[ -z "$chosen" ]] && exit 0
 
@@ -272,6 +277,11 @@ elif [[ "$chosen" == "$T_DOCTOR" ]]; then
     if command -v avalos-doctor &>/dev/null; then
         _run avalos-doctor
     fi
+
+elif [[ "$chosen" == "$T_WELCOME" ]]; then
+    # avalos-welcome: primeros pasos y atajos. _run avisa si este sistema todavía no la
+    # tiene (llega con la próxima sync/ISO).
+    _run avalos-welcome
 
 elif [[ "$chosen" == "$T_ABOUT" ]]; then
     # BUG-16 FIX (continuación): esta rama tiene 2 niveles de fallback

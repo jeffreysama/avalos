@@ -103,7 +103,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
 
     session.log(session.t("log-installing-scripts"), "info")
     _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
-                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor")
+                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome")
     for _script_name in _avalos_scripts:
         _content = read_config(f"scripts/{_script_name}")
         if _content:
@@ -231,6 +231,14 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
     else:
         session.log(session.t("log-doctor-desktop-missing"), "warn")
 
+    # avalos-welcome: bienvenida del primer arranque (solo abre otras apps; sin polkit).
+    _content = read_config("avalos-welcome.desktop")
+    if _content:
+        (_apps_dir / "avalos-welcome.desktop").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-welcome-desktop-installed"), "ok")
+    else:
+        session.log(session.t("log-welcome-desktop-missing"), "warn")
+
     _content = read_config("avalos-restore.svg")
     if _content:
         (_icon_dir / "avalos-restore.svg").write_text(_content, encoding="utf-8")
@@ -244,6 +252,13 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
         session.log(session.t("log-doctor-icon-installed"), "ok")
     else:
         session.log(session.t("log-doctor-icon-missing"), "warn")
+
+    _content = read_config("avalos-welcome.svg")
+    if _content:
+        (_icon_dir / "avalos-welcome.svg").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-welcome-icon-installed"), "ok")
+    else:
+        session.log(session.t("log-welcome-icon-missing"), "warn")
 
     (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
         datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),

@@ -1,0 +1,579 @@
+#!/usr/bin/env python3
+# ── AvalOS — avalos-welcome ─────────────────────────────────────────
+# Bienvenida del primer arranque: qué conviene hacer primero (actualizar, instalar
+# apps, fondo de pantalla, salud del sistema, puntos de restauración) y los atajos de
+# teclado que vale la pena saber. Solo abre otras apps de AvalOS: no necesita root ni
+# polkit y no cambia nada del sistema. Lo único que escribe es la marca «ya la viste»
+# en ~/.local/state/avalos/welcome-seen.
+#
+#   avalos-welcome              abre la ventana (menú de Settings, rofi)
+#   avalos-welcome --first-run  igual, pero solo si no se mostró antes (autostart de
+#                               Hyprland); no hace nada en el live ni sin pantalla
+#
+# La marca se escribe cuando la ventana ya cargó, no al lanzarla: si algo falla antes
+# de dibujarse, el próximo inicio de sesión lo vuelve a intentar.
+#
+# Requiere: python 3.9+, python-pywebview, webkit2gtk-4.1 y python-gobject (ya los
+# instala el instalador).
+import argparse
+import datetime
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# ── Rutas del sistema (se pueden redirigir en las pruebas) ─────────────────
+LIVE_MARKER = Path("/run/archiso")  # solo existe en el live ISO
+
+# ── i18n — mismo patrón que avalos-doctor/avalos-update ───────────────────
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+_HTML_LANG = {"zh": "zh-CN"}
+
+
+def _detectar_idioma() -> str:
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
+
+# Pasos: (id, app que abre). Los textos son a-<id>-t (título) y a-<id>-d (descripción).
+STEPS = [
+    ("update", "avalos-update"),
+    ("store", "avalos-store"),
+    ("wall", "avalos-wallpaper"),
+    ("doctor", "avalos-doctor"),
+    ("restore", "avalos-restore"),
+]
+
+# Lista cerrada: la página nunca puede lanzar otra cosa que estas apps.
+OPEN_WHITELIST = tuple(app for _id, app in STEPS)
+
+# Lista cerrada de enlaces (se abren con el navegador del sistema).
+URLS = {
+    "repo": "https://github.com/jeffreysama/avalos",
+    "issues": "https://github.com/jeffreysama/avalos/issues",
+}
+
+# Atajos que se muestran: (teclas, clave de texto). Tienen que existir de verdad en
+# configs/hyprland/hyprland_conf_lua.template: scripts/validate_app_consistency.py lo
+# comprueba (una entrada con «…» en la última tecla, como el rango de escritorios, se
+# salta porque en el template sale de un bucle). El formato de la lista es literal a
+# propósito: ese validador la lee tal cual.
+SHORTCUTS = [
+    (("Super", "Space"), "k-launcher"),
+    (("Super", "Return"), "k-terminal"),
+    (("Super", "E"), "k-files"),
+    (("Super", "B"), "k-browser"),
+    (("Super", "Q"), "k-close"),
+    (("Super", "F"), "k-full"),
+    (("Super", "1…9"), "k-ws"),
+    (("Super", "Shift", "S"), "k-shot"),
+    (("Super", "V"), "k-clip"),
+    (("Super", "Alt", "S"), "k-store"),
+    (("Super", "Alt", "U"), "k-update"),
+    (("Super", "Ctrl", "S"), "k-settings"),
+    (("Super", "Ctrl", "W"), "k-wall"),
+    (("Super", "Shift", "E"), "k-power"),
+]
+
+STRINGS = {
+    "en": {
+        "title": "Welcome to AvalOS",
+        "subtitle": "Your system is ready. These are the first things worth doing.",
+        "h-start": "Getting started",
+        "a-update-t": "Update the system",
+        "a-update-d": "Packages, kernel, AUR and Flatpak, with a restore point taken first.",
+        "a-store-t": "Install apps and games",
+        "a-store-d": "The AvalOS store brings pacman, Flatpak and AUR apps together in one place.",
+        "a-wall-t": "Change the wallpaper",
+        "a-wall-d": "Pick an image for your desktop.",
+        "a-doctor-t": "Check the system health",
+        "a-doctor-d": "Read-only checks on disk, boot files, GPU drivers and network.",
+        "a-restore-t": "Restore points",
+        "a-restore-d": "Go back to an earlier state of the system if an update goes wrong.",
+        "open": "Open",
+        "unavailable": "Not installed on this system yet.",
+        "h-keys": "Shortcuts to get going",
+        "k-launcher": "App launcher",
+        "k-terminal": "Terminal",
+        "k-files": "Files",
+        "k-browser": "Browser (Firefox)",
+        "k-close": "Close window",
+        "k-full": "Full screen",
+        "k-ws": "Switch workspace",
+        "k-shot": "Region screenshot (to clipboard)",
+        "k-clip": "Clipboard history",
+        "k-store": "AvalOS store",
+        "k-update": "Updates",
+        "k-settings": "AvalOS settings",
+        "k-wall": "Wallpaper",
+        "k-power": "Power menu",
+        "note": "You can open this window again from Settings → Welcome.",
+        "b-github": "GitHub",
+        "b-issues": "Report a problem",
+        "b-close": "Close",
+        "url-fail": "Couldn't open the browser. Link: {url}",
+    },
+    "es": {
+        "title": "Bienvenido a AvalOS",
+        "subtitle": "Tu sistema ya está listo. Esto es lo primero que conviene hacer.",
+        "h-start": "Primeros pasos",
+        "a-update-t": "Actualizar el sistema",
+        "a-update-d": "Paquetes, kernel, AUR y Flatpak, con un punto de restauración antes de empezar.",
+        "a-store-t": "Instalar apps y juegos",
+        "a-store-d": "La tienda de AvalOS reúne apps de pacman, Flatpak y AUR en un solo lugar.",
+        "a-wall-t": "Cambiar el fondo de pantalla",
+        "a-wall-d": "Elige una imagen para tu escritorio.",
+        "a-doctor-t": "Revisar la salud del sistema",
+        "a-doctor-d": "Chequeos de solo lectura: disco, archivos de arranque, drivers de GPU y red.",
+        "a-restore-t": "Puntos de restauración",
+        "a-restore-d": "Vuelve a un estado anterior del sistema si una actualización sale mal.",
+        "open": "Abrir",
+        "unavailable": "Todavía no está instalado en este sistema.",
+        "h-keys": "Atajos para empezar",
+        "k-launcher": "Lanzador de apps",
+        "k-terminal": "Terminal",
+        "k-files": "Archivos",
+        "k-browser": "Navegador (Firefox)",
+        "k-close": "Cerrar ventana",
+        "k-full": "Pantalla completa",
+        "k-ws": "Cambiar de escritorio",
+        "k-shot": "Captura de región (al portapapeles)",
+        "k-clip": "Historial del portapapeles",
+        "k-store": "Tienda de AvalOS",
+        "k-update": "Actualizaciones",
+        "k-settings": "Configuración de AvalOS",
+        "k-wall": "Fondo de pantalla",
+        "k-power": "Menú de energía",
+        "note": "Puedes volver a abrir esta ventana desde Configuración → Bienvenida.",
+        "b-github": "GitHub",
+        "b-issues": "Reportar un problema",
+        "b-close": "Cerrar",
+        "url-fail": "No se pudo abrir el navegador. Enlace: {url}",
+    },
+    "zh": {
+        "title": "欢迎使用 AvalOS",
+        "subtitle": "系统已准备就绪。建议先做这几件事。",
+        "h-start": "开始使用",
+        "a-update-t": "更新系统",
+        "a-update-d": "更新软件包、内核、AUR 和 Flatpak，更新前会先创建还原点。",
+        "a-store-t": "安装应用和游戏",
+        "a-store-d": "AvalOS 商店把 pacman、Flatpak 和 AUR 的应用集中在一处。",
+        "a-wall-t": "更换壁纸",
+        "a-wall-d": "为桌面选一张图片。",
+        "a-doctor-t": "检查系统健康",
+        "a-doctor-d": "只读检查：磁盘、启动文件、显卡驱动和网络。",
+        "a-restore-t": "还原点",
+        "a-restore-d": "如果更新出了问题，可以回到系统之前的状态。",
+        "open": "打开",
+        "unavailable": "此系统尚未安装。",
+        "h-keys": "常用快捷键",
+        "k-launcher": "应用启动器",
+        "k-terminal": "终端",
+        "k-files": "文件管理器",
+        "k-browser": "浏览器 (Firefox)",
+        "k-close": "关闭窗口",
+        "k-full": "全屏",
+        "k-ws": "切换工作区",
+        "k-shot": "区域截图（复制到剪贴板）",
+        "k-clip": "剪贴板历史",
+        "k-store": "AvalOS 商店",
+        "k-update": "系统更新",
+        "k-settings": "AvalOS 设置",
+        "k-wall": "壁纸",
+        "k-power": "电源菜单",
+        "note": "之后可以在 AvalOS 设置 → 欢迎 中再次打开此窗口。",
+        "b-github": "GitHub",
+        "b-issues": "报告问题",
+        "b-close": "关闭",
+        "url-fail": "无法打开浏览器。链接：{url}",
+    },
+    "ja": {
+        "title": "AvalOS へようこそ",
+        "subtitle": "システムの準備が整いました。まずはこちらをおすすめします。",
+        "h-start": "はじめに",
+        "a-update-t": "システムを更新",
+        "a-update-d": "パッケージ、カーネル、AUR、Flatpak を、事前に復元ポイントを作成して更新します。",
+        "a-store-t": "アプリとゲームをインストール",
+        "a-store-d": "AvalOS ストアでは pacman、Flatpak、AUR のアプリをまとめて探せます。",
+        "a-wall-t": "壁紙を変更",
+        "a-wall-d": "デスクトップの画像を選びます。",
+        "a-doctor-t": "システムの健康状態をチェック",
+        "a-doctor-d": "読み取り専用のチェック：ディスク、起動ファイル、GPU ドライバー、ネットワーク。",
+        "a-restore-t": "復元ポイント",
+        "a-restore-d": "アップデートで問題が起きたら、以前のシステム状態に戻せます。",
+        "open": "開く",
+        "unavailable": "このシステムにはまだインストールされていません。",
+        "h-keys": "まず覚えたいショートカット",
+        "k-launcher": "アプリランチャー",
+        "k-terminal": "ターミナル",
+        "k-files": "ファイル",
+        "k-browser": "ブラウザー (Firefox)",
+        "k-close": "ウィンドウを閉じる",
+        "k-full": "全画面",
+        "k-ws": "ワークスペースを切り替え",
+        "k-shot": "範囲スクリーンショット（クリップボードへ）",
+        "k-clip": "クリップボード履歴",
+        "k-store": "AvalOS ストア",
+        "k-update": "アップデート",
+        "k-settings": "AvalOS 設定",
+        "k-wall": "壁紙",
+        "k-power": "電源メニュー",
+        "note": "このウィンドウは「AvalOS 設定」→「ようこそ」からいつでも開けます。",
+        "b-github": "GitHub",
+        "b-issues": "問題を報告",
+        "b-close": "閉じる",
+        "url-fail": "ブラウザーを開けませんでした。リンク: {url}",
+    },
+}
+
+
+# ── Primer arranque ────────────────────────────────────────────────────────
+def _state_dir() -> Path:
+    base = os.environ.get("XDG_STATE_HOME", "")
+    if not base or not os.path.isabs(base):  # la spec XDG exige una ruta absoluta
+        base = str(Path.home() / ".local" / "state")
+    return Path(base) / "avalos"
+
+
+def _seen_file() -> Path:
+    return _state_dir() / "welcome-seen"
+
+
+def _has_display() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
+def _should_show_first_run() -> bool:
+    """Autostart: solo si no se mostró antes, no es el live ISO y hay pantalla."""
+    if LIVE_MARKER.exists() or _seen_file().exists():
+        return False
+    return _has_display()
+
+
+def _spawn(cmd) -> bool:
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except OSError:
+        return False
+
+
+# ── API expuesta a la ventana ──────────────────────────────────────────────
+class WelcomeAPI:
+    window = None
+
+    def available(self):
+        """Qué apps de la lista existen en este sistema (los sistemas viejos no tienen
+        todas hasta que reciben la sync)."""
+        return {name: bool(shutil.which(name)) for name in OPEN_WHITELIST}
+
+    def open_app(self, name):
+        if not isinstance(name, str) or name not in OPEN_WHITELIST or not shutil.which(name):
+            return False
+        return _spawn([name])
+
+    def open_url(self, key):
+        url = URLS.get(key) if isinstance(key, str) else None
+        if not url:
+            return {"ok": False, "url": ""}
+        for opener in ("xdg-open", "firefox", "microsoft-edge-stable"):
+            if shutil.which(opener) and _spawn([opener, url]):
+                return {"ok": True, "url": url}
+        return {"ok": False, "url": url}
+
+    def mark_seen(self):
+        try:
+            d = _state_dir()
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "welcome-seen").write_text(datetime.date.today().isoformat() + "\n", encoding="utf-8")
+            return True
+        except OSError:
+            return False
+
+    def close(self):
+        if self.window:
+            self.window.destroy()
+
+
+def _build_html():
+    return r"""<!DOCTYPE html>
+<html lang="LANG_PLACEHOLDER">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AvalOS</title>
+<style>
+  :root {
+    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
+    --border: #414868; --text: #c0caf5; --text-mid: #9aa5ce; --text-dim: #565f89;
+    --blue: #7aa2f7; --purple: #bb9af7; --yellow: #e0af68;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
+    overflow: hidden; height: 100%; font-size: 13px; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+  .hidden { display: none !important; }
+
+  header { padding: 22px 26px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  header h1 { font-size: 20px; margin: 0 0 5px; font-weight: 600; letter-spacing: .2px; }
+  .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header .sub { font-size: 12.5px; color: var(--text-mid); line-height: 1.5; }
+
+  .body { flex: 1; overflow-y: auto; padding: 4px 26px 14px; }
+  h2 { font-size: 13px; font-weight: 600; margin: 18px 0 9px; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px 10px 14px; margin-bottom: 7px; }
+  .row .t { font-weight: 600; font-size: 13px; }
+  .row .d { color: var(--text-mid); font-size: 12px; margin-top: 2px; line-height: 1.45; max-width: 62ch; }
+  .row.off { opacity: .6; }
+
+  .btn { font: inherit; font-size: 12px; color: var(--text); background: var(--surface-hi);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; cursor: pointer; flex-shrink: 0; }
+  .btn:hover:not(:disabled) { border-color: var(--blue); }
+  .btn:disabled { cursor: default; }
+  .btn.primary { background: linear-gradient(135deg, var(--blue), var(--purple));
+    color: #1a1b26; border-color: transparent; font-weight: 600; }
+  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 0 26px; }
+  .key { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 7px 0; border-bottom: 1px solid rgba(65,72,104,.5); }
+  .key .what { font-size: 12.5px; }
+  .combo { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+  .plus { color: var(--text-dim); font-size: 11px; }
+  kbd { font: inherit; font-size: 11.5px; min-width: 24px; text-align: center;
+    padding: 2px 7px 3px; background: var(--bg-alt); border: 1px solid var(--border);
+    border-bottom-width: 2px; border-radius: 6px; color: var(--text); }
+
+  footer { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 12px 26px; border-top: 1px solid var(--border); }
+  footer .note { color: var(--text-dim); font-size: 11.5px; line-height: 1.4; }
+  footer .btns { display: flex; gap: 8px; flex-shrink: 0; }
+
+  .toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: 86%;
+    background: var(--surface-hi); border: 1px solid var(--yellow); color: var(--yellow);
+    border-radius: 8px; padding: 8px 14px; font-size: 12px; word-break: break-all; }
+
+  @media (max-width: 660px) {
+    .keys { grid-template-columns: 1fr; }
+    footer { flex-direction: column; align-items: stretch; }
+    footer .btns { justify-content: flex-end; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1 id="title"></h1>
+    <div class="sub" id="subtitle"></div>
+  </header>
+  <main class="body">
+    <h2 id="h-start"></h2>
+    <div id="steps"></div>
+    <h2 id="h-keys"></h2>
+    <div id="keys" class="keys"></div>
+  </main>
+  <footer>
+    <div class="note" id="note"></div>
+    <div class="btns">
+      <button type="button" class="btn" id="b-github"></button>
+      <button type="button" class="btn" id="b-issues"></button>
+      <button type="button" class="btn primary" id="b-close"></button>
+    </div>
+  </footer>
+  <div id="toast" class="toast hidden" role="status"></div>
+</div>
+<script>
+const S = STRINGS_PLACEHOLDER;
+const STEPS = STEPS_PLACEHOLDER;
+const KEYS = KEYS_PLACEHOLDER;
+const $ = (id) => document.getElementById(id);
+
+function mk(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function api() { return (window.pywebview && window.pywebview.api) || null; }
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.add('hidden'), 4500);
+}
+
+// «AvalOS» lleva el degradado de marca, igual que en las demás apps.
+function setTitle(text) {
+  const h = $('title');
+  h.textContent = '';
+  const i = text.indexOf('AvalOS');
+  if (i < 0) { h.textContent = text; return; }
+  h.appendChild(document.createTextNode(text.slice(0, i)));
+  h.appendChild(mk('span', 'accent', 'AvalOS'));
+  h.appendChild(document.createTextNode(text.slice(i + 'AvalOS'.length)));
+}
+
+function renderSteps(avail) {
+  const box = $('steps');
+  box.textContent = '';
+  STEPS.forEach(([id, app]) => {
+    const on = avail[app] !== false;           // sin dato: se asume instalada
+    const row = mk('div', 'row' + (on ? '' : ' off'));
+    const info = mk('div', 'info');
+    info.appendChild(mk('div', 't', S['a-' + id + '-t']));
+    info.appendChild(mk('div', 'd', on ? S['a-' + id + '-d'] : S.unavailable));
+    const btn = mk('button', 'btn', S.open);
+    btn.type = 'button';
+    btn.disabled = !on;
+    btn.dataset.app = app;
+    btn.addEventListener('click', async () => {
+      const a = api();
+      if (!a) return;
+      let ok = false;
+      try { ok = await a.open_app(app); } catch (e) { ok = false; }
+      if (!ok) toast(S.unavailable);
+    });
+    row.appendChild(info);
+    row.appendChild(btn);
+    box.appendChild(row);
+  });
+}
+
+function renderKeys() {
+  const box = $('keys');
+  box.textContent = '';
+  KEYS.forEach(([combo, label]) => {
+    const item = mk('div', 'key');
+    item.appendChild(mk('span', 'what', S[label]));
+    const c = mk('span', 'combo');
+    combo.forEach((k, i) => {
+      if (i) c.appendChild(mk('span', 'plus', '+'));
+      c.appendChild(mk('kbd', '', k));
+    });
+    item.appendChild(c);
+    box.appendChild(item);
+  });
+}
+
+async function openUrl(key) {
+  const a = api();
+  if (!a) return;
+  let r = { ok: false, url: '' };
+  try { r = await a.open_url(key); } catch (e) { r = { ok: false, url: '' }; }
+  if (!r.ok) toast(S['url-fail'].replace('{url}', r.url || ''));
+}
+function closeWin() { const a = api(); if (a) a.close(); }
+
+setTitle(S.title);
+$('subtitle').textContent = S.subtitle;
+$('h-start').textContent = S['h-start'];
+$('h-keys').textContent = S['h-keys'];
+$('note').textContent = S.note;
+$('b-github').textContent = S['b-github'];
+$('b-issues').textContent = S['b-issues'];
+$('b-close').textContent = S['b-close'];
+renderSteps({});
+renderKeys();
+$('b-github').addEventListener('click', () => openUrl('repo'));
+$('b-issues').addEventListener('click', () => openUrl('issues'));
+$('b-close').addEventListener('click', closeWin);
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeWin(); });
+
+// Con la ventana ya dibujada: marcar el primer arranque como visto y atenuar las apps
+// que este sistema todavía no tiene.
+async function ready() {
+  const a = api();
+  if (!a) return;
+  try { renderSteps(await a.available()); } catch (e) { /* se queda con todas activas */ }
+  try { await a.mark_seen(); } catch (e) { /* sin marca: se mostrará otra vez */ }
+}
+window.addEventListener('pywebviewready', ready);
+</script>
+</body>
+</html>"""
+
+
+def _js(obj) -> str:
+    # Va dentro de un <script>: que un "</" nunca cierre la etiqueta antes de tiempo.
+    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _render_html(lang: str) -> str:
+    return (_build_html()
+            .replace("LANG_PLACEHOLDER", _HTML_LANG.get(lang, lang))
+            .replace("STRINGS_PLACEHOLDER", _js(STRINGS[lang]))
+            .replace("STEPS_PLACEHOLDER", _js(STEPS))
+            .replace("KEYS_PLACEHOLDER", _js(SHORTCUTS)))
+
+
+def _gui():
+    import webview  # solo la ventana lo necesita
+    T = STRINGS[LANG]
+    html = _render_html(LANG)
+
+    # Mismo fix que las demás apps: sin esto GTK usa "python3" como app_id en Wayland y
+    # la window rule (class = "avalos-welcome") nunca matchea.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-welcome")
+    except Exception:
+        pass
+
+    api = WelcomeAPI()
+    win = webview.create_window(
+        title            = T["title"],
+        html             = html,
+        js_api           = api,
+        width            = 760,
+        height           = 680,
+        min_size         = (560, 480),
+        resizable        = True,
+        background_color = "#1a1b26",
+    )
+    api.window = win
+    try:
+        webview.start(debug=False)
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR al iniciar pywebview: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv=None):
+    global LANG
+    ap = argparse.ArgumentParser(prog="avalos-welcome", description="AvalOS welcome window: first steps and key shortcuts.")
+    ap.add_argument("--first-run", action="store_true",
+                    help="show it only if it has not been shown before (Hyprland autostart)")
+    ap.add_argument("--lang", choices=_SUPPORTED, help="language of the window")
+    a = ap.parse_args(argv)
+    if a.lang:
+        LANG = a.lang
+    if a.first_run and not _should_show_first_run():
+        return 0
+    if not _has_display():
+        print("avalos-welcome: no graphical session found (WAYLAND_DISPLAY/DISPLAY)", file=sys.stderr)
+        return 1
+    return _gui()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

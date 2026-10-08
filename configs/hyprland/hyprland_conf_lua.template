@@ -137,6 +137,9 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("wl-paste --type image --watch cliphist store")
     hl.exec_cmd("xdg-user-dirs-update")
     hl.exec_cmd("udiskie -t")
+    -- Bienvenida: solo la primera vez (avalos-welcome guarda una marca en
+    -- ~/.local/state/avalos/welcome-seen y no hace nada si ya se mostró).
+    hl.exec_cmd("avalos-welcome --first-run")
 end)
 
 -- ── Keybinds ──────────────────────────────────────────────────────
@@ -273,6 +276,12 @@ hl.window_rule({
     float  = true,
     center = true,
     size   = { 700, 720 },
+})
+hl.window_rule({
+    match  = { class = "avalos-welcome" },
+    float  = true,
+    center = true,
+    size   = { 760, 680 },
 })
 hl.window_rule({
     match  = { class = "avalos-store" },

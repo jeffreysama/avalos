@@ -35,6 +35,7 @@ Salida: 0 = todo bien, 1 = hay errores (los avisos no fallan).
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -46,7 +47,7 @@ LIVE = ROOT / "configs" / "hyprland" / "hyprland.lua"
 TEMPLATE = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
 CATALOG = ROOT / "configs" / "avalos-store-catalog.json"
 MODS = {"SUPER", "SHIFT", "CTRL", "ALT"}
-NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor"}
+NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome"}
 FLAG_WORDS = ("long_press", "release", "repeating", "locked", "mouse", "click", "drag", "non_consuming", "transparent", "ignore_mods")
 
 fails: list[str] = []
@@ -229,6 +230,38 @@ def check_apps() -> None:
             ok(f"apps: {app} — script, listas del instalador/legado/workflow" + (" y .desktop" if app in NEEDS_DESKTOP else ""))
 
 
+# ── 2b) atajos que muestra avalos-welcome ───────────────────────────────────────
+def check_welcome_shortcuts() -> None:
+    """Cada atajo de la lista SHORTCUTS de scripts/avalos-welcome existe en el template
+    instalado (si alguien cambia un bind, la ventana de bienvenida no queda mintiendo)."""
+    script = ROOT / "scripts" / "avalos-welcome"
+    if not script.is_file() or not TEMPLATE.exists():
+        return
+    m = re.search(r"^SHORTCUTS\s*=\s*(\[.*?^\])", script.read_text(encoding="utf-8"), re.M | re.S)
+    try:
+        shortcuts = ast.literal_eval(m.group(1)) if m else None
+    except (ValueError, SyntaxError):
+        shortcuts = None
+    if not shortcuts:
+        bad("welcome: atajos", "no se pudo leer SHORTCUTS de scripts/avalos-welcome (tiene que ser un literal de Python)")
+        return
+    have = set()
+    for _line, combo, _flags, _args in parse_binds(TEMPLATE):
+        toks = [t.strip() for t in combo.split("+")]
+        have.add((frozenset(t.upper() for t in toks[:-1]), toks[-1].lower()))
+    missing, checked = [], 0
+    for keys, _label in shortcuts:
+        if not re.fullmatch(r"\w+", keys[-1]):   # p. ej. «1…9»: en el template sale de un bucle
+            continue
+        checked += 1
+        if (frozenset(k.upper() for k in keys[:-1]), keys[-1].lower()) not in have:
+            missing.append(" + ".join(keys))
+    if missing:
+        bad("welcome: atajos", "avalos-welcome muestra atajos que el template no define: " + ", ".join(missing))
+    else:
+        ok(f"welcome: {checked} atajos mostrados existen en {rel(TEMPLATE)}")
+
+
 # ── 3) catálogo de la Store ──────────────────────────────────────────────────────
 def check_catalog() -> None:
     if not CATALOG.exists():
@@ -271,7 +304,7 @@ def check_catalog() -> None:
 
 
 def main() -> int:
-    for fn in (check_binds, check_apps, check_catalog):
+    for fn in (check_binds, check_apps, check_welcome_shortcuts, check_catalog):
         fn()
     print(f"\n{len(fails)} con error · {len(warns)} avisos")
     if fails:
