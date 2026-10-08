@@ -97,7 +97,7 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
     necesita chequear el retorno y detenerse)."""
 
     if not ctx.manual_mode:
-        session.countdown_start(dev, disk_info["model"], disk_info["size_human"])
+        session.countdown_start(dev, disk_info["model"] or session.t("disk-unknown"), disk_info["size_human"])
         for i in range(10, 0, -1):
             if session._aborted:
                 session.countdown_cancel()

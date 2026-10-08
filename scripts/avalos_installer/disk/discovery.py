@@ -119,7 +119,7 @@ def list_disks() -> list[dict]:
             "name": name,
             "size_b": size_b,
             "size_human": _bytes_to_human(size_b),
-            "model": model or "Disco desconocido",
+            "model": model,  # vacío si lsblk no lo informa: la UI lo traduce (disk-unknown)
             "tran": tran.upper() if tran else "—",
             "tipo": "HDD" if rotational else "SSD/NVMe",
             "es_arranque": (name == boot_disk),

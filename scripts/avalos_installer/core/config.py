@@ -74,6 +74,18 @@ DEFAULT_KEYMAP = 'la-latin1'
 
 TIMEZONES = ['America/El_Salvador', 'America/Guatemala', 'America/Honduras', 'America/Costa_Rica', 'America/Panama', 'America/Managua', 'America/Mexico_City', 'America/Bogota', 'America/Lima', 'America/Santiago', 'America/Argentina/Buenos_Aires', 'America/Sao_Paulo', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Caracas', 'America/Montevideo', 'Europe/Madrid', 'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Asia/Tokyo', 'Asia/Shanghai', 'UTC']
 
+# Nombres de usuario que el wizard rechaza (cuentas de sistema de Arch/systemd). Única fuente
+# de verdad: ui/api.py los valida en Python y ui/html.py los inyecta al JS
+# (window._reservedUsers), para que los dos lados no se desincronicen.
+RESERVED_USERNAMES = (
+    'root', 'daemon', 'bin', 'sys', 'sync', 'games', 'man', 'lp', 'mail', 'news',
+    'uucp', 'proxy', 'backup', 'list', 'irc', 'nobody',
+    'http', 'ftp', 'git', 'sshd', 'dbus', 'polkitd', 'avahi', 'colord', 'rtkit',
+    'uuidd', 'nm-openconnect', 'ntp', 'systemd-network', 'systemd-resolve',
+    'systemd-timesync', 'tss', 'messagebus', 'cups', 'gdm', 'lightdm', 'sddm',
+    'mysql', 'postgres', 'redis', 'mongodb', 'www', 'operator',
+)
+
 
 def read_config(relative_path: str) -> str | None:
     """Lee un config desde /usr/share/avalos/configs/. Retorna None si no existe."""

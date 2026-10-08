@@ -24,7 +24,7 @@ import json
 import translations
 from avalos_installer.core.config import (
     DEFAULT_HOSTNAME, DEFAULT_KEYMAP, DEFAULT_LOCALE, DEFAULT_TIMEZONE,
-    KEYMAPS, LOCALES, TIMEZONES,
+    KEYMAPS, LOCALES, RESERVED_USERNAMES, TIMEZONES,
 )
 from avalos_installer.ui.assets import LOGO_B64
 
@@ -1420,7 +1420,7 @@ function pyRenderDiscos(discosJson) {
         ${esBoot ? `<span class="dtag dtag-boot">${t('tag-disco-actual-live')}</span>` : ''}
       </div>
       <div class="disk-meta">
-        <span class="disk-size">${esc(d.size_human)}</span> · ${esc(d.model)} · ${esc(d.tran)}
+        <span class="disk-size">${esc(d.size_human)}</span> · ${esc(d.model || t('disk-unknown'))} · ${esc(d.tran)}
         ${d.montajes.length ? ` · <span style="color:var(--tn-orange)">${t('tag-montado')}</span>` : ''}
       </div>
       ${esBoot ? `<div class="disk-warn" style="color:var(--tn-dim);font-style:italic;">${t('disk-unavailable-live')}</div>` : ''}
@@ -1732,17 +1732,9 @@ function validarEIniciar() {
   if (pass.length < 8)              return showFormError(t('val-pass-short'));
   if (_passStrength(pass).score < 2) return showFormError(t('val-pass-weak'));
   if (pass !== pass2)               return showFormError(t('val-pass-mismatch'));
-  // FIX: lista ampliada con usernames de sistema reales en Arch/systemd
-  // (la original solo tenía 5; hay decenas de usernames reservados por paquetes)
-  const _RESERVED = [
-    'root','daemon','bin','sys','sync','games','man','lp','mail','news',
-    'uucp','proxy','backup','list','irc','nobody',
-    // Arch / systemd específicos
-    'http','ftp','git','sshd','dbus','polkitd','avahi','colord','rtkit',
-    'uuidd','nm-openconnect','ntp','systemd-network','systemd-resolve',
-    'systemd-timesync','tss','messagebus','cups','gdm','lightdm','sddm',
-    'mysql','postgres','redis','mongodb','www','nobody','operator',
-  ];
+  // Usernames de sistema reservados: build_html() inyecta la lista de core/config.py
+  // (RESERVED_USERNAMES), la misma que valida ui/api.py en Python.
+  const _RESERVED = window._reservedUsers || [];
   if (_RESERVED.includes(user))
                                     return showFormError(t('val-reserved-user'));
 
@@ -1978,6 +1970,7 @@ def build_html() -> str:
     keymaps_json = json.dumps(KEYMAPS, ensure_ascii=False)
     default_loc = json.dumps(DEFAULT_LOCALE)
     default_km = json.dumps(DEFAULT_KEYMAP)
+    reserved_json = json.dumps(list(RESERVED_USERNAMES))
 
     strings_json = json.dumps(translations.TRANSLATIONS, ensure_ascii=False)
 
@@ -1989,6 +1982,7 @@ def build_html() -> str:
         f"window._keymapList = {keymaps_json};\n"
         f"window._defaultLocale = {default_loc};\n"
         f"window._defaultKeymap = {default_km};\n"
+        f"window._reservedUsers = {reserved_json};\n"
     )
 
     content = _HTML.replace("LOGO_PLACEHOLDER", LOGO_B64)

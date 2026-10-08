@@ -169,7 +169,7 @@ def run_installation(session: InstallSession) -> None:
 
         dev = f"/dev/{dev_name}"
         disco_tipo = detect_target_disk_type(dev_name)
-        session.info("dest", f"{dev} ({disco['size_human']} · {disco_tipo.upper()} · {disco['model']})", "ok")
+        session.info("dest", f"{dev} ({disco['size_human']} · {disco_tipo.upper()} · {disco['model'] or session.t('disk-unknown')})", "ok")
         session.log(
             session.t("log-target-disk", dev=dev, size_human=disco["size_human"], disco_tipo=disco_tipo.upper()),
             "ok",

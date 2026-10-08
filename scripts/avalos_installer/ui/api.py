@@ -67,7 +67,7 @@ import threading
 import translations
 from avalos_installer.core.config import (
     DEFAULT_HOSTNAME, DEFAULT_KEYMAP, DEFAULT_LOCALE, DEFAULT_TIMEZONE,
-    KEYMAPS, LOCALES,
+    KEYMAPS, LOCALES, RESERVED_USERNAMES, TIMEZONES,
 )
 from avalos_installer.core.context import InstallContext
 from avalos_installer.core.install import run_installation
@@ -137,6 +137,8 @@ class InstallerAPI:
         # salto de línea o un carácter raro no debe llegar hasta ahí aunque el front falle.
         if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", clean_username):
             return False
+        if clean_username in RESERVED_USERNAMES:  # mismo criterio que el JS (lista única en config.py)
+            return False
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", clean_hostname):
             return False
         if not password or any(c in password for c in "\n\r\0"):
@@ -161,7 +163,9 @@ class InstallerAPI:
             username=clean_username,
             password=password,
             hostname=clean_hostname,
-            timezone=timezone or DEFAULT_TIMEZONE,
+            # acaba en el symlink de /etc/localtime: solo valores de la lista; otro cae al
+            # default, igual que locale y keymap
+            timezone=timezone if timezone in TIMEZONES else DEFAULT_TIMEZONE,
             locale=locale if locale in valid_locales else DEFAULT_LOCALE,
             keymap=keymap if keymap in valid_keymaps else DEFAULT_KEYMAP,
             lang=self.session._lang,
