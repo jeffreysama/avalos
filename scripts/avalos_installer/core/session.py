@@ -103,6 +103,10 @@ class InstallSession:
         self._aborted = False
         self._installing = False
         self._thread_started = False
+        # Rollback (system/rollback.py): run_installation crea el diario en cada intento;
+        # rollback_memory sobrevive a «Reintentar» (tabla original, firmware original, discos formateados).
+        self.journal = None
+        self.rollback_memory = None
 
         self._lang = lang
 

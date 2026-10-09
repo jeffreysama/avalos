@@ -88,6 +88,14 @@ def _in_use(dev_name: str, disk_info: dict) -> list[str]:
     return list(dict.fromkeys(usados))
 
 
+def _mark_format(session, dev: str) -> None:
+    """Rollback (system/rollback.py): justo antes de cada mkfs los datos del disco dejan de
+    existir; desde ahí ya no se restaura la tabla original."""
+    journal = getattr(session, "journal", None)
+    if journal:
+        journal.mark_format(dev)
+
+
 def partition_and_format(session: InstallSession, ctx: InstallContext,
                           dev: str, dev_name: str, disk_info: dict,
                           uefi: bool) -> PartitionResult | None:
@@ -170,6 +178,7 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
             rc_efi, fstype_efi, _ = run_command(["blkid", "-s", "TYPE", "-o", "value", efi_device])
             fstype_efi = fstype_efi.strip() if rc_efi == 0 else ""
             if not fstype_efi:
+                _mark_format(session, dev)
                 rc_efi_fmt, _ = session.run_cmd(["mkfs.fat", "-F32", efi_device])
                 if rc_efi_fmt != 0:
                     session.step("part", "error")
@@ -199,6 +208,7 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
         fstype_actual = fstype_actual.strip() if rc_fs == 0 else ""
 
         if not fstype_actual:
+            _mark_format(session, dev)
             if ctx.usb_mode:
                 rc, _ = session.run_cmd(["mkfs.ext4", "-O", "^has_journal", "-F", root_device])
             else:
@@ -281,6 +291,11 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
         except Exception:
             pass
 
+        # Rollback: copia de la tabla original ANTES del primer comando destructivo.
+        _journal = getattr(session, "journal", None)
+        if _journal:
+            _journal.snapshot_table(dev)
+
         rc_wipe = 1
         for attempt in range(1, 4):
             wipe_cmd = ["wipefs", "-a", dev]
@@ -348,6 +363,7 @@ def partition_and_format(session: InstallSession, ctx: InstallContext,
         session.status(session.t("status-formatting"))
         session.log(session.t("log-section-formatting"), "step")
 
+        _mark_format(session, dev)
         if uefi:
             rc, _ = session.run_cmd(["mkfs.fat", "-F32", efi_device])
             if rc != 0:

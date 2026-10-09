@@ -10,12 +10,14 @@ on:
       - "configs/**"
       - "assets/avalos.txt"
       - "scripts/**"
+      - "tests/**"
       - ".github/workflows/**"
   pull_request:
     paths:
       - "configs/**"
       - "assets/avalos.txt"
       - "scripts/**"
+      - "tests/**"
       - ".github/workflows/**"
   workflow_dispatch:
 
@@ -44,3 +46,8 @@ jobs:
 
       - name: Coherencia del manifiesto de sync
         run: /usr/bin/python3 scripts/gen-sync-manifest.py --check
+
+      # Pruebas del instalador (stdlib, sin disco ni firmware reales): hoy cubren el rollback
+      # de una instalación fallida. Correr local: python3 -m unittest discover -s tests -v
+      - name: Pruebas del instalador
+        run: /usr/bin/python3 -m unittest discover -s tests -v

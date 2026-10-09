@@ -295,6 +295,7 @@ class InstallerAPI:
             self.session._aborted = False
             self.session._installing = True
         t = threading.Thread(target=run_installation, args=(self.session,), daemon=True)
+        self.session._install_thread = t
         t.start()
         return True
 

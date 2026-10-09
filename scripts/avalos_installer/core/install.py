@@ -58,6 +58,7 @@ from avalos_installer.system.optimize import configure_optimizations, enable_dns
 from avalos_installer.system.pacstrap import run_pacstrap
 from avalos_installer.system.partition import partition_and_format
 from avalos_installer.system.repos import configure_repos
+from avalos_installer.system.rollback import InstallJournal
 from avalos_installer.system.services import configure_services
 from avalos_installer.system.users import create_user
 
@@ -110,6 +111,12 @@ def run_installation(session: InstallSession) -> None:
         _BOOTLOADER_LABELS.get(ctx.bootloader, session.t("info-bootloader-skipped")),
         "ok" if ctx.bootloader != "none" else "warn",
     )
+
+    # Diario de rollback (system/rollback.py): uno por intento; lo que debe recordarse entre
+    # intentos vive en session.rollback_memory.
+    journal = InstallJournal(session)
+    session.journal = journal
+    completed = False
 
     total = len(PASOS_IDS)
     paso = 0
@@ -182,6 +189,7 @@ def run_installation(session: InstallSession) -> None:
         session.info("ucode", ucode, "ok")
         session.badges(None, uefi)
         session.step("uefi", "done", "UEFI" if uefi else "BIOS Legacy")
+        journal.snapshot_firmware(uefi)
         avanzar()
 
         if session._aborted:
@@ -296,6 +304,12 @@ def run_installation(session: InstallSession) -> None:
         avanzar()
 
         # ── grub (bootloader) ────────────────────────────────────────
+        # Rollback: foto de la ESP (y del MBR en BIOS manual) justo antes de que el bootloader
+        # toque algo; desde aquí un fallo puede dejar entradas o archivos de arranque.
+        journal.snapshot_esp(result.efi_device)
+        if not uefi and ctx.manual_mode and ctx.bootloader != "none":
+            journal.snapshot_mbr(dev)
+        journal.mark("boot")
         if not install_bootloader(session, ctx, dev, result.root_device, uefi, ucode, kernel_pkg):
             return
         avanzar()
@@ -325,6 +339,7 @@ def run_installation(session: InstallSession) -> None:
         # ── user ──────────────────────────────────────────────────────
         if not create_user(session, ctx):
             return
+        journal.mark("usable")  # usuario creado: el sistema ya arranca, un fallo tardío no le quita el arranque
         avanzar()
 
         if session._aborted:
@@ -367,6 +382,7 @@ def run_installation(session: InstallSession) -> None:
         session.clean_mounts()
         session.step("umount", "done")
         avanzar()
+        completed = True
 
         bl_summary = _BOOTLOADER_SUMMARY.get(ctx.bootloader, "?")
         done_info = (
@@ -394,6 +410,9 @@ def run_installation(session: InstallSession) -> None:
         session.error_step(session.t("err-unexpected", e=e))
         session.clean_mounts()
     finally:
+        # Rollback ANTES de soltar _installing: api.retry no arranca mientras dure, así el
+        # intento siguiente ya ve el disco y el firmware en su estado original. No lanza.
+        journal.rollback(completed)
         session._installing = False
 
         # Red de seguridad del NOPASSWD temporal de system/aur.py. El archivo real

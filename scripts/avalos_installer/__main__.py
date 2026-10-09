@@ -83,6 +83,7 @@ def main() -> None:
             session._thread_started = True
             session._config_ready.clear()
         t = threading.Thread(target=run_installation, args=(session,), daemon=True)
+        session._install_thread = t
         t.start()
 
     win.events.loaded += _on_loaded
@@ -94,6 +95,12 @@ def main() -> None:
         print("Asegúrate de que webkit2gtk-4.1 esté instalado:")
         print("  pacman -S webkit2gtk-4.1 python-gobject")
         sys.exit(1)
+
+    # Si se cerró la ventana a mitad de instalación, dejar que el hilo termine su rollback:
+    # es daemon y el intérprete lo cortaría al salir.
+    t = getattr(session, "_install_thread", None)
+    if t is not None and t.is_alive():
+        t.join(timeout=90)
 
 
 if __name__ == "__main__":
