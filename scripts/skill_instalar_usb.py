@@ -4677,7 +4677,7 @@ DISTRIB_DESCRIPTION="AvalOS"
                 self ._log (self ._t ("log-section-installing-grub"),"step")
                 if uefi :
                     grub_cmd =["grub-install","--target=x86_64-efi",
-                    "--efi-directory=/boot/efi","--bootloader-id=GRUB"]
+                    "--efi-directory=/boot/efi","--bootloader-id=AvalOS"]
 
                     if GRUB_UEFI_REMOVABLE or self ._modo_usb :
                         grub_cmd .append ("--removable")

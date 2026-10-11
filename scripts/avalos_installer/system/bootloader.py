@@ -53,8 +53,11 @@ def install_bootloader(session: InstallSession, ctx: InstallContext,
         session.status(session.t("status-installing-grub"))
         session.log(session.t("log-section-installing-grub"), "step")
         if uefi:
+            # Id propio (no el genérico «GRUB»): grub-install borra las entradas UEFI que tengan el
+            # mismo id y pisa EFI/<id>/, y «GRUB» es el que usa cualquier instalación manual de Arch
+            # junto a la que se instala AvalOS. system/rollback.py reconoce «avalos» como nuestro.
             grub_cmd = ["grub-install", "--target=x86_64-efi",
-                        "--efi-directory=/boot/efi", "--bootloader-id=GRUB"]
+                        "--efi-directory=/boot/efi", "--bootloader-id=AvalOS"]
 
             if GRUB_UEFI_REMOVABLE or ctx.usb_mode:
                 grub_cmd.append("--removable")

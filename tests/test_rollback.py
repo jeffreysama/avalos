@@ -24,6 +24,7 @@ from avalos_installer.system import partition as part_mod  # noqa: E402
 from avalos_installer.system import rollback as rb  # noqa: E402
 
 LANGS = ("en", "es", "zh", "ja")
+_REAL_READ_EDGES, _REAL_WRITE_EDGES = rb.read_edges, rb.write_edges
 
 ORIG_DUMP = """label: gpt
 label-id: 11111111-2222-3333-4444-555555555555
@@ -196,6 +197,40 @@ def tree_state(root: Path):
     return files, dirs
 
 
+def patch_edges(case, disk_files):
+    """Los «discos» de las pruebas son archivos temporales: ninguna prueba abre un dispositivo
+    real. Un dispositivo sin archivo asignado se comporta como un disco ilegible."""
+    def read_edges(dev):
+        f = disk_files.get(dev)
+        return _REAL_READ_EDGES(str(f)) if f else None
+
+    def write_edges(dev, edges):
+        f = disk_files.get(dev)
+        if f is None:
+            raise OSError("dispositivo simulado sin archivo")
+        _REAL_WRITE_EDGES(str(f), edges)
+
+    for p in (mock.patch.object(rb, "read_edges", read_edges), mock.patch.object(rb, "write_edges", write_edges)):
+        p.start()
+        case.addCleanup(p.stop)
+
+
+def scribble(path, wipefs=True, parted=True):
+    """Lo que wipefs -a y parted mklabel gpt le hacen a los bordes de un disco."""
+    size = os.path.getsize(path)
+    with open(path, "r+b") as fh:
+        if wipefs:
+            fh.seek(0x1fe); fh.write(b"\x00\x00")
+            fh.seek(0x200); fh.write(b"\x00" * 8)
+            fh.seek(size - 512); fh.write(b"\x00" * 8)
+            fh.seek(0x7f000); fh.write(b"\x00" * 16)               # firma a nivel de disco (p. ej. miembro ZFS)
+        if parted:
+            fh.seek(0); fh.write(b"\x00" * 512)                    # MBR protector nuevo, sin código de arranque
+            fh.seek(512); fh.write(b"EFI PART" + b"\x11" * 504)
+            fh.seek(1024); fh.write(b"\x22" * (32 * 512))
+            fh.seek(size - 33 * 512); fh.write(b"\x33" * (33 * 512))
+
+
 class Base(unittest.TestCase):
     lang = "es"
 
@@ -215,6 +250,8 @@ class Base(unittest.TestCase):
                   mock.patch("os.path.ismount", side_effect=lambda x: str(x) in self.m.mounts)):
             p.start()
             self.addCleanup(p.stop)
+        self.disk_files = {}
+        patch_edges(self, self.disk_files)
         self.j = rb.InstallJournal(self.s)
         self.s.journal = self.j
 
@@ -259,6 +296,30 @@ class ParseTests(unittest.TestCase):
             self.assertTrue(rb.is_ours(label), label)
         for label in ("Windows Boot Manager", "ubuntu", "UEFI: Live USB", "Fedora", ""):
             self.assertFalse(rb.is_ours(label), label)
+
+    def test_split_label_with_tab(self):
+        self.assertEqual(rb.split_label("GRUB\tHD(1,GPT,x,0x800,0x1)/File(\\EFI\\GRUB\\grubx64.efi)"), "GRUB")
+
+    def test_split_label_without_tab_cuts_at_the_device_path(self):
+        self.assertEqual(rb.split_label("Windows Boot Manager HD(1,GPT,x,0x800,0x1)/File(\\EFI\\Microsoft\\Boot\\bootmgfw.efi)"),
+                         "Windows Boot Manager")
+        self.assertEqual(rb.split_label("UEFI: PXE IPv4 PciRoot(0x0)/Pci(0x1c,0x2)"), "UEFI: PXE IPv4")
+        self.assertEqual(rb.split_label("Ubuntu (Samsung SSD) HD(1,GPT,x,0x800,0x1)/File(\\EFI\\ubuntu\\shimx64.efi)"),
+                         "Ubuntu (Samsung SSD)")
+        self.assertEqual(rb.split_label("GRUB"), "GRUB")
+        self.assertEqual(rb.split_label(""), "")
+
+    def test_path_text_never_counts_as_label(self):
+        st = rb.parse_efibootmgr("Boot0005* UEFI: Algo HD(1,GPT,x,0x800,0x1)/File(\\EFI\\ubuntu\\grubx64.efi)\n")
+        self.assertFalse(rb.is_ours(st.label("0005")))
+
+    def test_header_only_output_is_a_valid_empty_state(self):
+        for text in ("BootCurrent: 0001\nTimeout: 1 seconds\n", "Timeout: 0 seconds\n", "BootNext: 0003\n"):
+            st = rb.parse_efibootmgr(text)
+            self.assertIsNotNone(st, text)
+            self.assertEqual((st.entries, st.order), ({}, []))
+        self.assertIsNone(rb.parse_efibootmgr("efibootmgr: command not found\n"))
+
 
 
 # ── Árbol de la ESP (sistema de archivos real) ────────────────────────────
@@ -380,6 +441,43 @@ class TreeTests(unittest.TestCase):
         make_tree(self.root, {"EFI/Microsoft/Boot/avalos-extra.efi": b"2"})
         rb.restore_tree(self.root, snap)
         self.assertEqual(tree_state(self.root)[0], {"EFI/Microsoft/Boot/x": b"1"})
+
+    def test_mtime_only_difference_is_not_a_change(self):
+        """FAT guarda hora local y el kernel la convierte según zona y opciones de montaje:
+        dos montajes pueden ver mtimes distintos. Solo cuentan tamaño y contenido."""
+        make_tree(self.root, self.WINDOWS)
+        snap = self.snap()
+        for p in self.root.rglob("*"):
+            if p.is_file():
+                st = p.stat()
+                os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 3 * 3600 * 10**9))
+        res = rb.restore_tree(self.root, snap)
+        self.assertEqual((res.restored, res.unrestorable, res.removed, res.errors), ([], [], [], []))
+
+    def test_same_size_content_change_in_a_tracked_file_is_restored(self):
+        make_tree(self.root, self.WINDOWS)
+        snap = self.snap()
+        (self.root / "EFI/BOOT/BOOTX64.EFI").write_bytes(b"X" * len(self.WINDOWS["EFI/BOOT/BOOTX64.EFI"]))
+        res = rb.restore_tree(self.root, snap)
+        self.assertEqual(res.restored, ["EFI/BOOT/BOOTX64.EFI"])
+        self.assertEqual((self.root / "EFI/BOOT/BOOTX64.EFI").read_bytes(), self.WINDOWS["EFI/BOOT/BOOTX64.EFI"])
+
+    def test_untracked_files_are_compared_by_size_only(self):
+        make_tree(self.root, self.WINDOWS)
+        snap = self.snap()
+        (self.root / "EFI/Microsoft/Boot/BCD").write_bytes(b"x" * len(self.WINDOWS["EFI/Microsoft/Boot/BCD"]))
+        res = rb.restore_tree(self.root, snap)
+        self.assertEqual(res.unrestorable, [])                       # límite conocido y documentado
+
+    def test_files_of_a_previous_avalos_install_on_the_esp_are_restored(self):
+        make_tree(self.root, {"EFI/AvalOS/grubx64.efi": b"grub-de-la-instalacion-anterior",
+                              "EFI/Microsoft/Boot/bootmgfw.efi": b"windows"})
+        snap = self.snap()
+        (self.root / "EFI/AvalOS/grubx64.efi").write_bytes(b"grub-de-la-instalacion-fallida!")
+        res = rb.restore_tree(self.root, snap)
+        self.assertEqual(res.restored, ["EFI/AvalOS/grubx64.efi"])
+        self.assertEqual((self.root / "EFI/AvalOS/grubx64.efi").read_bytes(), b"grub-de-la-instalacion-anterior")
+
 
 
 # ── MBR (BIOS) ────────────────────────────────────────────────────────────
@@ -546,6 +644,65 @@ class FirmwareTests(Base):
         self.new_journal().snapshot_firmware(True)
         self.assertIsNotNone(self.j.mem["fw"])
 
+    def test_without_tabs_a_foreign_entry_whose_path_mentions_grub_is_not_ours(self):
+        before = {"0000": "Windows Boot Manager HD(1,GPT,AAAA,0x800,0x1)/File(\\EFI\\Microsoft\\Boot\\bootmgfw.efi)"}
+        after = dict(before, **{
+            "0005": "UEFI: Algo HD(1,GPT,CCCC,0x800,0x1)/File(\\EFI\\ubuntu\\grubx64.efi)",
+            "0006": "GRUB HD(1,GPT,BBBB,0x800,0x1)/File(\\EFI\\GRUB\\grubx64.efi)"})
+        self.setup_fw(before, ["0000"], after, ["0006", "0005", "0000"])
+        self.j.rollback(False)
+        self.assertEqual(self.m.ran("efibootmgr", "-b"), [["efibootmgr", "-b", "0006", "-B"]])
+        self.assertIn("0005", self.m.fw.entries)
+
+    def test_details_of_a_lost_entry_go_to_the_log_for_manual_recreation(self):
+        before = dict(self.base_entries(), **{"0001": GRUB_OLD})
+        after = dict(before, **{"0001": GRUB_NEW})
+        self.setup_fw(before, ["0001", "0000", "0003"], after, ["0001", "0000", "0003"])
+        self.j.rollback(False)
+        lost = [l for l in self.s.logfile.diag_lines if l.startswith("efi-entry-lost Boot0001")]
+        self.assertEqual(len(lost), 1)
+        self.assertIn("CCCCCCCC", lost[0])                            # el UUID de la partición original
+
+    def test_missing_efibootmgr_is_reported_instead_of_silently_doing_nothing(self):
+        self.m.fail["efibootmgr"] = -1                                # el live no lo trae
+        self.j.snapshot_firmware(True)
+        self.j.mark("boot")
+        self.j.rollback(False)
+        self.assertIn("efibootmgr no está disponible", self.s.text)
+        self.assertEqual(self.m.ran("efibootmgr"), [])
+        self.assertEqual(self.s.classes()[-1], "warn")
+
+    def test_unreadable_firmware_is_reported_too(self):
+        self.m.fail["efibootmgr"] = 2                                 # «EFI variables are not supported on this system»
+        self.j.snapshot_firmware(True)
+        self.j.mark("boot")
+        self.j.rollback(False)
+        self.assertIn("efibootmgr no está disponible", self.s.text)
+
+    def test_no_unavailable_warning_when_efibootmgr_works(self):
+        after = dict(self.base_entries(), **{"0004": GRUB_NEW})
+        self.setup_fw(self.base_entries(), ["0000", "0003"], after, ["0004", "0000", "0003"])
+        self.j.rollback(False)
+        self.assertNotIn("no está disponible", self.s.text)
+
+    def test_empty_but_working_firmware_is_a_valid_original_state(self):
+        self.m.fw = FakeFirmware({}, [])                              # NVRAM sin entradas
+        self.j.snapshot_firmware(True)
+        self.assertIsNotNone(self.j.mem["fw"])
+        self.m.fw.entries, self.m.fw.order = {"0000": GRUB_NEW}, ["0000"]
+        self.j.mark("boot")
+        self.j.rollback(False)
+        self.assertEqual(self.m.fw.entries, {})
+        self.assertNotIn("no está disponible", self.s.text)
+
+    def test_bios_never_talks_about_efibootmgr(self):
+        self.j.snapshot_firmware(False)
+        self.j.mark("boot")
+        self.j.rollback(False)
+        self.assertNotIn("efibootmgr", self.s.text)
+        self.assertEqual(self.m.ran("efibootmgr"), [])
+
+
 
 # ── Tabla de particiones ──────────────────────────────────────────────────
 class TableTests(Base):
@@ -668,6 +825,21 @@ class TableTests(Base):
         self.m.disks[self.DEV] = FakeDisk(NEW_DUMP)
         self.j.rollback(False)
         self.assertEqual(self.m.ran("sh", "-c"), [])
+
+    def test_nonzero_exit_but_matching_table_counts_as_restored(self):
+        """sfdisk puede quejarse de no poder releer la tabla y aun así haberla escrito."""
+        self.start()
+        self.wipe_and_repartition()
+        real = self.m.run
+        def complaining_run(cmd):
+            rc, out = real(cmd)
+            return (1, out) if cmd[:2] == ["sh", "-c"] else (rc, out)
+        self.m.run = complaining_run
+        self.j.rollback(False)
+        self.assertEqual(rb.normalize_dump(self.m.disks[self.DEV].dump), rb.normalize_dump(ORIG_DUMP))
+        self.assertIn("restaurada y verificada", self.s.text)
+        self.assertEqual(self.s.classes()[-1], "ok")
+
 
 
 # ── ESP dentro del diario (con «montaje» simulado) ────────────────────────
@@ -846,6 +1018,19 @@ class EveryLanguage(Base):
                 j2.rollback(False)
                 self.assertTrue(s.lines)
 
+    def test_unavailable_firmware_message_renders_in_every_language(self):
+        for lang in LANGS:
+            with self.subTest(lang=lang):
+                s = FakeSession(Machine(), lang)
+                s.machine.fail["efibootmgr"] = -1
+                j = rb.InstallJournal(s)
+                j.snapshot_firmware(True)
+                j.mark("boot")
+                j.rollback(False)
+                self.assertIn("efibootmgr", s.text)
+                self.assertNotRegex(s.text, r"[{}]")
+
+
 
 class TranslationTests(unittest.TestCase):
     def test_every_key_used_is_translated_and_none_is_dead(self):
@@ -864,6 +1049,13 @@ class TranslationTests(unittest.TestCase):
             for lang in LANGS:
                 got = set(re.findall(r"\{(\w+)\}", translations.TRANSLATIONS[lang][key]))
                 self.assertEqual(got, want, f"{lang}:{key}")
+
+    def test_disk_not_found_message_in_every_language(self):
+        for lang in LANGS:
+            tpl = translations.TRANSLATIONS[lang]["err-disk-not-found"]
+            self.assertIn("{dev_name}", tpl, lang)
+            self.assertEqual(set(re.findall(r"\{(\w+)\}", tpl)), {"dev_name"}, lang)
+
 
 
 # ── El flujo real de particionado: diario antes de lo destructivo ─────────
@@ -888,6 +1080,8 @@ class PartitionFlow(unittest.TestCase):
                   mock.patch.object(part_mod, "_in_use", lambda *a, **k: [])):
             p.start()
             self.addCleanup(p.stop)
+        self.disk_files = {}
+        patch_edges(self, self.disk_files)
         self.j = rb.InstallJournal(self.s)
         self.s.journal = self.j
         spy = self.j
@@ -900,12 +1094,17 @@ class PartitionFlow(unittest.TestCase):
     def _sim(self, cmd):
         disk = self.m.disks["/dev/vdb"]
         text = " ".join(cmd)
+        img = self.disk_files.get("/dev/vdb")
         if cmd[0] == "wipefs":
             if self.fail_on == "wipefs":
                 return 1, ""
             disk.dump = None
+            if img:
+                scribble(img, wipefs=True, parted=False)
             return 0, ""
         if cmd[0] == "parted":
+            if img:
+                scribble(img, wipefs=False, parted=True)                 # aunque parted falle, pudo escribir
             if self.fail_on == "parted":
                 return 1, ""
             disk.dump = NEW_DUMP
@@ -992,6 +1191,30 @@ class PartitionFlow(unittest.TestCase):
         self.assertNotIn(("journal", "mark_format"), self.s.events)
         self.assertEqual(self.j.phase, "init")
 
+    def test_auto_parted_failure_restores_the_disk_edges_byte_for_byte(self):
+        img = self.tmp / "vdb.img"
+        original = bytearray(os.urandom(8 * 1024 * 1024))
+        original[:446] = b"WINDOWS-MBR-CODE".ljust(446, b"\x90")
+        img.write_bytes(bytes(original))
+        self.disk_files["/dev/vdb"] = img
+        self.assertIsNone(self.run_auto("parted"))
+        self.assertNotEqual(img.read_bytes(), bytes(original))        # wipefs + parted sí dejaron huella
+        self.j.rollback(False)
+        self.assertEqual(img.read_bytes(), bytes(original))
+        self.assertIn("restaurada y verificada", self.s.text)
+
+    def test_auto_mkfs_failure_leaves_the_edges_alone(self):
+        img = self.tmp / "vdb.img"
+        original = os.urandom(8 * 1024 * 1024)
+        img.write_bytes(original)
+        self.disk_files["/dev/vdb"] = img
+        self.assertIsNone(self.run_auto("mkfs.btrfs"))
+        scribbled = img.read_bytes()
+        self.assertNotEqual(scribbled, original)
+        self.j.rollback(False)
+        self.assertEqual(img.read_bytes(), scribbled)
+
+
 
 # ── run_installation de punta a punta (pasos simulados, orquestador real) ──
 class SmokeSession(FakeSession):
@@ -1043,11 +1266,13 @@ class RunInstallationSmoke(Base):
         self.m.fw = FakeFirmware({"0000": WIN, "0002": USB, "0003": UBU}, ["0000", "0003"])
         self.m.disks["/dev/vdb"] = FakeDisk(ORIG_DUMP)
         self.opt = dict(partition="ok", bootloader="ok", user="ok", locale="ok", aur="ok", abort_after_bootloader=False)
+        self.partition_calls = []
 
     def stubs(self):
         o, s, m, efi = self.opt, self.s, self.m, self.efi
 
         def partition_and_format(session, ctx, dev, dev_name, disco, uefi):
+            self.partition_calls.append(dev)
             session.journal.snapshot_table(dev)
             m.disks[dev].dump = None                       # wipefs
             if o["partition"] == "fail-before-format":
@@ -1201,6 +1426,181 @@ class RunInstallationSmoke(Base):
         self.assertNotIn("Rollback", self.s.text)
         self.assertNotIn("Deshaciendo", self.s.text)
 
+    def test_selected_disk_that_disappeared_fails_closed_instead_of_using_another(self):
+        self.s.pending_context.target_disk = "sdz"
+        self.run_flow()
+        self.assertEqual(self.partition_calls, [])                    # jamás se particiona OTRO disco
+        self.assertEqual(self.m.calls, [])
+        self.assertEqual(self.s.completed, 0)
+        self.assertTrue(any("sdz" in str(e) for e in self.s.errors))
+
+    def test_dev_prefix_in_the_selection_is_accepted(self):
+        self.s.pending_context.target_disk = "/dev/vdb"
+        self.run_flow()
+        self.assertEqual(self.partition_calls, ["/dev/vdb"])
+        self.assertEqual(self.s.completed, 1)
+
+    def test_no_selection_uses_the_first_available_disk(self):
+        self.s.pending_context.target_disk = None
+        self.run_flow()
+        self.assertEqual(self.partition_calls, ["/dev/vdb"])
+
+    def test_the_boot_disk_is_still_refused(self):
+        self.s.pending_context.target_disk = "sda"
+        self.run_flow()
+        self.assertEqual(self.partition_calls, [])
+        self.assertTrue(any("sda" in str(e) for e in self.s.errors))
+
+
+
+# ── Bordes del disco: restauración byte a byte ────────────────────────────
+class EdgesTests(Base):
+    DEV = "/dev/vdb"
+    MIB = 1024 * 1024
+
+    def make_disk(self, size=8 * 1024 * 1024):
+        data = bytearray(os.urandom(size))
+        data[:446] = b"WINDOWS-MBR-CODE".ljust(446, b"\x90")
+        path = self.tmp / "vdb.img"
+        path.write_bytes(bytes(data))
+        self.disk_files[self.DEV] = path
+        return path, bytes(data)
+
+    def start(self, dump=ORIG_DUMP):
+        self.m.disks[self.DEV] = FakeDisk(dump)
+        self.j.snapshot_table(self.DEV)
+
+    def test_restores_boot_code_table_copy_and_disk_level_signatures_byte_for_byte(self):
+        path, original = self.make_disk()
+        self.start()
+        scribble(path)
+        self.assertNotEqual(path.read_bytes(), original)
+        middle = 3 * self.MIB
+        with open(path, "r+b") as fh:
+            fh.seek(middle)
+            fh.write(b"MIDDLE-UNTOUCHED")
+        self.j.rollback(False)
+        expected = bytearray(original)
+        expected[middle:middle + 16] = b"MIDDLE-UNTOUCHED"            # el medio del disco no se toca
+        self.assertEqual(path.read_bytes(), bytes(expected))
+        self.assertEqual(path.read_bytes()[:446], b"WINDOWS-MBR-CODE".ljust(446, b"\x90"))
+        self.assertIn("restaurada y verificada", self.s.text)
+        self.assertEqual(self.m.ran("sh", "-c"), [])                  # no hizo falta sfdisk
+        self.assertEqual(self.s.classes()[-1], "ok")
+
+    def test_unchanged_disk_is_never_written(self):
+        path, original = self.make_disk()
+        self.start()
+        with mock.patch.object(rb, "write_edges", side_effect=AssertionError("no debe escribir")):
+            self.j.rollback(False)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertIn("seguía siendo la original", self.s.text)
+
+    def test_never_restored_once_formatting_started(self):
+        path, original = self.make_disk()
+        self.start()
+        scribble(path)
+        scribbled = path.read_bytes()
+        self.j.mark_format(self.DEV)
+        self.j.rollback(False)
+        self.assertEqual(path.read_bytes(), scribbled)
+        self.assertIn("no se pueden recuperar", self.s.text)
+
+    def test_a_different_disk_with_the_same_name_is_not_touched(self):
+        path, original = self.make_disk()
+        self.start()
+        other = os.urandom(4 * self.MIB)
+        path.write_bytes(other)                                       # «otro disco» (tamaño distinto)
+        with mock.patch.object(rb, "write_edges", side_effect=AssertionError("no debe escribir")):
+            self.j.rollback(False)
+        self.assertEqual(path.read_bytes(), other)
+        self.assertIn(str(len(original)), self.s.text)
+        self.assertEqual(self.s.classes()[-1], "warn")
+
+    def test_write_failure_tells_how_to_restore_by_hand_with_dd(self):
+        path, _ = self.make_disk()
+        self.start()
+        scribble(path)
+        with mock.patch.object(rb, "write_edges", side_effect=OSError("solo lectura")):
+            self.j.rollback(False)
+        self.assertIn("dd if=", self.s.text)
+        self.assertIn("solo lectura", self.s.text)
+        self.assertIn(str(self.tmp / "rb"), self.s.text)
+        self.assertEqual(self.s.classes()[-1], "warn")
+
+    def test_read_back_is_verified(self):
+        path, _ = self.make_disk()
+        self.start()
+        scribble(path)
+        def bad_write(dev, edges):
+            _REAL_WRITE_EDGES(str(path), edges)
+            with open(path, "r+b") as fh:
+                fh.seek(100)
+                fh.write(b"\xff")                                    # algo quedó mal
+        with mock.patch.object(rb, "write_edges", bad_write):
+            self.j.rollback(False)
+        self.assertIn("no coincide", self.s.text)
+        self.assertNotIn("restaurada y verificada", self.s.text)
+
+    def test_disk_without_partition_table_but_with_signatures_is_restored(self):
+        path, original = self.make_disk()
+        self.start(dump=None)                                         # sfdisk no ve tabla (p. ej. un miembro RAID/LUKS entero)
+        scribble(path)
+        self.j.rollback(False)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_small_disks_head_only_and_head_plus_short_tail(self):
+        for size in (1 * self.MIB, 1536 * 1024, 3 * self.MIB):
+            with self.subTest(size=size):
+                self.s.rollback_memory = None
+                j = self.new_journal()
+                self.m.disks[self.DEV] = FakeDisk(ORIG_DUMP)
+                path, original = self.make_disk(size)
+                j.snapshot_table(self.DEV)
+                with open(path, "r+b") as fh:
+                    fh.write(b"\x77" * 512)
+                    fh.seek(size - 512)
+                    fh.write(b"\x77" * 512)
+                j.rollback(False)
+                self.assertEqual(path.read_bytes(), original)
+
+    def test_backup_files_follow_the_sfdisk_wipefs_dd_convention(self):
+        path, original = self.make_disk()
+        self.start()
+        head = self.tmp / "rb" / "edges-vdb-0x00000000.bak"
+        tail = self.tmp / "rb" / "edges-vdb-0x00700000.bak"
+        self.assertEqual(head.read_bytes(), original[:self.MIB])
+        self.assertEqual(tail.read_bytes(), original[7 * self.MIB:])
+        self.assertEqual(head.stat().st_mode & 0o777, 0o600)
+        cmds = [l for l in self.s.logfile.diag_lines if l.startswith("edges-backup")]
+        self.assertEqual(len(cmds), 2)
+        self.assertTrue(any("seek=$((0x00700000))" in c and "bs=1 conv=notrunc" in c for c in cmds))
+
+    def test_retry_keeps_the_first_snapshot_and_does_not_read_the_disk_again(self):
+        path, _ = self.make_disk()
+        self.start()
+        first = self.j.mem["edges"][self.DEV]
+        scribble(path)
+        self.j.rollback(False)
+        j2 = self.new_journal()
+        with mock.patch.object(rb, "read_edges", wraps=rb.read_edges) as spy:
+            j2.snapshot_table(self.DEV)
+        spy.assert_not_called()
+        self.assertIs(j2.mem["edges"][self.DEV], first)
+
+    def test_success_removes_the_backups(self):
+        self.make_disk()
+        self.start()
+        self.j.rollback(True)
+        self.assertFalse((self.tmp / "rb").exists())
+
+    def test_unreadable_disk_falls_back_to_the_text_dump(self):
+        self.start()                                                  # sin archivo asignado: read_edges -> None
+        self.assertIsNone(self.j.mem["edges"][self.DEV])
+        self.m.disks[self.DEV].dump = NEW_DUMP
+        self.j.rollback(False)
+        self.assertEqual(rb.normalize_dump(self.m.disks[self.DEV].dump), rb.normalize_dump(ORIG_DUMP))
+
 
 # ── Cableado en el orquestador (texto del código) ─────────────────────────
 class WiringTests(unittest.TestCase):
@@ -1245,6 +1645,51 @@ class WiringTests(unittest.TestCase):
         src = self.read("scripts/avalos_installer/core/session.py")
         self.assertIn("self.journal = None", src)
         self.assertIn("self.rollback_memory = None", src)
+
+    def test_install_py_no_longer_falls_back_silently_to_another_disk(self):
+        src = self.read("scripts/avalos_installer/core/install.py")
+        self.assertNotIn('next((d for d in discos if d["name"] == dev_name), disponibles[0])', src)
+        self.assertIn('session.t("err-disk-not-found", dev_name=dev_requested)', src)
+
+    @staticmethod
+    def live_packages():
+        """La lista de paquetes del live, tal como la genera el workflow de la ISO (va en base64)."""
+        import base64
+        import subprocess
+        wf = (ROOT / ".github/workflows/build-iso.yml").read_text(encoding="utf-8")
+        m = re.search(r"printf '%s' \"([A-Za-z0-9+/=]+)\" \| base64 -d > /tmp/pypkgpyeof\.py", wf)
+        assert m, "no se encontró el generador de packages.x86_64 en build-iso.yml"
+        with tempfile.TemporaryDirectory() as d:
+            gen, out = Path(d) / "gen.py", Path(d) / "packages.x86_64"
+            gen.write_text(base64.b64decode(m.group(1)).decode("utf-8"), encoding="utf-8")
+            subprocess.run([sys.executable, str(gen), str(out), "linux"], check=True, capture_output=True)
+            return {l.strip() for l in out.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")}
+
+    def test_live_iso_ships_the_tools_the_installer_and_rollback_need(self):
+        pk = self.live_packages()
+        # efibootmgr: sin él el rollback del NVRAM no hace nada; el resto: lo que usan particionado y formato
+        for needed in ("efibootmgr", "parted", "gptfdisk", "dosfstools", "e2fsprogs", "btrfs-progs",
+                       "arch-install-scripts", "base"):
+            self.assertIn(needed, pk, f"el live no trae {needed}")
+
+    def test_ci_installs_the_disk_tools_so_the_real_tool_tests_do_not_skip(self):
+        wf = self.read(".github/workflows/validate-configs.yml")
+        for tool in ("parted", "fdisk", "e2fsprogs"):
+            self.assertIn(tool, wf)
+
+    def test_grub_uses_its_own_bootloader_id_in_both_installers_and_rollback_recognises_it(self):
+        """grub-install borra las entradas UEFI con el mismo id y pisa EFI/<id>/: con el genérico
+        «GRUB» una instalación manual de Arch vecina perdería su arranque (Launchpad #1568050)."""
+        ids = {rel: set(re.findall(r"--bootloader-id=(\w+)", self.read(rel)))
+               for rel in ("scripts/avalos_installer/system/bootloader.py", "scripts/skill_instalar_usb.py")}
+        for rel, found in ids.items():
+            self.assertEqual(len(found), 1, rel)
+            (bid,) = found
+            self.assertNotEqual(bid.lower(), "grub", rel)
+            self.assertTrue(rb.is_ours(bid), f"{rel}: el rollback no reconocería «{bid}» como nuestro")
+            self.assertIn(f"efi/{bid.lower()}", rb.ESP_TRACKED, f"{rel}: EFI/{bid} no se respalda en la ESP")
+        self.assertEqual(len({next(iter(f)) for f in ids.values()}), 1, "los dos instaladores deben usar el mismo id")
+
 
 
 if __name__ == "__main__":

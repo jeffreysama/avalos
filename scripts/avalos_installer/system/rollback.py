@@ -10,11 +10,15 @@ Lo que promete (ni más ni menos):
     bootloaders. Nunca una que ya estaba.
   · Archivos de la ESP: si la ESP ya existía (instalación manual junto a otro sistema), se
     quita lo que esta instalación agregó y se devuelven los archivos de arranque que pisó
-    (EFI/BOOT, EFI/GRUB, EFI/refind, EFI/systemd y loader).
+    (EFI/BOOT, EFI/AvalOS, EFI/GRUB, EFI/refind, EFI/systemd y loader).
   · Código de arranque del MBR (BIOS, modo manual): se devuelven sus 446 bytes.
-  · Tabla de particiones (modo automático): si el fallo ocurre DESPUÉS de reemplazarla y
-    ANTES del primer mkfs, se restaura la original (guardada con `sfdisk --dump`) y se
-    verifica. Pasado ese punto los datos anteriores ya no existen: no se toca nada y se avisa.
+  · Tabla de particiones (modo automático): se guarda byte a byte el primer y el último MiB
+    del disco (ahí viven la tabla GPT/MBR y su copia, el código de arranque del MBR y las
+    firmas de RAID/LVM/LUKS/ZFS que `wipefs -a` borra a nivel de disco). Si el fallo ocurre
+    DESPUÉS de reemplazar la tabla y ANTES del primer mkfs, se devuelven esos bytes y se
+    verifica leyendo de nuevo. Pasado ese punto los datos anteriores ya no existen: no se toca
+    nada y se avisa. (parted mkpart no crea sistemas de archivos y wipefs solo borra firmas:
+    antes del primer mkfs el contenido de las particiones sigue intacto.)
 
 Lo que NO hace: recuperar datos ya formateados, recrear una entrada UEFI preexistente que el
 bootloader reemplazó (lo avisa), ni tocar el arranque de un sistema que ya quedó arrancable
@@ -41,6 +45,7 @@ original del firmware y qué discos ya se formatearon, para que un segundo inten
 
 from __future__ import annotations
 
+import filecmp
 import os
 import re
 import shutil
@@ -61,10 +66,11 @@ KILL_SWITCH_ENV = "AVALOS_NO_ROLLBACK"
 PHASES = ("init", "table", "format", "boot", "usable")
 
 # Directorios de la ESP que un bootloader puede pisar: de sus archivos previos se guarda copia.
-ESP_TRACKED = ("efi/boot", "efi/grub", "efi/refind", "efi/systemd", "loader")
+ESP_TRACKED = ("efi/boot", "efi/avalos", "efi/grub", "efi/refind", "efi/systemd", "loader")
 ESP_BACKUP_FILE_MAX = 32 * 1024 * 1024
 ESP_BACKUP_TOTAL_MAX = 96 * 1024 * 1024
 MBR_BOOT_CODE_SIZE = 446
+EDGE_BYTES = 1024 * 1024   # primer y último MiB del disco (tabla de particiones, copia GPT, firmas)
 
 # Etiquetas de las entradas UEFI que crean los bootloaders de AvalOS: solo esas se borran.
 OUR_BOOT_LABELS = ("grub", "refind", "linux boot manager", "avalos")
@@ -76,6 +82,19 @@ _RE_CURRENT = re.compile(r"^BootCurrent:\s*([0-9A-Fa-f]{4})\s*$", re.M)
 _RE_ENTRY = re.compile(r"^Boot([0-9A-Fa-f]{4})\*?\s+(.*?)\s*$", re.M)
 
 
+_RE_DEVICE_PATH = re.compile(r"\s+[A-Za-z]+\(")   # primer nodo de la ruta de dispositivo: HD(, PciRoot(, USB(...
+
+
+def split_label(text: str) -> str:
+    """Etiqueta de una entrada UEFI. Con -v, efibootmgr la separa de la ruta con un tab; si no
+    hubiera tab se corta en el primer nodo de ruta (HD(…), PciRoot(…)), para que algo como
+    «\\EFI\\ubuntu\\grubx64.efi» de la ruta nunca cuente como parte de la etiqueta."""
+    if "\t" in text:
+        return text.split("\t", 1)[0].strip()
+    m = _RE_DEVICE_PATH.search(text)
+    return (text[:m.start()] if m else text).strip()
+
+
 @dataclass
 class FirmwareState:
     order: list = field(default_factory=list)      # ["0001", "0000"]
@@ -83,7 +102,7 @@ class FirmwareState:
     current: str | None = None
 
     def label(self, bid: str) -> str:
-        return self.entries.get(bid, "").split("\t", 1)[0].strip()
+        return split_label(self.entries.get(bid, ""))
 
 
 def parse_efibootmgr(text: str) -> FirmwareState | None:
@@ -92,8 +111,8 @@ def parse_efibootmgr(text: str) -> FirmwareState | None:
     order_m = _RE_ORDER.search(text or "")
     order = [x.upper() for x in order_m.group(1).split(",")] if order_m else []
     cur_m = _RE_CURRENT.search(text or "")
-    if not entries and not order:
-        return None
+    if not entries and not order and not cur_m and not re.search(r"^(?:Timeout|BootNext):", text or "", re.M):
+        return None                               # ni una línea que parezca de efibootmgr
     return FirmwareState(order=order, entries=entries, current=cur_m.group(1).upper() if cur_m else None)
 
 
@@ -166,6 +185,22 @@ def backup_tracked(root: Path, files: dict, dest: Path) -> tuple[dict, list]:
     return saved, skipped
 
 
+def _unchanged(root: Path, rel: str, sig: tuple, snap: EspSnapshot, now_files: dict) -> bool:
+    """¿El archivo sigue igual? Por tamaño y, si hay copia, por contenido. NO por fecha: FAT
+    guarda la hora local y el kernel la convierte según la zona y las opciones de montaje
+    (docs.kernel.org/filesystems/vfat), así que dos montajes pueden ver mtimes distintos."""
+    cur = now_files.get(rel)
+    if cur is None or cur[0] != sig[0]:
+        return False
+    saved = snap.backups.get(rel)
+    if saved is None:
+        return True                      # sin copia solo se puede comparar el tamaño
+    try:
+        return filecmp.cmp(root / rel, saved, shallow=False)
+    except OSError:
+        return False
+
+
 def restore_tree(root: Path, snap: EspSnapshot) -> TreeResult:
     """Deja `root` como estaba en `snap`: quita archivos y carpetas nuevos, devuelve los
     archivos rastreados que se pisaron o borraron. Lo que ya existía y no se rastreó se
@@ -181,7 +216,7 @@ def restore_tree(root: Path, snap: EspSnapshot) -> TreeResult:
             res.errors.append(f"{rel}: {e}")
 
     for rel, sig in snap.files.items():                            # archivos previos cambiados o borrados
-        if now_files.get(rel) == sig:
+        if _unchanged(root, rel, sig, snap, now_files):
             continue
         saved = snap.backups.get(rel)
         if saved is None:
@@ -222,7 +257,50 @@ def write_boot_code(dev: str, data: bytes) -> None:
         os.fsync(fh.fileno())
 
 
-# ── Tabla de particiones ──────────────────────────────────────────────────
+# ── Bordes del disco (tabla de particiones byte a byte) ───────────────────
+@dataclass
+class DiskEdges:
+    size: int
+    head: bytes          # primer MiB (o el disco entero si es más chico)
+    tail: bytes          # último MiB (vacío si head ya cubre todo el disco)
+    tail_offset: int
+
+
+def read_edges(dev: str) -> DiskEdges | None:
+    try:
+        with open(dev, "rb") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            if size < 4096:
+                return None
+            head_len = min(EDGE_BYTES, size)
+            tail_len = min(EDGE_BYTES, size - head_len)
+            tail_offset = size - tail_len
+            fh.seek(0)
+            head = fh.read(head_len)
+            tail = b""
+            if tail_len:
+                fh.seek(tail_offset)
+                tail = fh.read(tail_len)
+        if len(head) != head_len or len(tail) != tail_len:
+            return None
+        return DiskEdges(size=size, head=head, tail=tail, tail_offset=tail_offset)
+    except OSError:
+        return None
+
+
+def write_edges(dev: str, edges: DiskEdges) -> None:
+    """Devuelve los bytes tal como estaban: la copia del final primero y el inicio al último."""
+    with open(dev, "r+b") as fh:
+        if edges.tail:
+            fh.seek(edges.tail_offset)
+            fh.write(edges.tail)
+        fh.seek(0)
+        fh.write(edges.head)
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+# ── Tabla de particiones (texto) ──────────────────────────────────────────
 def normalize_dump(text: str) -> list:
     """Compara dos `sfdisk --dump` sin que importen espacios ni la línea «device:»."""
     return [re.sub(r"\s+", " ", ln).strip() for ln in (text or "").splitlines()
@@ -235,7 +313,7 @@ class InstallJournal:
         self.session = session
         mem = getattr(session, "rollback_memory", None)
         if mem is None:
-            mem = {"tables": {}, "table_paths": {}, "formatted": set(), "fw": None}
+            mem = {"tables": {}, "table_paths": {}, "edges": {}, "formatted": set(), "fw": None}
             session.rollback_memory = mem
         self.mem = mem
         self.phase = "init"
@@ -243,6 +321,7 @@ class InstallJournal:
         self.table_dev: str | None = None
         self.esp: EspSnapshot | None = None
         self.mbr: tuple | None = None            # (dispositivo, bytes)
+        self.fw_unreadable = False               # UEFI pero efibootmgr falta en el live o no pudo leer el firmware
         self.warnings = 0
 
     # ── utilidades ────────────────────────────────────────────────
@@ -274,19 +353,29 @@ class InstallJournal:
         if not self.uefi or self.mem.get("fw"):      # el primer intento de la sesión es el «original»
             return
         rc, out, _err = run_command(["efibootmgr", "-v"])
-        self.mem["fw"] = parse_efibootmgr(out) if rc == 0 else None
+        state = parse_efibootmgr(out) if rc == 0 else None
+        self.mem["fw"] = state
+        self.fw_unreadable = state is None
 
     def snapshot_table(self, dev: str) -> None:
-        """Modo automático, justo antes de wipefs. Guarda la tabla original (solo la primera
-        vez de la sesión) y deja una copia en disco y en el log."""
+        """Modo automático, justo antes de wipefs. Guarda (solo la primera vez de la sesión)
+        el primer y el último MiB del disco byte a byte y además un `sfdisk --dump` legible;
+        deja copias en disco y en el log."""
         self.table_dev = dev
         self.mark("table")
-        if dev in self.mem["tables"]:
+        edges_mem = self.mem.setdefault("edges", {})
+        if dev in self.mem["tables"] or dev in edges_mem:
             return
+        edges = read_edges(dev)
+        edges_mem[dev] = edges
         rc, out, _err = run_command(["sfdisk", "--dump", dev])
         dump = out if rc == 0 and re.search(r"^label:\s*\w+", out or "", re.M) else None
         self.mem["tables"][dev] = dump
+        if edges is not None:
+            self._persist_edges(dev, edges)
         if dump is None:
+            if edges is not None:
+                self._log("rb-table-saved", "info", dev=dev, path=ROLLBACK_DIR)
             return
         for line in dump.splitlines():
             self._diag(f"sfdisk-dump {dev}: {line}")
@@ -299,6 +388,22 @@ class InstallJournal:
             self._log("rb-table-saved", "info", dev=dev, path=path)
         except OSError:
             pass
+
+    def _persist_edges(self, dev: str, edges: DiskEdges) -> None:
+        """Copias con el nombre y el formato de sfdisk/wipefs (<disp>-<offset>.bak): se restauran
+        a mano con dd if=<archivo> of=<disp> seek=$((0x<offset>)) bs=1 conv=notrunc."""
+        try:
+            ROLLBACK_DIR.mkdir(parents=True, exist_ok=True)
+            name = Path(dev).name
+            for offset, data in ((0, edges.head), (edges.tail_offset, edges.tail)):
+                if not data:
+                    continue
+                path = ROLLBACK_DIR / f"edges-{name}-0x{offset:08x}.bak"
+                path.write_bytes(data)
+                path.chmod(0o600)
+                self._diag(f"edges-backup {dev}: dd if={path} of={dev} seek=$((0x{offset:08x})) bs=1 conv=notrunc")
+        except OSError:
+            pass                                  # sigue la copia en memoria
 
     def snapshot_esp(self, efi_device: str, root: Path | None = None) -> None:
         """Con la ESP montada y ANTES del bootloader: árbol de archivos y copia de los que un
@@ -406,7 +511,11 @@ class InstallJournal:
 
     def _undo_firmware(self) -> None:
         before: FirmwareState | None = self.mem.get("fw")
-        if not self.uefi or self.phase != "boot" or not before:
+        if not self.uefi or self.phase != "boot":
+            return
+        if before is None:
+            if self.fw_unreadable:                # ISO sin efibootmgr (o firmware ilegible): que no sea en silencio
+                self._warn("rb-fw-unavailable")
             return
         rc, out, _err = run_command(["efibootmgr", "-v"])
         after = parse_efibootmgr(out) if rc == 0 else None
@@ -436,6 +545,9 @@ class InstallJournal:
         lost = [before.label(b) for b in before.entries if final.entries.get(b) != before.entries[b]]
         if lost:
             self._warn("rb-fw-lost", labels=", ".join(l or "?" for l in lost))
+            for bid in before.entries:
+                if final.entries.get(bid) != before.entries[bid]:
+                    self._diag(f"efi-entry-lost Boot{bid}: {before.entries[bid]}")
         target = [b for b in before.order if b in final.entries]
         if target and final.order != target:
             order = ",".join(target)
@@ -452,9 +564,38 @@ class InstallJournal:
         if dev in self.mem["formatted"]:
             self._log("rb-table-formatted", "warn", dev=dev)
             return
+        edges = self.mem.get("edges", {}).get(dev)
+        if edges is not None:
+            self._restore_edges(dev, edges)
+        elif self.mem["tables"].get(dev):
+            self._restore_with_sfdisk(dev)            # no se pudo leer el disco: queda el volcado de texto
+
+    def _restore_edges(self, dev: str, edges: DiskEdges) -> None:
+        now = read_edges(dev)
+        if now is None:
+            self._warn("rb-edges-failed", dev=dev, e="read", dir=ROLLBACK_DIR)
+            return
+        if now.size != edges.size:                    # otro disco con el mismo nombre: no se toca
+            self._warn("rb-edges-failed", dev=dev, e=f"size {now.size} != {edges.size}", dir=ROLLBACK_DIR)
+            return
+        if now.head == edges.head and now.tail == edges.tail:
+            self._log("rb-table-unchanged", "info", dev=dev)
+            return
+        try:
+            write_edges(dev, edges)
+        except OSError as e:
+            self._warn("rb-edges-failed", dev=dev, e=e, dir=ROLLBACK_DIR)
+            return
+        run_command(["blockdev", "--rereadpt", dev], timeout=15)
+        run_command(["udevadm", "settle", "--timeout=5"], timeout=15)
+        back = read_edges(dev)
+        if back is not None and back.head == edges.head and back.tail == edges.tail:
+            self._log("rb-table-restored", "ok", dev=dev)
+        else:
+            self._warn("rb-table-mismatch", dev=dev, path=ROLLBACK_DIR)
+
+    def _restore_with_sfdisk(self, dev: str) -> None:
         saved = self.mem["tables"].get(dev)
-        if not saved:
-            return                                       # el disco no tenía tabla: nada que restaurar
         rc, now, _err = run_command(["sfdisk", "--dump", dev])
         if rc == 0 and normalize_dump(now) == normalize_dump(saved):
             self._log("rb-table-unchanged", "info", dev=dev)
@@ -471,16 +612,15 @@ class InstallJournal:
                 self._warn("rb-error", e=e)
                 return
         # --wipe-partitions never: restaurar la tabla no debe borrar firmas de nada
-        rc, _out = self.session.run_cmd(
+        rc_restore, _out = self.session.run_cmd(
             ["sh", "-c", 'sfdisk --wipe-partitions never "$1" < "$2"', "sh", dev, str(path)],
             timeout=60, abortable=False)
-        if rc != 0:
-            self._warn("rb-table-failed", dev=dev, rc=rc, path=path)
-            return
-        run_command(["udevadm", "settle", "--timeout=5"], timeout=15)
         run_command(["blockdev", "--rereadpt", dev], timeout=15)
+        run_command(["udevadm", "settle", "--timeout=5"], timeout=15)
         rc, after, _err = run_command(["sfdisk", "--dump", dev])
         if rc == 0 and normalize_dump(after) == normalize_dump(saved):
-            self._log("rb-table-restored", "ok", dev=dev)
+            self._log("rb-table-restored", "ok", dev=dev)      # aunque sfdisk se quejara del reread
+        elif rc_restore != 0:
+            self._warn("rb-table-failed", dev=dev, rc=rc_restore, path=path)
         else:
             self._warn("rb-table-mismatch", dev=dev, path=path)

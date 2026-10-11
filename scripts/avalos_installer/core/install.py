@@ -159,8 +159,16 @@ def run_installation(session: InstallSession) -> None:
             )
             return
 
-        dev_name = ctx.target_disk or disponibles[0]["name"]
-        disco = next((d for d in discos if d["name"] == dev_name), disponibles[0])
+        # Falla cerrado: si el disco elegido ya no está (desconectado, renombrado al
+        # reenumerar) NO se instala en otro. Solo sin selección se usa el primero disponible.
+        dev_requested = (ctx.target_disk or "").removeprefix("/dev/")
+        if dev_requested:
+            disco = next((d for d in discos if d["name"] == dev_requested), None)
+            if disco is None:
+                session.error_fatal(session.t("err-disk-not-found", dev_name=dev_requested))
+                return
+        else:
+            disco = disponibles[0]
         dev_name = disco["name"]
 
         if disco["es_arranque"]:
