@@ -129,7 +129,9 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("mako")
     hl.exec_cmd("hypridle")
     hl.exec_cmd("nm-applet --indicator")
-    hl.exec_cmd("hyprpolkitagent")   -- necesario en live para diálogos de privilegios
+    -- Arch instala el agente en /usr/lib/hyprpolkitagent/ (fuera del PATH): con el nombre pelado no
+    -- arranca nada y pkexec falla con «Error creating textual authentication agent».
+    hl.exec_cmd("/usr/lib/hyprpolkitagent/hyprpolkitagent")   -- necesario en live para diálogos de privilegios
 
     -- Cliphist: faltaba en el live por accidente (sí está en el template
     -- instalado). Sin esto, mod+V (agregado abajo) no tiene nada que listar.

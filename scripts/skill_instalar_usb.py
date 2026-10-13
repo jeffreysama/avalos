@@ -4073,7 +4073,7 @@ WantedBy=multi-user.target
             _mirrors_ok =False
             if _rc_rm_install ==0 :
                 _rc_rm ,_ =self ._run_cmd ([
-                "rate-mirrors","arch","--allow-root","--save","/etc/pacman.d/mirrorlist",
+                "rate-mirrors","--allow-root","--save","/etc/pacman.d/mirrorlist","arch",
                 ],timeout =90 )
                 if _rc_rm ==0 :
                     _mirrors_ok =True
@@ -5161,13 +5161,17 @@ DISTRIB_DESCRIPTION="AvalOS"
                         (mango_dir /"MangoHud.conf").write_text (_contenido_mango ,encoding ="utf-8")
                         self ._log (self ._t ("log-mangohud-ok"),"ok")
 
-                    self ._run_chroot (
-                    ["sudo","-H","-u",usuario ,"flatpak","remote-add",
+                    # --user: ver aur.py del instalador modular (sin --user flatpak usa el helper del sistema, que en el chroot no existe)
+                    _rc_flat ,_ =self ._run_chroot (
+                    ["sudo","-H","-u",usuario ,"flatpak","remote-add","--user",
                     "--if-not-exists","flathub",
                     "https://dl.flathub.org/repo/flathub.flatpakrepo"],
                     timeout =120
                     )
-                    self ._log (self ._t ("log-flathub-ok"),"ok")
+                    if _rc_flat ==0 :
+                        self ._log (self ._t ("log-flathub-ok"),"ok")
+                    else :
+                        self ._log (self ._t ("log-flathub-failed"),"warn")
 
             if sudoers_tmp and sudoers_tmp .exists ():
                 try :sudoers_tmp .unlink ()

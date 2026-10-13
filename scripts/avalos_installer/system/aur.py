@@ -157,13 +157,20 @@ def install_aur(session: InstallSession, ctx: InstallContext) -> None:
                     except OSError as e:
                         session.log(f"[WARN] MangoHud.conf: {e}", "warn")
 
-                session.run_chroot(
-                    ["sudo", "-H", "-u", ctx.username, "flatpak", "remote-add",
+                # --user: las instalaciones de la tienda (avalos-store) son --user, así que el remoto va en la
+                # configuración del usuario. Sin --user flatpak usa la instalación del SISTEMA y habla con su
+                # helper por D-Bus, que dentro del chroot no existe («The name is not activatable»); además el
+                # rc se ignoraba y se anunciaba un éxito falso. Si aun así falla, avalos-store lo agrega solo.
+                rc_flat, _ = session.run_chroot(
+                    ["sudo", "-H", "-u", ctx.username, "flatpak", "remote-add", "--user",
                      "--if-not-exists", "flathub",
                      "https://dl.flathub.org/repo/flathub.flatpakrepo"],
                     timeout=120
                 )
-                session.log(session.t("log-flathub-ok"), "ok")
+                if rc_flat == 0:
+                    session.log(session.t("log-flathub-ok"), "ok")
+                else:
+                    session.log(session.t("log-flathub-failed"), "warn")
     finally:
         if sudoers_tmp and sudoers_tmp.exists():
             try:

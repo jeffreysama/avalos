@@ -151,7 +151,7 @@ mount /dev/sda1 /mnt/boot/efi
 
 ```bash
 pacman -Sy --noconfirm --needed rate-mirrors
-rate-mirrors arch --allow-root --save /etc/pacman.d/mirrorlist
+rate-mirrors --allow-root --save /etc/pacman.d/mirrorlist arch
 ```
 
 If that's unavailable for some reason, fall back to `reflector`:
@@ -1119,7 +1119,7 @@ cp /usr/share/avalos/configs/mangohud/MangoHud.conf /etc/MangoHud/MangoHud.conf
 And register Flathub, since `flatpak` itself doesn't come with any remotes configured by default:
 
 ```bash
-sudo -H -u yourusername flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+sudo -H -u yourusername flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 ```
 
 ## 22. DNS-over-TLS

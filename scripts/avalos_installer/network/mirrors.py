@@ -59,8 +59,10 @@ def optimize_mirrors(session: InstallSession):
     )
     mirrors_ok = False
     if rc_rm_install == 0:
+        # --allow-root y --save son opciones BASE: van antes del subcomando («arch»); después, clap
+        # responde «unexpected argument '--allow-root' found» y siempre se caía a reflector.
         rc_rm, _ = session.run_cmd([
-            "rate-mirrors", "arch", "--allow-root", "--save", "/etc/pacman.d/mirrorlist",
+            "rate-mirrors", "--allow-root", "--save", "/etc/pacman.d/mirrorlist", "arch",
         ], timeout=90)
         if rc_rm == 0:
             mirrors_ok = True

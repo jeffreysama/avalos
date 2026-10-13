@@ -616,6 +616,9 @@ def resolve_icon(app, installed_ids):
     return None
 
 
+FLATHUB_REPO_URL = "https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+
 class StoreAPI:
     def __init__(self):
         self.window = None
@@ -752,6 +755,22 @@ class StoreAPI:
         except Exception:
             pass
 
+    def _ensure_flathub(self, app_id):
+        """El remoto «flathub» tiene que existir en la instalación del USUARIO: las instalaciones de la
+        tienda son --user. Si el instalador no pudo agregarlo (en el chroot no hay D-Bus y, sin --user,
+        flatpak habla con el helper del sistema: «The name is not activatable»), se agrega acá. Es
+        idempotente (--if-not-exists no hace nada si ya está). Si falla, p. ej. sin red, se sigue: el
+        install que viene después falla con el mensaje de flatpak."""
+        try:
+            r = subprocess.run(
+                ["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB_REPO_URL],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+            )
+            if r.returncode != 0:
+                self._log(app_id, "flathub: " + ((r.stderr or r.stdout).strip() or f"rc={r.returncode}"))
+        except Exception as e:  # noqa: BLE001
+            self._log(app_id, f"flathub: {e}")
+
     def _do_install(self, app):
         app_id, name, source, pkg = app["id"], app["name"], app.get("source"), app.get("package", "")
         self._log(app_id, T["log_start_install"].format(name=name))
@@ -779,6 +798,7 @@ class StoreAPI:
                 if not shutil.which("flatpak"):
                     self._finish(app_id, "install", False, T["err_noflatpak"])
                     return
+                self._ensure_flathub(app_id)
                 proc = subprocess.Popen(
                     ["flatpak", "install", "--user", "--noninteractive", "-y", "flathub", pkg],
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",

@@ -154,6 +154,13 @@ STRINGS = {
         "d-apps-warn": "Missing: {missing}",
         "d-sync-ok": "Both point to {sha}",
         "d-sync-mismatch": "avalos-update-helper ({a}) and avalos-update ({b}) point to different versions: copy both together",
+        "t-polkit-agent": "Authentication agent", "t-flathub": "Flathub (Flatpak)",
+        "d-polkit-agent-ok": "{name} is running: the store and Update can ask for permission",
+        "d-polkit-agent-warn": "No polkit authentication agent is running: the store and Update will fail with «Error creating textual authentication agent». Start it with /usr/lib/hyprpolkitagent/hyprpolkitagent and add it to hyprland.lua",
+        "d-polkit-agent-skip": "No graphical session to check",
+        "d-flathub-ok": "Flathub is configured for your user",
+        "d-flathub-info": "Not configured for your user yet: the store adds it the first time you install a Flatpak app (or run flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo)",
+        "d-flathub-skip": "Flatpak is not installed",
         "d-skip-noroute": "No network: not checked",
         "d-error": "Could not check: {err}",
     },
@@ -237,6 +244,13 @@ STRINGS = {
         "d-apps-warn": "Faltan: {missing}",
         "d-sync-ok": "Ambos apuntan a {sha}",
         "d-sync-mismatch": "avalos-update-helper ({a}) y avalos-update ({b}) apuntan a versiones distintas: cópialos juntos",
+        "t-polkit-agent": "Agente de autenticación", "t-flathub": "Flathub (Flatpak)",
+        "d-polkit-agent-ok": "{name} está corriendo: la tienda y Actualizar pueden pedir permisos",
+        "d-polkit-agent-warn": "No hay un agente de autenticación de polkit corriendo: la tienda y Actualizar fallarán con «Error creating textual authentication agent». Inícialo con /usr/lib/hyprpolkitagent/hyprpolkitagent y agrégalo a hyprland.lua",
+        "d-polkit-agent-skip": "No hay sesión gráfica que comprobar",
+        "d-flathub-ok": "Flathub está configurado para tu usuario",
+        "d-flathub-info": "Todavía no está configurado para tu usuario: la tienda lo agrega la primera vez que instales una app Flatpak (o ejecuta flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo)",
+        "d-flathub-skip": "Flatpak no está instalado",
         "d-skip-noroute": "Sin red: no se comprobó",
         "d-error": "No se pudo comprobar: {err}",
     },
@@ -320,6 +334,13 @@ STRINGS = {
         "d-apps-warn": "缺少：{missing}",
         "d-sync-ok": "两者都指向 {sha}",
         "d-sync-mismatch": "avalos-update-helper（{a}）和 avalos-update（{b}）指向不同版本：请一起复制",
+        "t-polkit-agent": "认证代理", "t-flathub": "Flathub (Flatpak)",
+        "d-polkit-agent-ok": "{name} 正在运行：商店和更新可以请求权限",
+        "d-polkit-agent-warn": "没有运行 polkit 认证代理：商店和更新会因“Error creating textual authentication agent”而失败。请运行 /usr/lib/hyprpolkitagent/hyprpolkitagent，并把它加入 hyprland.lua",
+        "d-polkit-agent-skip": "没有图形会话可检查",
+        "d-flathub-ok": "已为你的用户配置 Flathub",
+        "d-flathub-info": "尚未为你的用户配置：商店会在你首次安装 Flatpak 应用时添加它（或运行 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo）",
+        "d-flathub-skip": "未安装 Flatpak",
         "d-skip-noroute": "没有网络：未检查",
         "d-error": "无法检查：{err}",
     },
@@ -403,6 +424,13 @@ STRINGS = {
         "d-apps-warn": "不足：{missing}",
         "d-sync-ok": "どちらも {sha} を指しています",
         "d-sync-mismatch": "avalos-update-helper（{a}）と avalos-update（{b}）が別のバージョンを指しています：2 つを一緒にコピーしてください",
+        "t-polkit-agent": "認証エージェント", "t-flathub": "Flathub (Flatpak)",
+        "d-polkit-agent-ok": "{name} が動作中です：ストアとアップデートが権限を要求できます",
+        "d-polkit-agent-warn": "polkit 認証エージェントが動作していません：ストアとアップデートは「Error creating textual authentication agent」で失敗します。/usr/lib/hyprpolkitagent/hyprpolkitagent を起動し、hyprland.lua に追加してください",
+        "d-polkit-agent-skip": "確認できるグラフィカルセッションがありません",
+        "d-flathub-ok": "Flathub はユーザー向けに設定済みです",
+        "d-flathub-info": "ユーザー向けにまだ設定されていません：ストアで初めて Flatpak アプリをインストールするときに追加されます（または flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo を実行）",
+        "d-flathub-skip": "Flatpak がインストールされていません",
         "d-skip-noroute": "ネットワークなし：未チェック",
         "d-error": "チェックできませんでした：{err}",
     },
@@ -829,11 +857,65 @@ def chk_sync():
     return R("ok", "d-sync-ok", sha=a)
 
 
+# Agentes de autenticación de polkit conocidos (nombre del ejecutable). Sin uno corriendo, pkexec falla con
+# «Error creating textual authentication agent… /dev/tty» (código 127) y ni la tienda ni Actualizar pueden
+# pedir permisos. En Arch hyprpolkitagent vive en /usr/lib/hyprpolkitagent/ (fuera del PATH).
+_POLKIT_AGENTS = frozenset({
+    "hyprpolkitagent", "polkit-gnome-authentication-agent-1", "polkit-kde-authentication-agent-1",
+    "polkit-mate-authentication-agent-1", "mate-polkit", "lxqt-policykit-agent", "lxpolkit", "xfce-polkit",
+    "polkit-dumb-agent", "ukui-polkit", "pantheon-agent-polkit", "cosmic-osd",
+})
+
+
+def _running_polkit_agent():
+    """Nombre del agente de polkit que corre con tu usuario, o None."""
+    uid = os.getuid()
+    try:
+        entries = list(PROC.iterdir())
+    except OSError:
+        return None
+    for pid_dir in entries:
+        if not pid_dir.name.isdigit():
+            continue
+        try:
+            if pid_dir.stat().st_uid != uid:
+                continue
+            argv0 = (pid_dir / "cmdline").read_bytes().split(b"\0", 1)[0].decode("utf-8", "replace")
+        except OSError:
+            continue
+        name = os.path.basename(argv0)
+        if name in _POLKIT_AGENTS:
+            return name
+    return None
+
+
+def chk_polkit_agent():
+    if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+        return R("skip", "d-polkit-agent-skip")                 # sin sesión gráfica no hay agente que esperar
+    name = _running_polkit_agent()
+    if name:
+        return R("ok", "d-polkit-agent-ok", name=name)
+    return R("warn", "d-polkit-agent-warn")
+
+
+def chk_flathub():
+    # Las instalaciones de la tienda son --user: el remoto flathub tiene que estar en la configuración del usuario.
+    if not shutil.which("flatpak"):
+        return R("skip", "d-flathub-skip")
+    rc, out = _run(["flatpak", "remotes", "--user", "--columns=name"], timeout=10)
+    if rc != 0:
+        return R("skip", "d-error", err="flatpak remotes")
+    if "flathub" in out.split():
+        return R("ok", "d-flathub-ok")
+    return R("info", "d-flathub-info")                          # no es grave: la tienda lo agrega al instalar un Flatpak
+
+
 # (id, grupo, función, ¿toca la red?) — el orden es el del informe
 CHECKS = [
     ("kernel", "system", chk_kernel, False),
     ("boot-files", "system", chk_boot_files, False),
     ("time-sync", "system", chk_time_sync, False),
+    ("polkit-agent", "system", chk_polkit_agent, False),
     ("disk-root", "storage", chk_disk_root, False),
     ("btrfs-meta", "storage", chk_btrfs_meta, False),
     ("btrfs-errors", "storage", chk_btrfs_errors, False),
@@ -843,6 +925,7 @@ CHECKS = [
     ("pacnew", "packages", chk_pacnew, False),
     ("mirrors", "packages", chk_mirrors, False),
     ("units", "packages", chk_units, False),
+    ("flathub", "packages", chk_flathub, False),
     ("gpu", "hardware", chk_gpu, False),
     ("vulkan", "hardware", chk_vulkan, False),
     ("ucode", "hardware", chk_ucode, False),
