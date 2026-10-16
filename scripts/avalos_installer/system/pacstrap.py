@@ -45,7 +45,7 @@ BASE_PKGS = [
     # el 'linux-firmware' oficial de Arch, así que nunca coexisten ambos.
     "linux-avalos-firmware",
     "sof-firmware",
-    "grub", "efibootmgr", "os-prober", "ntfs-3g", "networkmanager", "nm-connection-editor",
+    "grub", "efibootmgr", "os-prober", "ntfs-3g", "networkmanager", "nm-connection-editor", "wireless-regdb",
     "sudo", "bash", "bash-completion", "nano", "vim", "git", "curl", "wget", "htop",
     "python", "python-pip", "man-db", "man-pages", "less", "openssh",
     "zip", "unzip", "p7zip", "zram-generator",

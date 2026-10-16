@@ -14,6 +14,12 @@ from pathlib import Path
 
 # ── Rutas de montaje del sistema en instalación ──────────────────────────
 MOUNT_ROOT = Path("/mnt/avalos_install")
+
+# Cuánto espera el instalador a que el usuario termine el asistente antes de darlo por abandonado. Antes eran
+# 10 minutos: en una instalación real (conectar el Wi-Fi, mirar discos, pensar) se pasa fácil y el instalador
+# moría con «Timeout expired. Close and reopen the installer». Cerrar la ventana lo despierta al instante
+# (session.on_close), así que esperar mucho no deja nada colgado.
+WIZARD_IDLE_TIMEOUT_S = 6 * 60 * 60
 MOUNT_EFI = MOUNT_ROOT / "boot" / "efi"
 MOUNT_ISO = Path("/tmp/avalos_iso")
 

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import time
 
-from avalos_installer.core.config import MOUNT_ROOT
+from avalos_installer.core.config import MOUNT_ROOT, WIZARD_IDLE_TIMEOUT_S
 from avalos_installer.core.prereqs import TOOL_TO_PACKAGE, check_tools
 from avalos_installer.core.session import InstallSession, output_indicates_gpg_error
 from avalos_installer.desktop.hyprland import configure_hyprland
@@ -80,7 +80,7 @@ def run_installation(session: InstallSession) -> None:
     session.start_timer()
 
     if not session._config_ready.is_set():
-        if not session._config_ready.wait(timeout=600):
+        if not session._config_ready.wait(timeout=WIZARD_IDLE_TIMEOUT_S):
             session.log(session.t("log-timeout-wizard"), "err")
             session.error_step(session.t("err-timeout"))
             session._installing = False
