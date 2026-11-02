@@ -35,9 +35,11 @@ BUILD:
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import json
 import os
 import ntpath
+import re
 import shutil
 import socket
 import subprocess
@@ -651,6 +653,36 @@ def _get_latest_ventoy_url() -> tuple[str, str]:
         pass
     return VENTOY_FALLBACK, VENTOY_VERSION
 
+def _sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _parse_sha256_listing(text: str, filename: str) -> str | None:
+    """Hash de `filename` en un sha256.txt con formato sha256sum (`<64 hex>  <archivo>`, con `*`
+    delante del nombre si se hasheó en modo binario). None si el archivo no figura."""
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2 or not re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+            continue
+        if parts[1].lstrip("*").strip() == filename:
+            return parts[0].lower()
+    return None
+
+def _fetch_ventoy_sha256(zip_url: str) -> str | None:
+    """SHA256 esperado del zip según el sha256.txt de la MISMA release (misma carpeta de descarga:
+    Ventoy lo publica junto a cada versión). None si no se pudo bajar o el zip no figura. Protege de
+    una descarga cortada o corrupta; no de un origen comprometido (el hash viene del mismo sitio)."""
+    base, _, name = zip_url.rpartition("/")
+    try:
+        with urlopen(f"{base}/sha256.txt", timeout=10) as r:
+            text = r.read(65536).decode("utf-8", "replace")
+    except Exception:
+        return None
+    return _parse_sha256_listing(text, name)
+
 def _get_drive_letter(disk_num: int, label_only: bool = False) -> str | None:
     """Devuelve la letra de la partición data de Ventoy (ExFAT, etiqueta Ventoy).
 
@@ -781,6 +813,18 @@ class AvalAPI:
                 urlretrieve(url, tmp_zip, progress)
             finally:
                 socket.setdefaulttimeout(_prev_timeout)
+            # Antes de extraer nada: el zip tiene que coincidir con el SHA256 que publica Ventoy.
+            expected = _fetch_ventoy_sha256(url)
+            if expected is None:
+                self._a._jsc("pyLog", "[WARN] No se pudo comprobar la descarga (no hay sha256.txt de esa "
+                             "release). Se continúa sin verificar.", "WRN")
+            else:
+                actual = _sha256_of(tmp_zip)
+                if actual != expected:
+                    tmp_zip.unlink(missing_ok=True)
+                    raise ValueError("La descarga de Ventoy no coincide con el SHA256 publicado (archivo "
+                                     "corrupto o alterado). Se descartó: vuelve a intentarlo.")
+                self._a._jsc("pyLog", f"[OK] SHA256 verificado ({actual[:16]}…)", "OK")
             # Extraer junto al exe
             dest = _find_exe_dir()
             with zipfile.ZipFile(tmp_zip, "r") as zf:

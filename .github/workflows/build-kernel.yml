@@ -547,7 +547,6 @@ jobs:
 
       - name: Compilar linux-avalos-compat (x86-64-v2)
         run: |
-          KERNEL_VER="${{ needs.check-version.outputs.kernel_ver }}"
           JOBS=$(nproc)
 
           # FIX (16-ago): mismo motivo que en build-bore — con jobs separados
@@ -843,7 +842,14 @@ jobs:
           # de HOY) y el grep remoto a que el '.sig' final sea opcional, asi
           # los .sig viejos huerfanos entran al mismo ciclo de limpieza que
           # sus .pkg.tar.zst.
-          CURRENT_FILES=$(ls /tmp/avalos-repo/*.pkg.tar.zst* 2>/dev/null | xargs -I{} basename {} || true)
+          CURRENT_FILES=$(find /tmp/avalos-repo -maxdepth 1 -type f -name '*.pkg.tar.zst*' -printf '%f\n' 2>/dev/null || true)
+          # RED DE SEGURIDAD: sin paquetes locales no hay nada "actual" con que comparar, y el bucle
+          # de abajo marcaria como obsoleto TODO .pkg.tar.zst del release y lo borraria entero
+          # (comprobado ejecutando este paso con un 'gh' falso). Mejor no tocar nada.
+          if [[ -z "$CURRENT_FILES" ]]; then
+            echo "::warning::No hay paquetes locales en /tmp/avalos-repo: no se elimina nada del release"
+            exit 0
+          fi
           gh release view "${{ env.REPO_TAG }}" \
             --repo "${{ env.AVALOS_REPO }}" \
             --json assets \
