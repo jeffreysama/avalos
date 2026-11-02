@@ -35,14 +35,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # pacman-package-manager + libarchive-tools (bsdtar): las pruebas del preflight de pacstrap
-      # corren un pacman real sobre repos de mentira (tests/test_pacstrap_preflight.py).
+      # pacman-package-manager: las pruebas del preflight de pacstrap corren un pacman real sobre
+      # repos de mentira (tests/test_pacstrap_preflight.py) y solo necesitan el binario pacman.
       - name: Instalar parsers y herramientas de disco (GTK3, Lua, desktop-file-utils, parted, flatpak, pacman)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
             python3-gi gir1.2-gtk-3.0 lua5.4 desktop-file-utils python3-yaml \
-            parted fdisk e2fsprogs flatpak pacman-package-manager libarchive-tools
+            parted fdisk e2fsprogs flatpak pacman-package-manager
 
       - name: Validar
         run: /usr/bin/python3 scripts/validate_configs.py --strict

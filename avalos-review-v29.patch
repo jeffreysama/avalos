@@ -1,0 +1,115 @@
+diff --git a/.github/workflows/validate-configs.yml b/.github/workflows/validate-configs.yml
+index 8ad9037..8721c83 100644
+--- a/.github/workflows/validate-configs.yml
++++ b/.github/workflows/validate-configs.yml
+@@ -35,14 +35,14 @@ jobs:
+       - name: Checkout
+         uses: actions/checkout@v7
+ 
+-      # pacman-package-manager + libarchive-tools (bsdtar): las pruebas del preflight de pacstrap
+-      # corren un pacman real sobre repos de mentira (tests/test_pacstrap_preflight.py).
++      # pacman-package-manager: las pruebas del preflight de pacstrap corren un pacman real sobre
++      # repos de mentira (tests/test_pacstrap_preflight.py) y solo necesitan el binario pacman.
+       - name: Instalar parsers y herramientas de disco (GTK3, Lua, desktop-file-utils, parted, flatpak, pacman)
+         run: |
+           sudo apt-get update -qq
+           sudo apt-get install -y -qq --no-install-recommends \
+             python3-gi gir1.2-gtk-3.0 lua5.4 desktop-file-utils python3-yaml \
+-            parted fdisk e2fsprogs flatpak pacman-package-manager libarchive-tools
++            parted fdisk e2fsprogs flatpak pacman-package-manager
+ 
+       - name: Validar
+         run: /usr/bin/python3 scripts/validate_configs.py --strict
+diff --git a/tests/test_pacstrap_preflight.py b/tests/test_pacstrap_preflight.py
+index a3627be..57a8dec 100644
+--- a/tests/test_pacstrap_preflight.py
++++ b/tests/test_pacstrap_preflight.py
+@@ -12,8 +12,9 @@ del live y sacar paquetes de la lista del destino nunca lo arreglaba. pacstrap i
+ nuevo, así que el preflight ahora resuelve contra una base local vacía, igual que él.
+ 
+ Dos niveles: salidas literales de pacman (unitarias) y un pacman real sobre repos de mentira
+-(se saltan si no hay pacman/repo-add; CI los instala).
++(se saltan si no hay pacman; CI lo instala).
+ """
++import hashlib
+ import io
+ import os
+ import shutil
+@@ -233,7 +234,8 @@ class PreflightFlow(unittest.TestCase):
+ 
+ 
+ # ── pacman de verdad, repos de mentira ────────────────────────────────────────────────────────
+-TOOLS = ("pacman", "repo-add", "bsdtar")
++TOOLS = ("pacman",)      # nada más: las bases se escriben acá, sin repo-add (que en Ubuntu carga
++                         # sus funciones del paquete "makepkg", solo recomendado) ni bsdtar
+ 
+ REPOS = {
+     "core": [("libelf", "0.197-1", ()), ("glibc", "2.40-1", ()),
+@@ -256,18 +258,34 @@ LIVE_INSTALLED = [("libelf", "0.196-1", ()), ("lib32-libelf", "0.196-1", ("libel
+ TARGETS = ["debugedit", "hyprland", "lib32-mesa", "lib32-vulkan-radeon", "steam", "lib32-gnutls", "wine-staging"]
+ 
+ 
+-def _make_pkg(directory, name, ver, depends=(), provides=()):
+-    info = [f"pkgname = {name}", f"pkgbase = {name}", f"pkgver = {ver}", "pkgdesc = fixture",
+-            "url = https://example.org", "builddate = 1700000000", "packager = test",
+-            "size = 1024", "arch = x86_64", "license = GPL"]
+-    info += [f"depend = {d}" for d in depends] + [f"provides = {p}" for p in provides]
+-    data = ("\n".join(info) + "\n").encode()
+-    path = os.path.join(directory, f"{name}-{ver}-x86_64.pkg.tar.gz")
++def _db_entry(name, ver, depends=(), provides=()):
++    """Entrada de una base sync (<nombre>-<ver>/desc), con los campos que escribe repo-add."""
++    filename = f"{name}-{ver}-x86_64.pkg.tar.zst"
++    fields = [("FILENAME", [filename]), ("NAME", [name]), ("BASE", [name]), ("VERSION", [ver]),
++              ("DESC", ["fixture"]), ("CSIZE", ["1024"]), ("ISIZE", ["2048"]),
++              ("MD5SUM", [hashlib.md5(filename.encode()).hexdigest()]),
++              ("SHA256SUM", [hashlib.sha256(filename.encode()).hexdigest()]),
++              ("URL", ["https://example.org"]), ("LICENSE", ["GPL"]), ("ARCH", ["x86_64"]),
++              ("BUILDDATE", ["1700000000"]), ("PACKAGER", ["test"])]
++    if depends:
++        fields.append(("DEPENDS", list(depends)))
++    if provides:
++        fields.append(("PROVIDES", list(provides)))
++    return f"{name}-{ver}", "".join(f"%{key}%\n" + "\n".join(vals) + "\n\n" for key, vals in fields)
++
++
++def _write_sync_db(path, entries):
++    """Base sync = tar.gz con una carpeta por paquete. pacman -Sp/-Si solo lee esto: no hacen
++    falta los .pkg de verdad (-Sp imprime URLs y no descarga nada)."""
+     with tarfile.open(path, "w:gz") as tf:
+-        entry = tarfile.TarInfo(".PKGINFO")
+-        entry.size = len(data)
+-        tf.addfile(entry, io.BytesIO(data))
+-    return path
++        for dirname, desc in entries:
++            folder = tarfile.TarInfo(dirname + "/")
++            folder.type, folder.mode = tarfile.DIRTYPE, 0o755
++            tf.addfile(folder)
++            data = desc.encode()
++            entry = tarfile.TarInfo(f"{dirname}/desc")
++            entry.size, entry.mode = len(data), 0o644
++            tf.addfile(entry, io.BytesIO(data))
+ 
+ 
+ def _add_installed(root, name, ver, depends=()):
+@@ -282,7 +300,8 @@ def _add_installed(root, name, ver, depends=()):
+ 
+ 
+ def build_fixture(root):
+-    """Repos core/extra/multilib de mentira + un 'live' con paquetes ya instalados. -> pacman.conf"""
++    """Repos core/extra/multilib de mentira (bases escritas a mano) + un 'live' con paquetes ya
++    instalados. -> ruta del pacman.conf"""
+     sync = os.path.join(root, "db", "sync")
+     for d in (sync, os.path.join(root, "root"), os.path.join(root, "cache")):
+         os.makedirs(d)
+@@ -292,10 +311,7 @@ def build_fixture(root):
+     for repo, pkgs in REPOS.items():
+         d = os.path.join(root, "repo", repo)
+         os.makedirs(d)
+-        files = [_make_pkg(d, *p) for p in pkgs]
+-        subprocess.run(["repo-add", "-q", os.path.join(d, f"{repo}.db.tar.gz")] + files, check=True,
+-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+-        shutil.copy(os.path.join(d, f"{repo}.db.tar.gz"), os.path.join(sync, f"{repo}.db"))
++        _write_sync_db(os.path.join(sync, f"{repo}.db"), [_db_entry(*p) for p in pkgs])
+         conf += ["", f"[{repo}]", f"Server = file://{d}"]
+     for name, ver, deps in LIVE_INSTALLED:
+         _add_installed(root, name, ver, deps)
