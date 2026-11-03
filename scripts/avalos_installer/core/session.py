@@ -107,6 +107,9 @@ class InstallSession:
         # rollback_memory sobrevive a «Reintentar» (tabla original, firmware original, discos formateados).
         self.journal = None
         self.rollback_memory = None
+        # Paquetes que pacstrap omitió porque multilib iba desincronizado (system/pacstrap.py): la
+        # pantalla final los muestra para que el usuario los instale después.
+        self.multilib_skipped: list[str] = []
 
         self._lang = lang
 

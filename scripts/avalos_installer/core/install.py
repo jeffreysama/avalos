@@ -55,7 +55,7 @@ from avalos_installer.system.fstab import generate_fstab
 from avalos_installer.system.locale import configure_locale
 from avalos_installer.system.mount import check_disk_space, mount_filesystems
 from avalos_installer.system.optimize import configure_optimizations, enable_dns_over_tls
-from avalos_installer.system.pacstrap import run_pacstrap
+from avalos_installer.system.pacstrap import multilib_skipped_notice, run_pacstrap
 from avalos_installer.system.partition import partition_and_format
 from avalos_installer.system.repos import configure_repos
 from avalos_installer.system.rollback import InstallJournal
@@ -403,6 +403,7 @@ def run_installation(session: InstallSession) -> None:
             f"<strong>DE/WM:</strong> Hyprland · Wayland · SDDM<br>"
             f"<strong>✓ Contraseña:</strong> establecida correctamente"
         )
+        done_info += multilib_skipped_notice(session)
         session.install_complete(done_info)
         session.label(session.t("label-done"))
         session.log(

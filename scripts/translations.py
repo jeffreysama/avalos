@@ -74,6 +74,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ Critical error",
         "done-title":        "AvalOS installed successfully",
         "done-desc":         "Remove the USB drive and reboot. SDDM will ask you to log in — select Hyprland.",
+        "done-multilib-skipped": "<br><br><strong style='color:var(--tn-yellow)'>⚠ Skipped for now:</strong> {pkgs}<br>Arch's multilib repository is out of sync right now. Once it catches up, install them with <code>sudo pacman -S --needed {cmd}</code>",
         "btn-view-log":      "📋 View Log",
         "btn-back-to-done":  "← Back",
 
@@ -622,6 +623,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ Error crítico",
         "done-title":        "AvalOS instalado correctamente",
         "done-desc":         "Retira el USB y reinicia el equipo. SDDM te pedirá iniciar sesión — selecciona Hyprland.",
+        "done-multilib-skipped": "<br><br><strong style='color:var(--tn-yellow)'>⚠ Omitidos por ahora:</strong> {pkgs}<br>El repositorio multilib de Arch está desincronizado en este momento. Cuando se ponga al día, instálalos con <code>sudo pacman -S --needed {cmd}</code>",
         "btn-view-log":      "📋 Ver log",
         "btn-back-to-done":  "← Volver",
 
@@ -1167,6 +1169,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ 严重错误",
         "done-title":        "AvalOS 安装成功",
         "done-desc":         "请取出 USB 设备并重启电脑。SDDM 将提示登录 — 请选择 Hyprland。",
+        "done-multilib-skipped": "<br><br><strong style='color:var(--tn-yellow)'>⚠ 暂时跳过：</strong>{pkgs}<br>Arch 的 multilib 仓库目前与主仓库不同步。待其同步后，请运行 <code>sudo pacman -S --needed {cmd}</code> 进行安装",
         "btn-view-log":      "📋 查看日志",
         "btn-back-to-done":  "← 返回",
 
@@ -1716,6 +1719,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "err-title":         "⛔ 重大なエラー",
         "done-title":        "AvalOS のインストールが完了しました",
         "done-desc":         "USB ドライブを取り外して再起動してください。SDDM でログインを求められたら、Hyprland を選択してください。",
+        "done-multilib-skipped": "<br><br><strong style='color:var(--tn-yellow)'>⚠ 今回はスキップ：</strong>{pkgs}<br>Arch の multilib リポジトリが現在メインリポジトリと同期していません。同期されたら <code>sudo pacman -S --needed {cmd}</code> でインストールしてください",
         "btn-view-log":      "📋 ログを表示",
         "btn-back-to-done":  "← 戻る",
 

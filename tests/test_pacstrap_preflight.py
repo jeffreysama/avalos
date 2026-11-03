@@ -23,6 +23,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import translations  # noqa: E402
+from avalos_installer.core.session import InstallSession  # noqa: E402
 from avalos_installer.system import pacstrap  # noqa: E402
 
 # Salida literal de pacman 6.0.2 contra el caso del cliente (live con lib32-libelf instalado).
@@ -232,6 +234,61 @@ class PreflightFlow(unittest.TestCase):
         self.assertEqual((skipped, pkgs), (["lib32-gst-plugins-base-libs"], ["steam"]))
         self.assertTrue(logged(s, "log-multilib-pkg-dropped"))
 
+    def test_only_the_multilib_desync_omissions_are_kept_for_the_final_screen(self):
+        s = FakeSession([(1, EMPTY_DB_OUTPUT), (1, EMPTY_DB_OUTPUT), (0, "ok\n")])
+        repos = {"lib32-mesa": "multilib", "lib32-vulkan-radeon": "multilib", "steam": "multilib"}
+        self.run_flow(s, ["hyprland", "lib32-mesa", "lib32-vulkan-radeon", "steam"], repos)
+        self.assertEqual(s.multilib_skipped, ["lib32-mesa", "lib32-vulkan-radeon", "steam"])
+
+    def test_target_not_found_trimming_is_not_shown_on_the_final_screen(self):
+        """lib32-sdl2-compat no existe en los repos oficiales y se omite en CADA instalación:
+        avisar siempre sería ruido y no hay nada que instalar después."""
+        nf = "error: target not found: lib32-sdl2-compat\n"
+        s = FakeSession([(1, nf)] * 3 + [(0, "ok\n")])
+        self.run_flow(s, ["lib32-sdl2-compat", "steam"], {})
+        self.assertEqual(s.multilib_skipped, [])
+
+    def test_a_retry_forgets_what_the_previous_attempt_skipped(self):
+        s = FakeSession([(1, EMPTY_DB_OUTPUT), (1, EMPTY_DB_OUTPUT), (0, "ok\n"), (0, "ok\n")])
+        self.run_flow(s, ["steam", "hyprland"], {"steam": "multilib"})
+        self.assertEqual(s.multilib_skipped, ["steam"])
+        self.run_flow(s, ["hyprland"], {})
+        self.assertEqual(s.multilib_skipped, [])
+
+
+class FinalScreenNotice(unittest.TestCase):
+    """Lo omitido por multilib desincronizado se le dice al usuario en la pantalla final."""
+
+    @staticmethod
+    def notice(lang, skipped):
+        stub = types.SimpleNamespace(_lang=lang, multilib_skipped=skipped)
+        stub.t = lambda key, **kw: InstallSession.t(stub, key, **kw)      # traducciones de verdad
+        return pacstrap.multilib_skipped_notice(stub)
+
+    def test_nothing_skipped_means_no_notice(self):
+        self.assertEqual(self.notice("es", []), "")
+
+    def test_it_lists_the_packages_and_the_install_command_in_every_language(self):
+        for lang in ("en", "es", "zh", "ja"):
+            out = self.notice(lang, ["lib32-mesa", "steam"])
+            self.assertIn("lib32-mesa, steam", out, lang)
+            self.assertIn("sudo pacman -S --needed lib32-mesa steam", out, lang)
+            self.assertNotIn("{", out, f"{lang}: quedó un marcador sin rellenar")
+
+    def test_package_names_are_html_escaped(self):
+        out = self.notice("en", ["<b>x</b>"])
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", out)
+        self.assertNotIn("<b>x", out)
+
+    def test_the_final_summary_gets_the_notice_before_the_screen_is_shown(self):
+        src = (ROOT / "scripts/avalos_installer/core/install.py").read_text(encoding="utf-8")
+        self.assertLess(src.index("done_info += multilib_skipped_notice(session)"),
+                        src.index("session.install_complete(done_info)"))
+
+    def test_the_session_starts_with_an_empty_list(self):
+        src = (ROOT / "scripts/avalos_installer/core/session.py").read_text(encoding="utf-8")
+        self.assertIn("self.multilib_skipped: list[str] = []", src)
+
 
 # ── pacman de verdad, repos de mentira ────────────────────────────────────────────────────────
 TOOLS = ("pacman",)      # nada más: las bases se escriben acá, sin repo-add (que en Ubuntu carga
@@ -361,6 +418,7 @@ class RealPacman(unittest.TestCase):
         with mock.patch.object(pacstrap, "LIVE_PACMAN_DBPATH", os.path.join(self.root, "db")):
             out, skipped = pacstrap._preflight_packages(s, pkgs, self.conf)
         self.assertEqual(sorted(skipped), ["lib32-mesa", "lib32-vulkan-radeon", "steam"])
+        self.assertEqual(s.multilib_skipped, ["lib32-mesa", "lib32-vulkan-radeon", "steam"])
         self.assertEqual(pkgs, ["debugedit", "hyprland", "lib32-gnutls", "wine-staging"])
         self.assertIn("libelf-0.197-1", out)
         self.assertEqual(s.dialogs, [])

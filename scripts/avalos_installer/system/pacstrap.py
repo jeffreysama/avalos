@@ -25,6 +25,7 @@ ahora llaman a clean_mounts(), como dice el docstring de run_pacstrap: sin eso e
 
 from __future__ import annotations
 
+import html
 import os
 import re
 import shutil
@@ -253,6 +254,17 @@ def preflight_error_summary(output: str, limit: int = 400) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+def multilib_skipped_notice(session: InstallSession) -> str:
+    """Bloque HTML para la pantalla final cuando multilib desincronizado obligó a omitir paquetes
+    (steam, lib32-mesa...) y el usuario tiene que instalarlos después. Los omitidos por «target not
+    found» no cuentan: no hay nada que instalar luego. Vacío si no hubo."""
+    skipped = getattr(session, "multilib_skipped", None) or []
+    if not skipped:
+        return ""
+    names = [html.escape(p) for p in skipped]
+    return session.t("done-multilib-skipped", pkgs=", ".join(names), cmd=" ".join(names))
+
+
 def _preflight_packages(session: InstallSession, pkgs: list[str],
                          pacman_conf_target: str) -> tuple[str, list[str]] | None:
     """Preflight de disponibilidad de la lista de paquetes: recorta lo que Arch tiene caído
@@ -261,6 +273,8 @@ def _preflight_packages(session: InstallSession, pkgs: list[str],
     Devuelve (salida del preflight que pasó, paquetes omitidos), o None si hay que cortar
     (error ya reportado y clean_mounts() ya llamado)."""
     skipped_pkgs: list[str] = []
+    desync_dropped: list[str] = []      # solo lo omitido por multilib desincronizado
+    session.multilib_skipped = []
     pf_dbpath = _make_preflight_dbpath()
     pf_opts = ["--dbpath", pf_dbpath] if pf_dbpath else []
     try:
@@ -287,6 +301,7 @@ def _preflight_packages(session: InstallSession, pkgs: list[str],
                     if not conflict:
                         time.sleep(6)
             if preflight_ok:
+                session.multilib_skipped = sorted(set(desync_dropped))
                 return preflight_out, skipped_pkgs
 
             # Dos frases distintas de pacman para "esto no existe": 'target
@@ -342,6 +357,7 @@ def _preflight_packages(session: InstallSession, pkgs: list[str],
                 for p in desync:
                     pkgs.remove(p)
                 skipped_pkgs += desync
+                desync_dropped += desync
                 session.log(
                     session.t("log-multilib-desync-dropped", pkgs=", ".join(desync),
                                causa=dependency_conflict_packages(preflight_out)[0]), "warn"
