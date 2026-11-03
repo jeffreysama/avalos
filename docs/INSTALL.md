@@ -159,8 +159,8 @@ If that's unavailable for some reason, fall back to `reflector`:
 ```bash
 pacman -Sy --noconfirm --needed reflector
 reflector --latest 10 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
-# optional: limit it to nearby countries (the installer uses SV,US,MX,GT,JP,CN,HK,TW):
-# reflector --country SV,US,MX,GT,JP,CN,HK,TW --latest 10 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
+# optional: limit it to nearby countries (the installer uses SV,US,MX,GT,JP,CN,HK,TW,PL):
+# reflector --country SV,US,MX,GT,JP,CN,HK,TW,PL --latest 10 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
 ```
 
 > **Tip:** whichever of the two you used, the installer appends one more line afterwards as a safety net — a large, always-complete mirror that's never missing packages (including multilib):
@@ -648,7 +648,7 @@ EOF
 ```bash
 mkdir -p /etc/xdg/reflector
 cat > /etc/xdg/reflector/reflector.conf << 'EOF'
---country SV,US,MX,GT,JP,CN,HK,TW
+--country SV,US,MX,GT,JP,CN,HK,TW,PL
 --latest 10
 --sort rate
 --protocol https

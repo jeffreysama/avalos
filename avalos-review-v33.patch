@@ -1,0 +1,548 @@
+diff --git a/scripts/skill_instalar_usb.py b/scripts/skill_instalar_usb.py
+index 77c08c6..27a6781 100644
+--- a/scripts/skill_instalar_usb.py
++++ b/scripts/skill_instalar_usb.py
+@@ -18,7 +18,7 @@
+ """
+ 
+ from __future__ import annotations
+-import datetime ,glob ,json ,os ,re ,shutil ,subprocess ,sys ,threading ,time
++import datetime ,glob ,json ,os ,re ,shutil ,subprocess ,sys ,tempfile ,threading ,time
+ from pathlib import Path
+ 
+ import translations
+@@ -2360,6 +2360,113 @@ window.addEventListener('pywebviewready', function() {
+ </html>
+ """
+ 
++# ── Preflight de pacstrap ───────────────────────────────────────────────────────────────
++# Copia de system/pacstrap.py: este instalador es el respaldo autónomo y no importa el
++# paquete avalos_installer. tests/test_legacy_installer_parity.py vigila que sigan iguales.
++# Índices ya sincronizados del live (pacman -Sy los deja acá).
++LIVE_PACMAN_DBPATH = "/var/lib/pacman"
++
++# Tres formas de «esta dependencia no tiene salida» (pacman 6): sin base local previa, con un
++# paquete que la rompe, y la advertencia de resolución cuando la dependencia lleva versión.
++_DEP_CONFLICT_RE = re.compile(
++    r"unable to satisfy dependency '[^']+' required by (?P<a>\S+)"
++    r"|installing \S+ \([^)]+\) breaks dependency '[^']+' required by (?P<b>\S+)"
++    r'|cannot resolve "[^"]*[<>=][^"]*", a dependency of "(?P<c>[^"]+)"'
++)
++
++
++def _make_preflight_dbpath() -> str | None:
++    """Base de datos local VACÍA para el preflight, con los índices (sync) del live.
++
++    pacstrap instala en un root nuevo, o sea con la base local vacía: el preflight tiene que
++    resolver contra lo mismo. Con la base local del live, lo que ya trae la ISO (lib32-mesa y
++    con él lib32-libelf...) cuenta como instalado y pacman contesta «installing libelf
++    (0.197-1) breaks dependency 'libelf=0.196' required by lib32-libelf» por un paquete del
++    LIVE: quitar paquetes de la lista del destino no lo arregla nunca (reproducido con pacman
++    6.0.2) y el diálogo de mirror reaparecía. Devuelve None si no se pudo armar y el preflight
++    sigue como antes, contra la base del live."""
++    sync = os.path.join(LIVE_PACMAN_DBPATH, "sync")
++    if not os.path.isdir(sync):
++        return None
++    path = None
++    try:
++        path = tempfile.mkdtemp(prefix="avalos-preflight-")
++        os.makedirs(os.path.join(path, "local"))
++        os.symlink(sync, os.path.join(path, "sync"))
++    except OSError:
++        if path:
++            shutil.rmtree(path, ignore_errors=True)
++        return None
++    return path
++
++
++def dependency_conflict_packages(output: str) -> list[str]:
++    """Paquetes que pacman señala por una dependencia que no se puede satisfacer, en orden de
++    aparición y sin repetir. Cubre «unable to satisfy dependency 'X' required by P», «installing
++    Y (v) breaks dependency 'X' required by P» y «cannot resolve "X>=v", a dependency of "P"»
++    (este último solo si la dependencia lleva versión: sin versión es un paquete que no existe y
++    lo trata el recorte de «target not found»)."""
++    found: list[str] = []
++    for m in _DEP_CONFLICT_RE.finditer(output):
++        name = m.group("a") or m.group("b") or m.group("c")
++        if name and name not in found:
++            found.append(name)
++    return found
++
++
++def _sync_repos(pacman_conf: str, dbpath: str | None, names: list[str]) -> dict[str, str]:
++    """{paquete: repo} según los índices sincronizados (pacman -Si). Lo que pacman no conoce
++    no aparece. LC_ALL=C: los nombres de los campos se traducen con el locale."""
++    if not names:
++        return {}
++    cmd = ["pacman", "-Si", "--config", pacman_conf] + (["--dbpath", dbpath] if dbpath else []) + names
++    try:
++        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
++                             stdin=subprocess.DEVNULL, env={**os.environ, "LC_ALL": "C"})
++    except (OSError, subprocess.SubprocessError):
++        return {}
++    repos: dict[str, str] = {}
++    repo = None
++    for line in res.stdout.splitlines():
++        key, sep, value = line.partition(":")
++        if not sep:
++            continue
++        key, value = key.strip(), value.strip()
++        if key == "Repository":
++            repo = value
++        elif key == "Name" and repo:
++            repos[value] = repo
++            repo = None
++    return repos
++
++
++def multilib_desync_culprits(pacman_conf: str, dbpath: str | None, output: str,
++                             pkgs: list[str]) -> list[str]:
++    """Paquetes de NUESTRA lista que están en multilib y que pacman señala como imposibles de
++    instalar. Con la base local vacía pacman lista toda la cadena de dependientes hasta los
++    paquetes explícitos (lib32-libelf ← lib32-llvm-libs ← lib32-mesa ← steam), así que alcanza
++    con cruzar esa lista con `pkgs`."""
++    implicated = dependency_conflict_packages(output)
++    candidates = [p for p in pkgs if p in implicated]
++    repos = _sync_repos(pacman_conf, dbpath, candidates)
++    return [p for p in candidates if repos.get(p) == "multilib"]
++
++
++def preflight_error_summary(output: str, limit: int = 400) -> str:
++    """Lo que dijo pacman, sin la barra de progreso de curl (XferCommand) que ensuciaba el
++    detalle del diálogo de mirror."""
++    pieces = [ln.strip() for ln in re.split(r"[\r\n]+", output)]
++    keep: list[str] = []
++    for ln in pieces:
++        if ln.startswith(("error:", "warning:", "::")) and ln not in keep:
++            keep.append(ln)
++    if not keep:
++        keep = [ln for ln in pieces
++                if re.search(r"[A-Za-z]{3}", ln) and not ln.startswith(("%", "Dload"))][-3:]
++    text = " · ".join(keep) or output.strip()[-300:]
++    return text if len(text) <= limit else text[:limit - 1] + "…"
++
++
+ class InstaladorAPI :
+     """Métodos expuestos al JavaScript."""
+ 
+@@ -3509,7 +3616,7 @@ export XDG_SESSION_TYPE=wayland
+ 
+         ref_conf =MOUNT_ROOT /"etc"/"xdg"/"reflector"/"reflector.conf"
+         ref_conf .parent .mkdir (parents =True ,exist_ok =True )
+-        ref_conf .write_text ("--country SV,US,MX,GT,JP\n--latest 10\n--sort rate\n--protocol https\n")
++        ref_conf .write_text ("--country SV,US,MX,GT,JP,CN,HK,TW,PL\n--latest 10\n--sort rate\n--protocol https\n")
+         self ._run_chroot (["systemctl","enable","reflector.timer"])
+ 
+         linger =MOUNT_ROOT /"etc/systemd/system/avalos-enable-linger.service"
+@@ -4102,7 +4209,7 @@ WantedBy=multi-user.target
+                         self ._log (self ._t ("log-reflector-install-fail"),"warn")
+                 else :
+                     rc ,_ =self ._run_cmd ([
+-                    "reflector","--country","SV,US,MX,GT,JP",
++                    "reflector","--country","SV,US,MX,GT,JP,CN,HK,TW,PL",
+                     "--latest","10","--sort","rate",
+                     "--protocol","https","--save","/etc/pacman.d/mirrorlist",
+                     ],timeout =120 )
+@@ -4264,91 +4371,123 @@ WantedBy=multi-user.target
+ 
+             self ._log (self ._t ("log-checking-multilib"),"info")
+             _pkgs_omitidos =[]
+-            while True :
+-                _pf_ok =False
+-                _pf_out =""
+-                for _pf_intento in range (3 ):
+-                    _pf_cmd =["pacman","-Sp"if _pf_intento ==0 else "-Syyp","--config",_pacman_conf_target ,"--noconfirm"]+pkgs
+-                    _pf_rc ,_pf_out =self ._run_cmd (_pf_cmd ,timeout =60 ,log_cls ="info")
+-                    if _pf_rc ==0 :
+-                        _pf_ok =True
++            _pf_dbpath =_make_preflight_dbpath ()
++            _pf_opts =["--dbpath",_pf_dbpath ]if _pf_dbpath else []
++            try :
++                while True :
++                    _pf_ok =False
++                    _pf_out =""
++                    for _pf_intento in range (3 ):
++                        _pf_cmd =["pacman","-Sp"if _pf_intento ==0 else "-Syyp","--config",_pacman_conf_target ,*_pf_opts ,"--noconfirm"]+pkgs
++                        _pf_rc ,_pf_out =self ._run_cmd (_pf_cmd ,timeout =120 ,log_cls ="info")
++                        if _pf_rc ==0 :
++                            _pf_ok =True
++                            break
++                        # Un conflicto de dependencias es determinista: refrescar los índices UNA vez
++                        # alcanza (un mirror rezagado sí puede arreglarlo); más vueltas con espera no.
++                        _pf_conflicto =bool (dependency_conflict_packages (_pf_out ))
++                        if _pf_conflicto and _pf_intento >=1 :
++                            break
++                        if _pf_intento <2 :
++                            self ._log (
++                            self ._t ("log-kernel-retry",pkg ="multilib",intento =_pf_intento +2 ,total =3 ),
++                            "warn"
++                            )
++                            if not _pf_conflicto :
++                                time .sleep (6 )
++                    if _pf_ok :
+                         break
+-                    if _pf_intento <2 :
++
++                    # Dos frases distintas de pacman para "esto no existe": 'target
++                    # not found: X' (tipico cuando X esta directo en nuestra lista)
++                    # y 'cannot resolve "X"' (visto en foros reales -- CachyOS tuvo
++                    # este mismo lib32-gst-plugins-base-libs asi en abr-may 2026).
++                    # Se capturan las dos para que el recorte de abajo no dependa
++                    # de cual de las dos decida usar pacman.
++                    _pf_faltantes =sorted (set (
++                    re .findall (r"target not found:\s*(\S+)",_pf_out )
++                    +re .findall (r'cannot resolve\s*"([^"]+)"',_pf_out )
++                    ))
++                    _pf_recortables =[p for p in _pf_faltantes if p .startswith ("lib32-")]
++                    if _pf_recortables and all (p in pkgs for p in _pf_recortables ):
++                        # Se puede recortar: son paquetes lib32- explícitos de
++                        # NUESTRA lista (no dependencias transitivas de otra
++                        # cosa), así que sacarlos es seguro y no deja nada a
++                        # medias. Visto en producción (hilo de CachyOS, abr-may
++                        # 2026, CVE en el stack multimedia lib32): Arch a veces
++                        # retira paquetes lib32-gst-*/lib32-sdl2* de multilib
++                        # entero por semanas mientras responde a un CVE — pasa
++                        # en TODOS los mirrors por igual, así que ni reintentar
++                        # ni cambiar de mirror lo arregla. Mejor seguir sin
++                        # ellos que bloquear toda la instalación por un extra
++                        # de compatibilidad.
++                        #
++                        # El recorte queda LIMITADO a lib32- a propósito: un
++                        # 'target not found' en linux-avalos-firmware, un
++                        # kernel, o cualquier otro paquete no-lib32 NUNCA se
++                        # auto-recorta en silencio — cae al diálogo de mirror
++                        # de abajo, porque faltar ahí sí deja un sistema roto
++                        # (sin firmware de hardware, sin kernel, etc), a
++                        # diferencia de un extra de compatibilidad multilib.
++                        for _p in _pf_recortables :
++                            pkgs .remove (_p )
++                        _pkgs_omitidos +=_pf_recortables
+                         self ._log (
+-                        self ._t ("log-kernel-retry",pkg ="multilib",intento =_pf_intento +2 ,total =3 ),
++                        self ._t ("log-multilib-pkg-dropped",pkgs =", ".join (_pf_recortables )),
+                         "warn"
+                         )
+-                        time .sleep (6 )
+-                if _pf_ok :
+-                    break
+-
+-                # Dos frases distintas de pacman para "esto no existe": 'target
+-                # not found: X' (tipico cuando X esta directo en nuestra lista)
+-                # y 'cannot resolve "X"' (visto en foros reales -- CachyOS tuvo
+-                # este mismo lib32-gst-plugins-base-libs asi en abr-may 2026).
+-                # Se capturan las dos para que el recorte de abajo no dependa
+-                # de cual de las dos decida usar pacman.
+-                _pf_faltantes =sorted (set (
+-                re .findall (r"target not found:\s*(\S+)",_pf_out )
+-                +re .findall (r'cannot resolve\s*"([^"]+)"',_pf_out )
+-                ))
+-                _pf_recortables =[p for p in _pf_faltantes if p .startswith ("lib32-")]
+-                if _pf_recortables and all (p in pkgs for p in _pf_recortables ):
+-                    # Se puede recortar: son paquetes lib32- explícitos de
+-                    # NUESTRA lista (no dependencias transitivas de otra
+-                    # cosa), así que sacarlos es seguro y no deja nada a
+-                    # medias. Visto en producción (hilo de CachyOS, abr-may
+-                    # 2026, CVE en el stack multimedia lib32): Arch a veces
+-                    # retira paquetes lib32-gst-*/lib32-sdl2* de multilib
+-                    # entero por semanas mientras responde a un CVE — pasa
+-                    # en TODOS los mirrors por igual, así que ni reintentar
+-                    # ni cambiar de mirror lo arregla. Mejor seguir sin
+-                    # ellos que bloquear toda la instalación por un extra
+-                    # de compatibilidad.
+-                    #
+-                    # El recorte queda LIMITADO a lib32- a propósito: un
+-                    # 'target not found' en linux-avalos-firmware, un
+-                    # kernel, o cualquier otro paquete no-lib32 NUNCA se
+-                    # auto-recorta en silencio — cae al diálogo de mirror
+-                    # de abajo, porque faltar ahí sí deja un sistema roto
+-                    # (sin firmware de hardware, sin kernel, etc), a
+-                    # diferencia de un extra de compatibilidad multilib.
+-                    for _p in _pf_recortables :
+-                        pkgs .remove (_p )
+-                    _pkgs_omitidos +=_pf_recortables
+-                    self ._log (
+-                    self ._t ("log-multilib-pkg-dropped",pkgs =", ".join (_pf_recortables )),
+-                    "warn"
+-                    )
+-                    continue
+-
+-                # Ya no hay más que recortar y sigue fallando — esto no es
+-                # "un par de extras caídos", puede ser el mirror/red. Aquí
+-                # sí conviene que decida el usuario.
+-                _pf_detalle =", ".join (_pf_faltantes )if _pf_faltantes else _pf_out .strip ()[-300 :]
+-                self ._jsc ("pyMirrorDialog",_pf_detalle )
+-                while not self ._mirror_choice_event .wait (timeout =1.0 ):
++                        continue
++
++                    # Multilib va detrás de core/extra: un lib32-X pide 'libelf=0.196' y el repo ya
++                    # publica 0.197. Pasa en TODOS los mirrors y se arregla solo cuando Arch reconstruye
++                    # lib32-X, así que reintentar o cambiar de mirror no sirve; seguir sin los paquetes
++                    # de multilib implicados sí. Solo se omiten paquetes EXPLÍCITOS de NUESTRA lista que
++                    # estén en multilib (nunca el kernel, el firmware ni nada de core/extra: eso cae al
++                    # diálogo de abajo). Con la base local del live (sin _pf_dbpath) el error puede venir
++                    # de un paquete de la ISO y omitir no lo arregla. Mismo criterio que system/pacstrap.py.
++                    _pf_desync =(multilib_desync_culprits (_pacman_conf_target ,_pf_dbpath ,_pf_out ,pkgs )
++                    if _pf_dbpath else [])
++                    if _pf_desync :
++                        for _p in _pf_desync :
++                            pkgs .remove (_p )
++                        _pkgs_omitidos +=_pf_desync
++                        self ._log (
++                        self ._t ("log-multilib-desync-dropped",pkgs =", ".join (_pf_desync ),
++                        causa =dependency_conflict_packages (_pf_out )[0 ]),
++                        "warn"
++                        )
++                        continue
++
++                    # Ya no hay más que recortar y sigue fallando — esto no es
++                    # "un par de extras caídos", puede ser el mirror/red. Aquí
++                    # sí conviene que decida el usuario.
++                    _pf_detalle =", ".join (_pf_faltantes )if _pf_faltantes else preflight_error_summary (_pf_out )
++                    self ._jsc ("pyMirrorDialog",_pf_detalle )
++                    while not self ._mirror_choice_event .wait (timeout =1.0 ):
++                        if self ._abortado :
++                            self ._limpiar_montajes ();return
++                    self ._mirror_choice_event .clear ()
++                    _choice =self ._mirror_choice
++                    self ._mirror_choice =None
+                     if self ._abortado :
+                         self ._limpiar_montajes ();return
+-                self ._mirror_choice_event .clear ()
+-                _choice =self ._mirror_choice
+-                self ._mirror_choice =None
+-                if self ._abortado :
+-                    self ._limpiar_montajes ();return
+-                if _choice =="aceptar":
+-                    self ._log (self ._t ("log-mirror-broadening"),"info")
+-                    self ._run_cmd (
+-                    ["reflector","--latest","15","--sort","rate","--protocol","https",
+-                    "--save","/etc/pacman.d/mirrorlist"],timeout =120
+-                    )
+-                elif _choice !="reintentar":
+-                    # "rechazar" (o cierre inesperado del diálogo): el
+-                    # usuario prefiere resolverlo por su cuenta — cortamos
+-                    # con el mismo error claro de siempre y lo dejamos usar
+-                    # el botón "Reintentar" global cuando esté listo.
+-                    self ._jsc ("pyErrorFatal",self ._t ("err-multilib-unreachable",detalle =_pf_detalle ))
+-                    return
+-                # "reintentar": vuelve a probar tal cual, con los mismos mirrors
++                    if _choice =="aceptar":
++                        self ._log (self ._t ("log-mirror-broadening"),"info")
++                        self ._run_cmd (
++                        ["reflector","--latest","15","--sort","rate","--protocol","https",
++                        "--save","/etc/pacman.d/mirrorlist"],timeout =120
++                        )
++                    elif _choice !="reintentar":
++                        # "rechazar" (o cierre inesperado del diálogo): el
++                        # usuario prefiere resolverlo por su cuenta — cortamos
++                        # con el mismo error claro de siempre y lo dejamos usar
++                        # el botón "Reintentar" global cuando esté listo.
++                        self ._jsc ("pyErrorFatal",self ._t ("err-multilib-unreachable",detalle =_pf_detalle ))
++                        return
++                    # "reintentar": vuelve a probar tal cual, con los mismos mirrors
++            finally :
++                if _pf_dbpath :
++                    shutil .rmtree (_pf_dbpath ,ignore_errors =True )
+ 
+             if _pkgs_omitidos :
+                 self ._log (
+diff --git a/tests/test_legacy_installer_parity.py b/tests/test_legacy_installer_parity.py
+new file mode 100644
+index 0000000..bc664ff
+--- /dev/null
++++ b/tests/test_legacy_installer_parity.py
+@@ -0,0 +1,194 @@
++"""El instalador legado (scripts/skill_instalar_usb.py, `avalos-install-old`) es el respaldo autónomo:
++no importa el paquete avalos_installer, así que lleva su propia copia del preflight de pacstrap.
++
++Dos cosas se vigilan: que la copia siga siendo el mismo código que la original (si no, un arreglo
++en una se pierde en la otra), y que el bucle del legado funcione de verdad: se extrae del fuente y
++se ejecuta contra un pacman real sobre repos de mentira, con el mismo fixture de
++test_pacstrap_preflight.py (el legado es una clase gigante con GTK y pywebview: no se puede importar).
++"""
++import ast
++import os
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++import textwrap
++import threading
++import types
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(ROOT / "scripts"))
++sys.path.insert(0, str(ROOT / "tests"))
++
++from avalos_installer.core.config import MIRROR_COUNTRIES  # noqa: E402
++import test_pacstrap_preflight as base  # noqa: E402  (fixture de pacman real y su runner)
++
++LEGACY = ROOT / "scripts" / "skill_instalar_usb.py"
++MODULAR = ROOT / "scripts" / "avalos_installer" / "system" / "pacstrap.py"
++COPIED = ("LIVE_PACMAN_DBPATH", "_DEP_CONFLICT_RE", "_make_preflight_dbpath",
++          "dependency_conflict_packages", "_sync_repos", "multilib_desync_culprits",
++          "preflight_error_summary")
++
++
++def top_level(path):
++    src = path.read_text(encoding="utf-8")
++    nodes = {}
++    for node in ast.parse(src).body:
++        if isinstance(node, ast.FunctionDef):
++            nodes[node.name] = node
++        elif isinstance(node, ast.Assign):
++            for target in node.targets:
++                if isinstance(target, ast.Name):
++                    nodes[target.id] = node
++    return src, nodes
++
++
++class TheCopyStaysEqual(unittest.TestCase):
++    def test_the_preflight_helpers_are_the_same_code_in_both_installers(self):
++        _, legacy = top_level(LEGACY)
++        _, modular = top_level(MODULAR)
++        for name in COPIED:
++            self.assertIn(name, legacy, f"{name} falta en el instalador legado")
++            self.assertIn(name, modular, name)
++            self.assertEqual(ast.dump(legacy[name]), ast.dump(modular[name]),
++                             f"{name} cambió en uno solo de los dos instaladores")
++
++    def test_both_installers_use_the_same_mirror_countries(self):
++        src = LEGACY.read_text(encoding="utf-8")
++        found = re.findall(r'(?:--country |"--country"\s*,\s*")([A-Z]{2}(?:,[A-Z]{2})+)', src)
++        self.assertGreaterEqual(len(found), 2, "el legado debería usar la lista en 2 sitios")
++        self.assertEqual(set(found), {MIRROR_COUNTRIES})
++
++
++def load_legacy_loop():
++    """Helpers copiados + el bucle del preflight, extraídos del fuente del legado y ejecutables."""
++    src, nodes = top_level(LEGACY)
++    chunks = [ast.get_source_segment(src, nodes[n]) for n in sorted(COPIED, key=lambda n: nodes[n].lineno)]
++    ns = {"os": os, "re": re, "shutil": shutil, "subprocess": subprocess, "tempfile": tempfile,
++          "time": types.SimpleNamespace(sleep=lambda seconds: None)}
++    exec("from __future__ import annotations\n" + "\n\n".join(chunks), ns)
++    start = src.index('self ._log (self ._t ("log-checking-multilib"),"info")')
++    end = src.index("            if _pkgs_omitidos :", start)
++    body = textwrap.dedent("            " + src[start:end])
++    exec("def loop(self, pkgs, _pacman_conf_target):\n" + textwrap.indent(body, "    ")
++         + "\n    return _pf_out, _pkgs_omitidos\n", ns)
++    return ns
++
++
++class LegacySelf:
++    """Lo mínimo de VentanaInstalador que toca el bucle."""
++
++    def __init__(self, runner, choices=()):
++        self.runner, self.choices = runner, list(choices)
++        self.cmds, self.logs, self.js, self.cleaned = [], [], [], 0
++        self._abortado = False
++        self._mirror_choice = None
++        self._mirror_choice_event = threading.Event()
++
++    def _t(self, key, **kw):
++        return key + ("" if not kw else " " + " ".join(f"{k}={v}" for k, v in sorted(kw.items())))
++
++    def _log(self, txt, cls="info"):
++        self.logs.append((cls, txt))
++
++    def _run_cmd(self, cmd, timeout=300, log_cls="info"):
++        self.cmds.append([str(c) for c in cmd])
++        return self.runner(self.cmds[-1])
++
++    def _jsc(self, func, *args):
++        self.js.append((func, args))
++        if func == "pyMirrorDialog":
++            self._mirror_choice = self.choices.pop(0)
++            self._mirror_choice_event.set()
++
++    def _limpiar_montajes(self):
++        self.cleaned += 1
++
++
++@unittest.skipUnless(all(shutil.which(t) for t in base.TOOLS), "faltan herramientas: " + ", ".join(base.TOOLS))
++class LegacyPreflightLoop(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        cls.root = tempfile.mkdtemp(prefix="avalos-legacy-")
++        cls.conf = base.build_fixture(cls.root)
++
++    @classmethod
++    def tearDownClass(cls):
++        shutil.rmtree(cls.root, ignore_errors=True)
++
++    def setUp(self):
++        self.ns = load_legacy_loop()
++        self.sleeps = []
++        self.ns["time"] = types.SimpleNamespace(sleep=self.sleeps.append)
++        self.ns["LIVE_PACMAN_DBPATH"] = os.path.join(self.root, "db")
++
++    def run_loop(self, pkgs, runner=base.real_runner, choices=()):
++        me = LegacySelf(runner, choices)
++        return me, self.ns["loop"](me, pkgs, self.conf)
++
++    def test_the_real_flow_drops_what_depends_on_the_lagging_package(self):
++        pkgs = list(base.TARGETS)
++        me, result = self.run_loop(pkgs)
++        out, omitted = result
++        self.assertEqual(sorted(omitted), ["lib32-mesa", "lib32-vulkan-radeon", "steam"])
++        self.assertEqual(pkgs, ["debugedit", "hyprland", "lib32-gnutls", "wine-staging"])
++        self.assertIn("libelf-0.197-1", out)
++        self.assertEqual([f for f, _ in me.js], [])
++        dropped = [t for _, t in me.logs if t.startswith("log-multilib-desync-dropped")]
++        self.assertEqual(len(dropped), 1)
++        self.assertIn("causa=lib32-libelf", dropped[0])
++        self.assertEqual(self.sleeps, [], "un conflicto determinista no espera entre intentos")
++        self.assertEqual(len([c for c in me.cmds if c[0] == "pacman"]), 3,
++                         "2 intentos con el conflicto (el segundo refresca) y 1 ya sin los paquetes")
++
++    def test_it_resolves_against_an_empty_local_database_and_cleans_it_up(self):
++        me, _ = self.run_loop(["debugedit", "hyprland"])
++        cmd = me.cmds[0]
++        dbpath = cmd[cmd.index("--dbpath") + 1]
++        self.assertNotEqual(dbpath, os.path.join(self.root, "db"))
++        self.assertFalse(os.path.exists(dbpath), "el directorio temporal debe borrarse")
++        self.assertEqual(sorted(os.listdir(os.path.join(self.root, "db", "sync"))),
++                         ["core.db", "extra.db", "multilib.db"])
++
++    def test_a_package_outside_multilib_goes_to_the_dialog_and_is_never_dropped(self):
++        conflict = ":: unable to satisfy dependency 'foo>=2' required by hyprland\n"
++        pkgs = ["hyprland", "steam"]
++        me, result = self.run_loop(pkgs, runner=lambda cmd: (1, conflict), choices=["rechazar"])
++        self.assertIsNone(result)
++        self.assertEqual(pkgs, ["hyprland", "steam"])
++        self.assertEqual([f for f, _ in me.js], ["pyMirrorDialog", "pyErrorFatal"])
++
++    def test_without_the_empty_database_nothing_is_dropped(self):
++        self.ns["LIVE_PACMAN_DBPATH"] = os.path.join(self.root, "no-existe")
++        broken = base.LIVE_DB_OUTPUT.replace("required by lib32-libelf", "required by lib32-mesa")
++        pkgs = ["lib32-mesa"]
++        me, result = self.run_loop(pkgs, runner=lambda cmd: (1, broken), choices=["rechazar"])
++        self.assertIsNone(result)
++        self.assertNotIn("--dbpath", me.cmds[0])
++        self.assertEqual(pkgs, ["lib32-mesa"])
++
++    def test_other_failures_keep_three_attempts_with_a_pause(self):
++        bad = ("  % Total    % Received % Xferd  Average Speed\r\n100  4096  100  4096    0     0  81920\r\n"
++               "error: failed retrieving file 'core.db' from mirror\n")
++        me, result = self.run_loop(["base"], runner=lambda cmd: (1, bad), choices=["rechazar"])
++        self.assertIsNone(result)
++        self.assertEqual(len([c for c in me.cmds if c[0] == "pacman"]), 3)
++        self.assertEqual(len(self.sleeps), 2)
++        dialog = [a for f, a in me.js if f == "pyMirrorDialog"][0][0]
++        self.assertIn("failed retrieving file", dialog)
++        self.assertNotIn("% Total", dialog, "la barra de progreso de curl no debe llegar al diálogo")
++
++    def test_the_old_target_not_found_trimming_still_works(self):
++        nf = "error: target not found: lib32-sdl2-compat\n"
++        outputs = [(1, nf)] * 3 + [(0, "ok\n")]
++        pkgs = ["lib32-sdl2-compat", "steam"]
++        me, result = self.run_loop(pkgs, runner=lambda cmd: outputs.pop(0))
++        self.assertEqual(result[1], ["lib32-sdl2-compat"])
++        self.assertEqual(pkgs, ["steam"])
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)
