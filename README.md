@@ -19,6 +19,8 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 - **Filesystem**: Btrfs with Snapper snapshots by default
 - **Pre-configured Rice**: Beautiful and functional Hyprland + Waybar + Kitty + Rofi setup included
 - **Extras**: ZRAM, BBR congestion control, carefully selected firmware (AMD/Intel only)
+- **Built-in tools**: AvalOS Welcome, Settings, Store, Update, Restore and Doctor (see [AvalOS Tools](#-avalos-tools))
+- **Languages**: the installer and the tools are available in English, Español, 中文简体 and 日本語
 
 > **Note**: AvalOS currently supports **AMD and Intel** hardware only. NVIDIA is not supported, but could be possible (If you know how to install NVIDIA packages and all).
 
@@ -69,6 +71,33 @@ AvalOS is under active development.
 - BBR + modern sysctl tuning
 - Full Hyprland rice pre-configured (Hyprland, Waybar, Kitty, Rofi, Mako, SDDM theme, etc.)
 - Ready for gaming (Steam, Wine, Proton-GE, Lutris, MangoHud, GameMode…)
+
+---
+
+## 🧰 AvalOS Tools
+
+AvalOS ships its own small apps, all available from the app launcher:
+
+| Tool | What it does |
+|------|--------------|
+| **AvalOS Welcome** | First steps and key shortcuts, shown on your first login |
+| **AvalOS Settings** | Control center for your installed system |
+| **AvalOS Store** | Install games, apps and utilities from a curated catalog (Pacman, AUR and Flatpak) |
+| **AvalOS Update** | Update system packages, the kernel, AUR, Flatpak and AvalOS itself, and can take a Btrfs snapshot first as a safety net |
+| **AvalOS Restore** | Roll the system back to an earlier snapshot without a USB drive; the current state is snapshotted first, so the restore can be undone |
+| **AvalOS Doctor** | Health check across System, Storage, Packages, Hardware, Network and AvalOS: what needs attention comes first, and the report can be copied |
+
+---
+
+## 🧪 Tests
+
+Run the whole suite from the repository root:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The **Validar configs** workflow runs it on every push that touches `configs/`, `scripts/`, `tests/` or the workflows, next to validators that use the real parsers (GTK CSS, Lua, desktop files). A few tests use real tools (`parted`, `sfdisk`, `mke2fs`, `flatpak`, `pacman`) on disk images and throwaway repositories; they are skipped when a tool is not installed.
 
 ---
 
