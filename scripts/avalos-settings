@@ -29,6 +29,7 @@ esac
 case "$LANG_CODE" in
   es)
     T_TITLE="  Configuración AvalOS"
+    T_CONTROL=" Centro de control  Todo en una ventana"
     T_APPEARANCE=" Apariencia  GTK · Íconos · Cursor · Fuentes"
     T_DISPLAY=" Pantallas  Resolución · Disposición"
     T_AUDIO=" Audio  Volumen · Dispositivos de sonido"
@@ -45,6 +46,7 @@ case "$LANG_CODE" in
     ;;
   zh)
     T_TITLE="  AvalOS 设置"
+    T_CONTROL=" 控制中心  所有设置集中在一个窗口"
     T_APPEARANCE=" 外观  GTK · 图标 · 光标 · 字体"
     T_DISPLAY=" 显示器  分辨率 · 布局"
     T_AUDIO=" 音频  音量 · 声音设备"
@@ -61,6 +63,7 @@ case "$LANG_CODE" in
     ;;
   ja)
     T_TITLE="  AvalOS 設定"
+    T_CONTROL=" コントロールセンター  すべての設定をひとつの画面で"
     T_APPEARANCE=" 外観  GTK・アイコン・カーソル・フォント"
     T_DISPLAY=" ディスプレイ  解像度・レイアウト"
     T_AUDIO=" オーディオ  音量・サウンドデバイス"
@@ -77,6 +80,7 @@ case "$LANG_CODE" in
     ;;
   *)  # English (default)
     T_TITLE="  AvalOS Settings"
+    T_CONTROL=" Control Center  Everything in one window"
     T_APPEARANCE=" Appearance  GTK · Icons · Cursor · Fonts"
     T_DISPLAY=" Displays  Resolution · Layout"
     T_AUDIO=" Audio  Volume · Sound devices"
@@ -108,6 +112,7 @@ _run() {
 
 # ── Menú principal ────────────────────────────────────────────────────────
 chosen=$(printf '%s\n' \
+    "$T_CONTROL"    \
     "$T_APPEARANCE" \
     "$T_DISPLAY"    \
     "$T_AUDIO"      \
@@ -124,12 +129,16 @@ chosen=$(printf '%s\n' \
          -i \
          -no-custom \
          -p "$T_TITLE" \
-         -theme-str 'window {width: 480px;} listview {lines: 12;}')
+         -theme-str 'window {width: 480px;} listview {lines: 13;}')
 
 [[ -z "$chosen" ]] && exit 0
 
 # ── Acciones por sección ──────────────────────────────────────────────────
-if   [[ "$chosen" == "$T_APPEARANCE" ]]; then
+if   [[ "$chosen" == "$T_CONTROL" ]]; then
+    # avalos-control: centro de control gráfico (llega con la próxima sync/ISO en sistemas viejos).
+    _run avalos-control
+
+elif [[ "$chosen" == "$T_APPEARANCE" ]]; then
     _run nwg-look
 
 elif [[ "$chosen" == "$T_DISPLAY" ]]; then

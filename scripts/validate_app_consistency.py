@@ -47,7 +47,13 @@ LIVE = ROOT / "configs" / "hyprland" / "hyprland.lua"
 TEMPLATE = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
 CATALOG = ROOT / "configs" / "avalos-store-catalog.json"
 MODS = {"SUPER", "SHIFT", "CTRL", "ALT"}
-NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome"}
+NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control"}
+# Herramientas que abre el Centro de control y que NO son de AvalOS: comando -> paquete que las instala.
+CONTROL_TOOL_PACKAGES = {
+    "nwg-look": "nwg-look", "nwg-displays": "nwg-displays", "pavucontrol": "pavucontrol",
+    "nm-connection-editor": "network-manager-applet", "blueman-manager": "blueman",
+    "thunar": "thunar", "kitty": "kitty",
+}
 FLAG_WORDS = ("long_press", "release", "repeating", "locked", "mouse", "click", "drag", "non_consuming", "transparent", "ignore_mods")
 
 fails: list[str] = []
@@ -262,6 +268,78 @@ def check_welcome_shortcuts() -> None:
         ok(f"welcome: {checked} atajos mostrados existen en {rel(TEMPLATE)}")
 
 
+# ── 2c) lanzadores del Centro de control ─────────────────────────────────────────
+def check_control_tiles() -> None:
+    """Cada lanzador de TILES (scripts/avalos-control) apunta a algo que existe: una app de AvalOS
+    del repo (con su .desktop si hace falta) o una herramienta cuyo paquete instala el instalador;
+    sin ids repetidos, en un grupo conocido y con nombre y descripción en los 4 idiomas."""
+    script = ROOT / "scripts" / "avalos-control"
+    if not script.is_file():
+        return
+    text = script.read_text(encoding="utf-8")
+
+    # avalos-control es un archivo Python válido: se leen sus constantes con ast, sin regex.
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as e:
+        bad("control: lanzadores", f"scripts/avalos-control no compila: {e}")
+        return
+
+    def literal(name: str):
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                try:
+                    return ast.literal_eval(node.value)
+                except ValueError:
+                    return None
+        return None
+
+    tiles, groups, strings = literal("TILES"), literal("GROUPS"), literal("STRINGS")
+    if not tiles or not groups or not isinstance(strings, dict):
+        bad("control: lanzadores", "no se pudieron leer TILES/GROUPS/STRINGS de scripts/avalos-control (tienen que ser literales de Python)")
+        return
+    pacstrap = (ROOT / "scripts/avalos_installer/system/pacstrap.py").read_text(encoding="utf-8")
+    legacy = (ROOT / "scripts/skill_instalar_usb.py").read_text(encoding="utf-8")
+    errs, seen = [], set()
+    for group, tid, argv, _icon in tiles:
+        if tid in seen:
+            errs.append(f"{tid}: id repetido")
+        seen.add(tid)
+        if group not in groups:
+            errs.append(f"{tid}: el grupo '{group}' no está en GROUPS")
+        cmd = argv[0]
+        if cmd.startswith("avalos-"):
+            if not (ROOT / "scripts" / cmd).is_file():
+                errs.append(f"{tid}: no existe scripts/{cmd}")
+            elif cmd in NEEDS_DESKTOP and not (ROOT / "configs" / f"{cmd}.desktop").is_file():
+                errs.append(f"{tid}: falta configs/{cmd}.desktop")
+        else:
+            pkg = CONTROL_TOOL_PACKAGES.get(cmd)
+            if not pkg:
+                errs.append(f"{tid}: '{cmd}' no está en CONTROL_TOOL_PACKAGES (¿qué paquete lo instala?)")
+            else:
+                for label, src in (("pacstrap.py", pacstrap), ("el instalador legado", legacy)):
+                    if f'"{pkg}"' not in src:
+                        errs.append(f"{tid}: el paquete {pkg} (de {cmd}) no está en la lista de {label}")
+        for lang, table in strings.items():
+            for key in (f"t-{tid}", f"d-{tid}"):
+                if not table.get(key):
+                    errs.append(f"{tid}: falta '{key}' en '{lang}'")
+    for lang, table in strings.items():
+        for g in groups:
+            if not table.get(f"grp-{g}"):
+                errs.append(f"falta 'grp-{g}' en '{lang}'")
+    keysets = {lang: set(table) for lang, table in strings.items()}
+    base = next(iter(keysets.values()))
+    for lang, keys in keysets.items():
+        if keys != base:
+            errs.append(f"'{lang}' no tiene las mismas claves que los demás idiomas: {sorted(keys ^ base)}")
+    if errs:
+        bad("control: lanzadores", "\n".join(errs))
+    else:
+        ok(f"control: {len(tiles)} lanzadores válidos, textos en {len(strings)} idiomas")
+
+
 # ── 3) catálogo de la Store ──────────────────────────────────────────────────────
 def check_catalog() -> None:
     if not CATALOG.exists():
@@ -304,7 +382,7 @@ def check_catalog() -> None:
 
 
 def main() -> int:
-    for fn in (check_binds, check_apps, check_welcome_shortcuts, check_catalog):
+    for fn in (check_binds, check_apps, check_welcome_shortcuts, check_control_tiles, check_catalog):
         fn()
     print(f"\n{len(fails)} con error · {len(warns)} avisos")
     if fails:

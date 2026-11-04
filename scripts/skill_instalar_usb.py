@@ -3057,7 +3057,7 @@ class VentanaInstalador :
         self ._log (self ._t ("log-gpu-env-installed"),"ok")
 
         self ._log (self ._t ("log-installing-scripts"),"info")
-        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about","avalos-update","avalos-update-helper","avalos-store","avalos-restore","avalos-doctor","avalos-welcome"):
+        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about","avalos-update","avalos-update-helper","avalos-store","avalos-restore","avalos-doctor","avalos-welcome","avalos-control"):
             _contenido =_leer_config (f"scripts/{_script_name }")
             if _contenido :
                 _script_path =_bin_dir /_script_name
@@ -3125,6 +3125,14 @@ class VentanaInstalador :
             self ._log (self ._t ("log-welcome-desktop-installed"),"ok")
         else :
             self ._log (self ._t ("log-welcome-desktop-missing"),"warn")
+
+        # avalos-control: mismo caso, ver optimize.py del instalador modular.
+        _contenido =_leer_config ("avalos-control.desktop")
+        if _contenido :
+            (_apps_dir /"avalos-control.desktop").write_text (_contenido ,encoding ="utf-8")
+            self ._log (self ._t ("log-control-desktop-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-control-desktop-missing"),"warn")
 
         # avalos-update necesita pkexec para elevar avalos-update-helper (ver
         # avalos-update.policy) — polkitd + hyprpolkitagent ya corren en el
@@ -3203,6 +3211,13 @@ class VentanaInstalador :
             self ._log (self ._t ("log-welcome-icon-installed"),"ok")
         else :
             self ._log (self ._t ("log-welcome-icon-missing"),"warn")
+
+        _contenido =_leer_config ("avalos-control.svg")
+        if _contenido :
+            (_icon_dir /"avalos-control.svg").write_text (_contenido ,encoding ="utf-8")
+            self ._log (self ._t ("log-control-icon-installed"),"ok")
+        else :
+            self ._log (self ._t ("log-control-icon-missing"),"warn")
 
         (MOUNT_ROOT /"etc"/"avalos-install-date").write_text (
         datetime .datetime .now ().strftime ("%Y-%m-%d %H:%M"),

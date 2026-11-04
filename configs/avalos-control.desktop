@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AvalOS Control Center
+Name[es]=Centro de control de AvalOS
+Name[zh_CN]=AvalOS 控制中心
+Name[ja]=AvalOS コントロールセンター
+Comment=System settings and AvalOS tools in one place
+Comment[es]=Ajustes del sistema y herramientas de AvalOS en un solo lugar
+Comment[zh_CN]=系统设置与 AvalOS 工具，集中在一处
+Comment[ja]=システム設定と AvalOS ツールをひとまとめに
+Exec=avalos-control
+Icon=avalos-control
+Terminal=false
+NoDisplay=false
+StartupNotify=true
+StartupWMClass=avalos-control
+Categories=System;Settings;
+Keywords=control;center;settings;config;system;tools;centro de control;ajustes;configuración;herramientas;控制中心;设置;工具;コントロールセンター;設定;

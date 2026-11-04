@@ -1,0 +1,776 @@
+#!/usr/bin/env python3
+# ── AvalOS — avalos-control ─────────────────────────────────────────
+# Centro de control de AvalOS: un solo lugar desde donde abrir los ajustes del sistema y las
+# apps de AvalOS (actualizar, restaurar, salud, tienda, fondo, pantallas, audio, red...), con
+# un resumen del equipo y la salud del sistema bajo demanda. Solo abre otras apps y lee datos
+# del sistema: no necesita root ni polkit y no cambia nada.
+#
+#   avalos-control          abre la ventana (Super+Alt+C, o desde el menú de Settings)
+#   avalos-control --json   imprime el resumen del equipo y qué apps hay, y sale (soporte)
+#
+# La salud la calcula avalos-doctor (solo lectura) cuando el usuario pulsa «Revisar ahora»: abrir
+# esta ventana nunca lanza los 20 chequeos por su cuenta.
+#
+# Requiere: python 3.9+, python-pywebview, webkit2gtk-4.1 y python-gobject (ya los
+# instala el instalador).
+import argparse
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+# ── Rutas del sistema (se pueden redirigir en las pruebas) ─────────────────
+PROC = Path("/proc")
+OS_RELEASE = Path("/etc/os-release")
+ROOT_FS = "/"
+
+# ── i18n — mismo patrón que avalos-doctor/avalos-welcome ───────────────────
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+_HTML_LANG = {"zh": "zh-CN"}
+
+
+def _detectar_idioma() -> str:
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
+
+# Grupos, en el orden en que salen en pantalla. Texto del título: grp-<id>.
+GROUPS = ("system", "apps", "look", "hardware", "session")
+
+# Lanzadores: (grupo, id, comando, icono). Lista cerrada: la página nunca puede lanzar otra
+# cosa que estos comandos exactos. Textos: t-<id> (nombre) y d-<id> (descripción).
+# scripts/validate_app_consistency.py lee esta lista tal cual (tiene que ser un literal de
+# Python) y comprueba que cada comando existe en el repo o lo trae un paquete que el
+# instalador instala, y que no hay ids repetidos ni textos sin traducir.
+TILES = [
+    ("system", "update", ("avalos-update",), "🔄"),
+    ("system", "restore", ("avalos-restore",), "⏪"),
+    ("system", "doctor", ("avalos-doctor",), "🩺"),
+    ("system", "about", ("avalos-about",), "ℹ️"),
+    ("apps", "store", ("avalos-store",), "🛍️"),
+    ("look", "wallpaper", ("avalos-wallpaper",), "🖼️"),
+    ("look", "appearance", ("nwg-look",), "🎨"),
+    ("hardware", "displays", ("nwg-displays",), "🖥️"),
+    ("hardware", "audio", ("pavucontrol",), "🔊"),
+    ("hardware", "network", ("nm-connection-editor",), "📶"),
+    ("hardware", "bluetooth", ("blueman-manager",), "🔵"),
+    ("session", "files", ("thunar",), "📁"),
+    ("session", "account", ("kitty", "--title", "AvalOS — passwd", "--", "passwd"), "🔑"),
+    ("session", "welcome", ("avalos-welcome",), "👋"),
+]
+TILE_ARGV = {tid: argv for _g, tid, argv, _i in TILES}
+
+# Datos del resumen del equipo (claves de system_info()). Texto de la etiqueta: f-<clave>.
+FACTS = ("os", "kernel", "cpu", "memory", "disk", "uptime")
+
+# Cuántos problemas se listan bajo el resumen de salud (los demás se ven en el Doctor).
+MAX_ISSUES = 5
+DOCTOR_TIMEOUT = 90
+
+STRINGS = {
+    "en": {
+        "title": "AvalOS Control Center",
+        "subtitle": "Everything to look after your system, in one place.",
+        "search": "Search settings and tools…",
+        "no-results": "Nothing matches “{q}”.",
+        "h-glance": "At a glance",
+        "f-os": "System", "f-kernel": "Kernel", "f-cpu": "Processor",
+        "f-memory": "Memory", "f-disk": "Disk", "f-uptime": "Uptime",
+        "h-health": "System health",
+        "health-desc": "Read-only checks on disk, boot files, GPU drivers and more. Takes a few seconds.",
+        "health-run": "Run check",
+        "health-again": "Check again",
+        "health-running": "Checking…",
+        "health-summary": "{ok} OK · {warn} warnings · {fail} problems",
+        "health-clean": "Everything looks good.",
+        "health-issues": "Needs attention",
+        "health-open": "Open AvalOS Doctor",
+        "health-na": "AvalOS Doctor isn't installed on this system yet.",
+        "health-err": "The check couldn't finish. Open AvalOS Doctor to see why.",
+        "grp-system": "System", "grp-apps": "Apps", "grp-look": "Appearance",
+        "grp-hardware": "Hardware and network", "grp-session": "Files and account",
+        "t-update": "Updates", "d-update": "Packages, kernel, AUR and Flatpak, with a restore point first.",
+        "t-restore": "Restore points", "d-restore": "Go back to an earlier state of the system.",
+        "t-doctor": "System health", "d-doctor": "Full report on disk, boot, drivers and network.",
+        "t-about": "About this system", "d-about": "Version, kernel and hardware details.",
+        "t-store": "Store", "d-store": "Apps, games and utilities from pacman, Flatpak and AUR.",
+        "t-wallpaper": "Wallpaper", "d-wallpaper": "Pick an image for your desktop.",
+        "t-appearance": "Theme and fonts", "d-appearance": "GTK theme, icons, cursor and fonts.",
+        "t-displays": "Displays", "d-displays": "Resolution, refresh rate and layout.",
+        "t-audio": "Sound", "d-audio": "Volume and audio devices.",
+        "t-network": "Network", "d-network": "Connections, Wi-Fi and VPN.",
+        "t-bluetooth": "Bluetooth", "d-bluetooth": "Wireless devices.",
+        "t-files": "Files", "d-files": "Browse your folders and drives.",
+        "t-account": "Password", "d-account": "Change your account password in a terminal.",
+        "t-welcome": "Welcome", "d-welcome": "First steps and key shortcuts.",
+        "open": "Open",
+        "unavailable": "Not installed on this system yet.",
+        "b-close": "Close",
+        "note": "Shortcut: Super + Alt + C",
+    },
+    "es": {
+        "title": "Centro de control de AvalOS",
+        "subtitle": "Todo para cuidar tu sistema, en un solo lugar.",
+        "search": "Buscar ajustes y herramientas…",
+        "no-results": "Nada coincide con «{q}».",
+        "h-glance": "De un vistazo",
+        "f-os": "Sistema", "f-kernel": "Kernel", "f-cpu": "Procesador",
+        "f-memory": "Memoria", "f-disk": "Disco", "f-uptime": "Tiempo encendido",
+        "h-health": "Salud del sistema",
+        "health-desc": "Chequeos de solo lectura: disco, archivos de arranque, drivers de GPU y más. Tarda unos segundos.",
+        "health-run": "Revisar ahora",
+        "health-again": "Revisar de nuevo",
+        "health-running": "Revisando…",
+        "health-summary": "{ok} bien · {warn} avisos · {fail} problemas",
+        "health-clean": "Todo se ve bien.",
+        "health-issues": "Requiere atención",
+        "health-open": "Abrir AvalOS Doctor",
+        "health-na": "AvalOS Doctor todavía no está instalado en este sistema.",
+        "health-err": "No se pudo terminar la revisión. Abre AvalOS Doctor para ver por qué.",
+        "grp-system": "Sistema", "grp-apps": "Apps", "grp-look": "Apariencia",
+        "grp-hardware": "Hardware y red", "grp-session": "Archivos y cuenta",
+        "t-update": "Actualizaciones", "d-update": "Paquetes, kernel, AUR y Flatpak, con un punto de restauración antes.",
+        "t-restore": "Puntos de restauración", "d-restore": "Vuelve a un estado anterior del sistema.",
+        "t-doctor": "Salud del sistema", "d-doctor": "Informe completo de disco, arranque, drivers y red.",
+        "t-about": "Acerca de este sistema", "d-about": "Versión, kernel y datos del hardware.",
+        "t-store": "Tienda", "d-store": "Apps, juegos y utilidades de pacman, Flatpak y AUR.",
+        "t-wallpaper": "Fondo de pantalla", "d-wallpaper": "Elige una imagen para tu escritorio.",
+        "t-appearance": "Tema y fuentes", "d-appearance": "Tema GTK, íconos, cursor y fuentes.",
+        "t-displays": "Pantallas", "d-displays": "Resolución, tasa de refresco y disposición.",
+        "t-audio": "Sonido", "d-audio": "Volumen y dispositivos de audio.",
+        "t-network": "Red", "d-network": "Conexiones, Wi-Fi y VPN.",
+        "t-bluetooth": "Bluetooth", "d-bluetooth": "Dispositivos inalámbricos.",
+        "t-files": "Archivos", "d-files": "Explora tus carpetas y unidades.",
+        "t-account": "Contraseña", "d-account": "Cambia la contraseña de tu cuenta en una terminal.",
+        "t-welcome": "Bienvenida", "d-welcome": "Primeros pasos y atajos de teclado.",
+        "open": "Abrir",
+        "unavailable": "Todavía no está instalado en este sistema.",
+        "b-close": "Cerrar",
+        "note": "Atajo: Super + Alt + C",
+    },
+    "zh": {
+        "title": "AvalOS 控制中心",
+        "subtitle": "管理系统所需的一切，集中在一处。",
+        "search": "搜索设置和工具…",
+        "no-results": "没有与“{q}”匹配的内容。",
+        "h-glance": "概览",
+        "f-os": "系统", "f-kernel": "内核", "f-cpu": "处理器",
+        "f-memory": "内存", "f-disk": "磁盘", "f-uptime": "运行时间",
+        "h-health": "系统健康",
+        "health-desc": "只读检查：磁盘、启动文件、显卡驱动等。需要几秒钟。",
+        "health-run": "立即检查",
+        "health-again": "重新检查",
+        "health-running": "正在检查…",
+        "health-summary": "{ok} 正常 · {warn} 警告 · {fail} 问题",
+        "health-clean": "一切正常。",
+        "health-issues": "需要关注",
+        "health-open": "打开 AvalOS 诊断",
+        "health-na": "此系统尚未安装 AvalOS 诊断。",
+        "health-err": "检查未能完成。请打开 AvalOS 诊断查看原因。",
+        "grp-system": "系统", "grp-apps": "应用", "grp-look": "外观",
+        "grp-hardware": "硬件与网络", "grp-session": "文件与账户",
+        "t-update": "更新", "d-update": "更新软件包、内核、AUR 和 Flatpak，更新前先创建还原点。",
+        "t-restore": "还原点", "d-restore": "回到系统的较早状态。",
+        "t-doctor": "系统健康", "d-doctor": "磁盘、启动、驱动和网络的完整报告。",
+        "t-about": "关于本系统", "d-about": "版本、内核和硬件信息。",
+        "t-store": "商店", "d-store": "来自 pacman、Flatpak 和 AUR 的应用、游戏和工具。",
+        "t-wallpaper": "壁纸", "d-wallpaper": "为桌面选一张图片。",
+        "t-appearance": "主题和字体", "d-appearance": "GTK 主题、图标、光标和字体。",
+        "t-displays": "显示器", "d-displays": "分辨率、刷新率和布局。",
+        "t-audio": "声音", "d-audio": "音量和音频设备。",
+        "t-network": "网络", "d-network": "连接、Wi-Fi 和 VPN。",
+        "t-bluetooth": "蓝牙", "d-bluetooth": "无线设备。",
+        "t-files": "文件", "d-files": "浏览文件夹和磁盘。",
+        "t-account": "密码", "d-account": "在终端中修改账户密码。",
+        "t-welcome": "欢迎", "d-welcome": "开始使用与常用快捷键。",
+        "open": "打开",
+        "unavailable": "此系统尚未安装该应用。",
+        "b-close": "关闭",
+        "note": "快捷键：Super + Alt + C",
+    },
+    "ja": {
+        "title": "AvalOS コントロールセンター",
+        "subtitle": "システムの管理に必要なものを、ひとつの場所に。",
+        "search": "設定やツールを検索…",
+        "no-results": "「{q}」に一致する項目はありません。",
+        "h-glance": "概要",
+        "f-os": "システム", "f-kernel": "カーネル", "f-cpu": "プロセッサ",
+        "f-memory": "メモリ", "f-disk": "ディスク", "f-uptime": "稼働時間",
+        "h-health": "システムの健康状態",
+        "health-desc": "ディスク、起動ファイル、GPU ドライバーなどの読み取り専用チェックです。数秒かかります。",
+        "health-run": "今すぐチェック",
+        "health-again": "もう一度チェック",
+        "health-running": "チェック中…",
+        "health-summary": "正常 {ok} · 警告 {warn} · 問題 {fail}",
+        "health-clean": "問題は見つかりませんでした。",
+        "health-issues": "要確認",
+        "health-open": "AvalOS ドクターを開く",
+        "health-na": "このシステムにはまだ AvalOS ドクターがインストールされていません。",
+        "health-err": "チェックを完了できませんでした。AvalOS ドクターを開いて原因を確認してください。",
+        "grp-system": "システム", "grp-apps": "アプリ", "grp-look": "外観",
+        "grp-hardware": "ハードウェアとネットワーク", "grp-session": "ファイルとアカウント",
+        "t-update": "アップデート", "d-update": "パッケージ、カーネル、AUR、Flatpak を更新（事前に復元ポイントを作成）。",
+        "t-restore": "復元ポイント", "d-restore": "システムを以前の状態に戻します。",
+        "t-doctor": "システムの健康状態", "d-doctor": "ディスク、起動、ドライバー、ネットワークの詳細レポート。",
+        "t-about": "このシステムについて", "d-about": "バージョン、カーネル、ハードウェア情報。",
+        "t-store": "ストア", "d-store": "pacman、Flatpak、AUR のアプリ、ゲーム、ユーティリティ。",
+        "t-wallpaper": "壁紙", "d-wallpaper": "デスクトップの画像を選びます。",
+        "t-appearance": "テーマとフォント", "d-appearance": "GTK テーマ、アイコン、カーソル、フォント。",
+        "t-displays": "ディスプレイ", "d-displays": "解像度、リフレッシュレート、レイアウト。",
+        "t-audio": "サウンド", "d-audio": "音量とオーディオデバイス。",
+        "t-network": "ネットワーク", "d-network": "接続、Wi-Fi、VPN。",
+        "t-bluetooth": "Bluetooth", "d-bluetooth": "ワイヤレスデバイス。",
+        "t-files": "ファイル", "d-files": "フォルダーとドライブを表示します。",
+        "t-account": "パスワード", "d-account": "ターミナルでアカウントのパスワードを変更します。",
+        "t-welcome": "ようこそ", "d-welcome": "はじめにとショートカット。",
+        "open": "開く",
+        "unavailable": "このシステムにはまだインストールされていません。",
+        "b-close": "閉じる",
+        "note": "ショートカット: Super + Alt + C",
+    },
+}
+
+
+# ── Resumen del equipo (solo lectura, sin subprocesos) ─────────────────────
+NA = "—"
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _gib(kib: float) -> float:
+    return kib / (1024 * 1024)
+
+
+def _os_name() -> str:
+    for line in _read(OS_RELEASE).splitlines():
+        key, _, value = line.partition("=")
+        if key == "PRETTY_NAME":
+            return value.strip().strip('"\'') or "AvalOS"
+    return "AvalOS"
+
+
+def _cpu_model() -> str:
+    for line in _read(PROC / "cpuinfo").splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() == "model name":
+            return " ".join(value.split()) or NA
+    return NA
+
+
+def _memory() -> str:
+    values = {}
+    for line in _read(PROC / "meminfo").splitlines():
+        key, _, rest = line.partition(":")
+        parts = rest.split()
+        if key in ("MemTotal", "MemAvailable") and parts and parts[0].isdigit():
+            values[key] = int(parts[0])
+    total, avail = values.get("MemTotal"), values.get("MemAvailable")
+    if not total or avail is None:
+        return NA
+    return f"{_gib(total - avail):.1f} / {_gib(total):.1f} GiB"
+
+
+def _disk() -> str:
+    try:
+        usage = shutil.disk_usage(ROOT_FS)
+    except OSError:
+        return NA
+    if not usage.total:
+        return NA
+    gib = 1024 ** 3
+    return f"{usage.used / gib:.0f} / {usage.total / gib:.0f} GiB ({usage.used * 100 // usage.total}%)"
+
+
+def _uptime() -> str:
+    try:
+        seconds = int(float(_read(PROC / "uptime").split()[0]))
+    except (IndexError, ValueError):
+        return NA
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def system_info() -> dict:
+    """Los datos de la tarjeta «de un vistazo». Nunca lanza: lo que no se pueda leer sale «—»."""
+    return {
+        "os": _os_name(),
+        "kernel": platform.release() or NA,
+        "cpu": _cpu_model(),
+        "memory": _memory(),
+        "disk": _disk(),
+        "uptime": _uptime(),
+    }
+
+
+# ── Salud (la calcula avalos-doctor) ───────────────────────────────────────
+def health_summary() -> dict:
+    """Corre `avalos-doctor --json` (solo lectura) y lo reduce a lo que muestra la tarjeta:
+    {"state": "missing"|"error"|"done", "ok", "warn", "fail", "issues": [{"title", "status"}]}."""
+    exe = shutil.which("avalos-doctor")
+    if not exe:
+        return {"state": "missing"}
+    try:
+        res = subprocess.run([exe, "--json", "--no-network", "--lang", LANG], capture_output=True,
+                             text=True, timeout=DOCTOR_TIMEOUT, stdin=subprocess.DEVNULL)
+        data = json.loads(res.stdout)
+        summary = data["summary"]
+        findings = data.get("findings") or []
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return {"state": "error"}
+    if not isinstance(summary, dict) or not isinstance(findings, list):
+        return {"state": "error"}
+    order = {"fail": 0, "warn": 1}
+    problems = sorted((f for f in findings if isinstance(f, dict) and f.get("status") in order),
+                      key=lambda f: order[f["status"]])
+    return {
+        "state": "done",
+        "ok": int(summary.get("ok", 0)),
+        "warn": int(summary.get("warn", 0)),
+        "fail": int(summary.get("fail", 0)),
+        "issues": [{"title": str(f.get("title", "")), "status": f["status"]} for f in problems[:MAX_ISSUES]],
+    }
+
+
+# ── Lanzar apps ────────────────────────────────────────────────────────────
+def _spawn(cmd) -> bool:
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except OSError:
+        return False
+
+
+def _has_display() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
+def available_tiles() -> dict:
+    """Qué lanzadores existen en este sistema (los viejos no tienen todo hasta la próxima sync)."""
+    return {tid: bool(shutil.which(argv[0])) for tid, argv in TILE_ARGV.items()}
+
+
+# ── API expuesta a la ventana ──────────────────────────────────────────────
+class ControlAPI:
+    window = None
+
+    def info(self):
+        return system_info()
+
+    def available(self):
+        return available_tiles()
+
+    def open_tile(self, tile_id):
+        argv = TILE_ARGV.get(tile_id) if isinstance(tile_id, str) else None
+        if not argv or not shutil.which(argv[0]):
+            return False
+        return _spawn(list(argv))
+
+    def health(self):
+        return health_summary()
+
+    def close(self):
+        if self.window:
+            self.window.destroy()
+
+
+def _build_html():
+    return r"""<!DOCTYPE html>
+<html lang="LANG_PLACEHOLDER">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AvalOS</title>
+<style>
+  :root {
+    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
+    --border: #414868; --text: #c0caf5; --text-mid: #9aa5ce; --text-dim: #565f89;
+    --blue: #7aa2f7; --purple: #bb9af7; --yellow: #e0af68; --red: #f7768e; --green: #9ece6a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
+    overflow: hidden; height: 100%; font-size: 13px; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+  .hidden { display: none !important; }
+
+  header { padding: 20px 26px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+  header h1 { font-size: 20px; margin: 0 0 5px; font-weight: 600; letter-spacing: .2px; }
+  .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header .sub { font-size: 12.5px; color: var(--text-mid); line-height: 1.5; }
+  .search { flex: 0 1 280px; font: inherit; font-size: 12.5px; color: var(--text);
+    background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; min-width: 150px; }
+  .search:focus { outline: none; border-color: var(--blue); }
+  .search::placeholder { color: var(--text-dim); }
+
+  .body { flex: 1; overflow-y: auto; padding: 4px 26px 14px; }
+  h2 { font-size: 13px; font-weight: 600; margin: 18px 0 9px; }
+
+  .glance { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .fact { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 12px; min-width: 0; }
+  .fact .k { color: var(--text-dim); font-size: 11px; }
+  .fact .v { margin-top: 3px; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+
+  .health { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; }
+  .health .row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+  .health .d { color: var(--text-mid); font-size: 12px; line-height: 1.45; }
+  .health .res { margin-top: 10px; font-size: 12.5px; line-height: 1.5; }
+  .health .res .sum b { font-weight: 600; }
+  .health .res .clean { color: var(--green); }
+  .health .issues { margin: 8px 0 0; padding: 0; list-style: none; }
+  .health .issues li { padding: 3px 0; color: var(--text-mid); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+  .dot.fail { background: var(--red); } .dot.warn { background: var(--yellow); }
+  .health .acts { margin-top: 10px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+  .tile { font: inherit; text-align: left; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; cursor: pointer;
+    display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
+  .tile:hover:not(:disabled), .tile:focus-visible { border-color: var(--blue); outline: none;
+    background: var(--surface-hi); }
+  .tile:disabled { cursor: default; opacity: .55; }
+  .tile .ic { font-size: 20px; line-height: 1.2; flex-shrink: 0; }
+  .tile .t { font-weight: 600; font-size: 13px; }
+  .tile .d { color: var(--text-mid); font-size: 11.5px; margin-top: 3px; line-height: 1.4; }
+  .empty { color: var(--text-dim); padding: 28px 0; text-align: center; }
+
+  .btn { font: inherit; font-size: 12px; color: var(--text); background: var(--surface-hi);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; cursor: pointer; flex-shrink: 0; }
+  .btn:hover:not(:disabled) { border-color: var(--blue); }
+  .btn:disabled { cursor: default; opacity: .7; }
+  .btn.primary { background: linear-gradient(135deg, var(--blue), var(--purple));
+    color: #1a1b26; border-color: transparent; font-weight: 600; }
+  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  footer { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 12px 26px; border-top: 1px solid var(--border); }
+  footer .note { color: var(--text-dim); font-size: 11.5px; }
+
+  .toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: 86%;
+    background: var(--surface-hi); border: 1px solid var(--yellow); color: var(--yellow);
+    border-radius: 8px; padding: 8px 14px; font-size: 12px; }
+
+  @media (max-width: 660px) {
+    .top { flex-direction: column; }
+    .search { flex-basis: auto; width: 100%; }
+    .health .row { flex-direction: column; align-items: stretch; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="top">
+      <div>
+        <h1 id="title"></h1>
+        <div class="sub" id="subtitle"></div>
+      </div>
+      <input type="search" id="search" class="search" autocomplete="off" spellcheck="false">
+    </div>
+  </header>
+  <main class="body" id="main">
+    <div id="overview">
+      <h2 id="h-glance"></h2>
+      <div id="glance" class="glance"></div>
+      <h2 id="h-health"></h2>
+      <div class="health">
+        <div class="row">
+          <div class="d" id="health-desc"></div>
+          <button type="button" class="btn" id="health-btn"></button>
+        </div>
+        <div class="res hidden" id="health-res"></div>
+      </div>
+    </div>
+    <div id="groups"></div>
+    <div id="empty" class="empty hidden"></div>
+  </main>
+  <footer>
+    <div class="note" id="note"></div>
+    <button type="button" class="btn primary" id="b-close"></button>
+  </footer>
+  <div id="toast" class="toast hidden" role="status"></div>
+</div>
+<script>
+const S = STRINGS_PLACEHOLDER;
+const TILES = TILES_PLACEHOLDER;
+const GROUPS = GROUPS_PLACEHOLDER;
+const FACTS = FACTS_PLACEHOLDER;
+const $ = (id) => document.getElementById(id);
+
+let avail = {};
+let query = '';
+
+function mk(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function api() { return (window.pywebview && window.pywebview.api) || null; }
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.add('hidden'), 4500);
+}
+
+// «AvalOS» lleva el degradado de marca, igual que en las demás apps.
+function setTitle(text) {
+  const h = $('title');
+  h.textContent = '';
+  const i = text.indexOf('AvalOS');
+  if (i < 0) { h.textContent = text; return; }
+  h.appendChild(document.createTextNode(text.slice(0, i)));
+  h.appendChild(mk('span', 'accent', 'AvalOS'));
+  h.appendChild(document.createTextNode(text.slice(i + 'AvalOS'.length)));
+}
+
+function renderGlance(info) {
+  const box = $('glance');
+  box.textContent = '';
+  FACTS.forEach((key) => {
+    const f = mk('div', 'fact');
+    f.appendChild(mk('div', 'k', S['f-' + key]));
+    const v = mk('div', 'v', (info && info[key]) || '—');
+    v.title = v.textContent;
+    f.appendChild(v);
+    box.appendChild(f);
+  });
+}
+
+function matches(tile, q) {
+  if (!q) return true;
+  const id = tile[1];
+  const hay = (S['t-' + id] + ' ' + S['d-' + id] + ' ' + tile[2][0]).toLowerCase();
+  return hay.indexOf(q) !== -1;
+}
+
+function visibleTiles() {
+  const q = query.trim().toLowerCase();
+  return TILES.filter((t) => matches(t, q));
+}
+
+async function openTile(id) {
+  const a = api();
+  if (!a) return;
+  let ok = false;
+  try { ok = await a.open_tile(id); } catch (e) { ok = false; }
+  if (!ok) toast(S.unavailable);
+}
+
+function renderTiles() {
+  const box = $('groups');
+  box.textContent = '';
+  const shown = visibleTiles();
+  GROUPS.forEach((g) => {
+    const items = shown.filter((t) => t[0] === g);
+    if (!items.length) return;
+    box.appendChild(mk('h2', '', S['grp-' + g]));
+    const grid = mk('div', 'grid');
+    items.forEach(([_g, id, argv, icon]) => {
+      const on = avail[id] !== false;               // sin dato: se asume instalada
+      const b = mk('button', 'tile');
+      b.type = 'button';
+      b.disabled = !on;
+      b.dataset.tile = id;
+      b.appendChild(mk('span', 'ic', icon));
+      const info = mk('span', 'info');
+      info.appendChild(mk('div', 't', S['t-' + id]));
+      info.appendChild(mk('div', 'd', on ? S['d-' + id] : S.unavailable));
+      b.appendChild(info);
+      b.addEventListener('click', () => openTile(id));
+      grid.appendChild(b);
+    });
+    box.appendChild(grid);
+  });
+  const empty = $('empty');
+  empty.textContent = shown.length ? '' : S['no-results'].replace('{q}', query.trim());
+  empty.classList.toggle('hidden', shown.length > 0);
+  $('overview').classList.toggle('hidden', query.trim() !== '');
+}
+
+function renderHealth(r) {
+  const res = $('health-res');
+  res.textContent = '';
+  res.classList.remove('hidden');
+  const btn = $('health-btn');
+  btn.disabled = false;
+  btn.textContent = S['health-again'];
+  if (r.state === 'missing') { res.textContent = S['health-na']; btn.disabled = true; return; }
+  if (r.state !== 'done') { res.textContent = S['health-err']; return; }
+  const sum = mk('div', 'sum');
+  sum.appendChild(mk('b', '', S['health-summary']
+    .replace('{ok}', r.ok).replace('{warn}', r.warn).replace('{fail}', r.fail)));
+  res.appendChild(sum);
+  if (!r.issues.length) {
+    res.appendChild(mk('div', 'clean', S['health-clean']));
+  } else {
+    res.appendChild(mk('div', 'd', S['health-issues']));
+    const ul = mk('ul', 'issues');
+    r.issues.forEach((i) => {
+      const li = mk('li');
+      li.appendChild(mk('span', 'dot ' + i.status));
+      li.appendChild(document.createTextNode(i.title));
+      ul.appendChild(li);
+    });
+    res.appendChild(ul);
+  }
+  const acts = mk('div', 'acts');
+  const open = mk('button', 'btn', S['health-open']);
+  open.type = 'button';
+  open.addEventListener('click', () => openTile('doctor'));
+  acts.appendChild(open);
+  res.appendChild(acts);
+}
+
+async function runHealth() {
+  const a = api();
+  const btn = $('health-btn');
+  btn.disabled = true;
+  btn.textContent = S['health-running'];
+  let r = { state: 'error' };
+  if (a) { try { r = await a.health(); } catch (e) { r = { state: 'error' }; } }
+  renderHealth(r);
+}
+
+function closeWin() { const a = api(); if (a) a.close(); }
+
+setTitle(S.title);
+$('subtitle').textContent = S.subtitle;
+$('search').placeholder = S.search;
+$('h-glance').textContent = S['h-glance'];
+$('h-health').textContent = S['h-health'];
+$('health-desc').textContent = S['health-desc'];
+$('health-btn').textContent = S['health-run'];
+$('note').textContent = S.note;
+$('b-close').textContent = S['b-close'];
+renderGlance(null);
+renderTiles();
+$('health-btn').addEventListener('click', runHealth);
+$('b-close').addEventListener('click', closeWin);
+$('search').addEventListener('input', (ev) => { query = ev.target.value; renderTiles(); });
+$('search').addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter') return;
+  const first = visibleTiles().find((t) => avail[t[1]] !== false);
+  if (first) openTile(first[1]);
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    if (query) { query = ''; $('search').value = ''; renderTiles(); } else { closeWin(); }
+  } else if (ev.key === '/' && document.activeElement !== $('search')) {
+    ev.preventDefault();
+    $('search').focus();
+  }
+});
+
+// Con la ventana ya dibujada: datos del equipo y qué apps tiene este sistema.
+async function ready() {
+  const a = api();
+  if (!a) return;
+  try { renderGlance(await a.info()); } catch (e) { /* se quedan los «—» */ }
+  try { avail = await a.available(); renderTiles(); } catch (e) { /* todas activas */ }
+}
+window.addEventListener('pywebviewready', ready);
+</script>
+</body>
+</html>"""
+
+
+def _js(obj) -> str:
+    # Va dentro de un <script>: que un "</" nunca cierre la etiqueta antes de tiempo.
+    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _render_html(lang: str) -> str:
+    return (_build_html()
+            .replace("LANG_PLACEHOLDER", _HTML_LANG.get(lang, lang))
+            .replace("STRINGS_PLACEHOLDER", _js(STRINGS[lang]))
+            .replace("TILES_PLACEHOLDER", _js(TILES))
+            .replace("GROUPS_PLACEHOLDER", _js(GROUPS))
+            .replace("FACTS_PLACEHOLDER", _js(FACTS)))
+
+
+def _gui():
+    import webview  # solo la ventana lo necesita
+    T = STRINGS[LANG]
+    html = _render_html(LANG)
+
+    # Mismo fix que las demás apps: sin esto GTK usa "python3" como app_id en Wayland y
+    # la window rule (class = "avalos-control") nunca matchea.
+    try:
+        from gi.repository import GLib
+        GLib.set_prgname("avalos-control")
+    except Exception:
+        pass
+
+    api = ControlAPI()
+    win = webview.create_window(
+        title            = T["title"],
+        html             = html,
+        js_api           = api,
+        width            = 880,
+        height           = 660,
+        min_size         = (620, 480),
+        resizable        = True,
+        background_color = "#1a1b26",
+    )
+    api.window = win
+    try:
+        webview.start(debug=False)
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR al iniciar pywebview: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv=None):
+    global LANG
+    ap = argparse.ArgumentParser(prog="avalos-control", description="AvalOS Control Center: system settings and AvalOS tools in one window.")
+    ap.add_argument("--json", action="store_true", help="print the system summary and available tools, then exit")
+    ap.add_argument("--lang", choices=_SUPPORTED, help="language of the window")
+    a = ap.parse_args(argv)
+    if a.lang:
+        LANG = a.lang
+    if a.json:
+        print(json.dumps({"info": system_info(), "available": available_tiles()}, ensure_ascii=False, indent=2))
+        return 0
+    if not _has_display():
+        print("avalos-control: no graphical session found (WAYLAND_DISPLAY/DISPLAY)", file=sys.stderr)
+        return 1
+    return _gui()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

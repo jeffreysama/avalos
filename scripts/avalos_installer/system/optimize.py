@@ -103,7 +103,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
 
     session.log(session.t("log-installing-scripts"), "info")
     _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
-                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome")
+                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control")
     for _script_name in _avalos_scripts:
         _content = read_config(f"scripts/{_script_name}")
         if _content:
@@ -239,6 +239,14 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
     else:
         session.log(session.t("log-welcome-desktop-missing"), "warn")
 
+    # avalos-control: centro de control (solo abre otras apps y lee datos; sin polkit).
+    _content = read_config("avalos-control.desktop")
+    if _content:
+        (_apps_dir / "avalos-control.desktop").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-control-desktop-installed"), "ok")
+    else:
+        session.log(session.t("log-control-desktop-missing"), "warn")
+
     _content = read_config("avalos-restore.svg")
     if _content:
         (_icon_dir / "avalos-restore.svg").write_text(_content, encoding="utf-8")
@@ -259,6 +267,13 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
         session.log(session.t("log-welcome-icon-installed"), "ok")
     else:
         session.log(session.t("log-welcome-icon-missing"), "warn")
+
+    _content = read_config("avalos-control.svg")
+    if _content:
+        (_icon_dir / "avalos-control.svg").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-control-icon-installed"), "ok")
+    else:
+        session.log(session.t("log-control-icon-missing"), "warn")
 
     (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
         datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
