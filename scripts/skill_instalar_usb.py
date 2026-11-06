@@ -2467,6 +2467,37 @@ def preflight_error_summary(output: str, limit: int = 400) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+# ── MangoHud: copia de system/aur.py (este instalador es autónomo). tests/test_mangohud_config.py
+# vigila que sigan iguales. ──
+def write_user_mangohud_config(mount_root: Path, username: str, content: str) -> Path:
+    """Deja la config de MangoHud donde MangoHud la lee: ~/.config/MangoHud/MangoHud.conf del usuario.
+
+    MangoHud solo busca ./MangoHud.conf, $XDG_CONFIG_HOME/MangoHud/ (MangoHud.conf, <app>.conf y
+    wine-<app>.conf) y $MANGOHUD_CONFIGFILE. /etc/MangoHud/MangoHud.conf, donde se dejaba antes, no
+    lo lee nadie: el tema Tokyo Night nunca se veía. El instalador corre como root, así que lo que se
+    crea dentro del home se entrega al usuario (uid/gid salen del /etc/passwd del sistema instalado:
+    el home en sí no se toca). Lanza OSError/KeyError si no se puede; el que llama lo registra."""
+    uid = gid = None
+    for line in (mount_root / "etc" / "passwd").read_text(encoding="utf-8").splitlines():
+        fields = line.split(":")
+        if len(fields) >= 6 and fields[0] == username:
+            uid, gid, home = int(fields[2]), int(fields[3]), fields[5]
+            break
+    if uid is None:
+        raise KeyError(f"{username} no está en /etc/passwd del sistema instalado")
+    base = mount_root / home.lstrip("/")
+    created = []
+    for folder in (base / ".config", base / ".config" / "MangoHud"):
+        if not folder.exists():
+            folder.mkdir()
+            created.append(folder)
+    target = base / ".config" / "MangoHud" / "MangoHud.conf"
+    target.write_text(content, encoding="utf-8")
+    for path in (*created, target):
+        os.chown(path, uid, gid)
+    return target
+
+
 class InstaladorAPI :
     """Métodos expuestos al JavaScript."""
 
@@ -5310,10 +5341,11 @@ DISTRIB_DESCRIPTION="AvalOS"
 
                     _contenido_mango =_leer_config ("mangohud/MangoHud.conf")
                     if _contenido_mango :
-                        mango_dir =MOUNT_ROOT /"etc"/"MangoHud"
-                        mango_dir .mkdir (parents =True ,exist_ok =True )
-                        (mango_dir /"MangoHud.conf").write_text (_contenido_mango ,encoding ="utf-8")
-                        self ._log (self ._t ("log-mangohud-ok"),"ok")
+                        try :
+                            write_user_mangohud_config (MOUNT_ROOT ,usuario ,_contenido_mango )
+                            self ._log (self ._t ("log-mangohud-ok"),"ok")
+                        except (OSError ,KeyError ,ValueError )as e :
+                            self ._log (f"[WARN] MangoHud.conf: {e }","warn")
 
                     # --user: ver aur.py del instalador modular (sin --user flatpak usa el helper del sistema, que en el chroot no existe)
                     _rc_flat ,_ =self ._run_chroot (

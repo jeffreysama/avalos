@@ -27,10 +27,42 @@ Cambios de forma (no de lógica): `self.X` → `session.X` / `ctx.X`.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from avalos_installer.core.config import MOUNT_ROOT, read_config
 from avalos_installer.core.context import InstallContext
 from avalos_installer.core.session import InstallSession
 from avalos_installer.system.pacstrap import HYPRLAND_AUR_PKGS, GAMING_AUR_PKGS
+
+
+def write_user_mangohud_config(mount_root: Path, username: str, content: str) -> Path:
+    """Deja la config de MangoHud donde MangoHud la lee: ~/.config/MangoHud/MangoHud.conf del usuario.
+
+    MangoHud solo busca ./MangoHud.conf, $XDG_CONFIG_HOME/MangoHud/ (MangoHud.conf, <app>.conf y
+    wine-<app>.conf) y $MANGOHUD_CONFIGFILE. /etc/MangoHud/MangoHud.conf, donde se dejaba antes, no
+    lo lee nadie: el tema Tokyo Night nunca se veía. El instalador corre como root, así que lo que se
+    crea dentro del home se entrega al usuario (uid/gid salen del /etc/passwd del sistema instalado:
+    el home en sí no se toca). Lanza OSError/KeyError si no se puede; el que llama lo registra."""
+    uid = gid = None
+    for line in (mount_root / "etc" / "passwd").read_text(encoding="utf-8").splitlines():
+        fields = line.split(":")
+        if len(fields) >= 6 and fields[0] == username:
+            uid, gid, home = int(fields[2]), int(fields[3]), fields[5]
+            break
+    if uid is None:
+        raise KeyError(f"{username} no está en /etc/passwd del sistema instalado")
+    base = mount_root / home.lstrip("/")
+    created = []
+    for folder in (base / ".config", base / ".config" / "MangoHud"):
+        if not folder.exists():
+            folder.mkdir()
+            created.append(folder)
+    target = base / ".config" / "MangoHud" / "MangoHud.conf"
+    target.write_text(content, encoding="utf-8")
+    for path in (*created, target):
+        os.chown(path, uid, gid)
+    return target
 
 
 def install_aur(session: InstallSession, ctx: InstallContext) -> None:
@@ -150,11 +182,9 @@ def install_aur(session: InstallSession, ctx: InstallContext) -> None:
                 mango_content = read_config("mangohud/MangoHud.conf")
                 if mango_content:
                     try:
-                        mango_dir = MOUNT_ROOT / "etc" / "MangoHud"
-                        mango_dir.mkdir(parents=True, exist_ok=True)
-                        (mango_dir / "MangoHud.conf").write_text(mango_content, encoding="utf-8")
+                        write_user_mangohud_config(MOUNT_ROOT, ctx.username, mango_content)
                         session.log(session.t("log-mangohud-ok"), "ok")
-                    except OSError as e:
+                    except (OSError, KeyError, ValueError) as e:
                         session.log(f"[WARN] MangoHud.conf: {e}", "warn")
 
                 # --user: las instalaciones de la tienda (avalos-store) son --user, así que el remoto va en la

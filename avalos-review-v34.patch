@@ -1,0 +1,1874 @@
+diff --git a/.github/workflows/build-iso.yml b/.github/workflows/build-iso.yml
+index abe8dd3..c97fff1 100644
+--- a/.github/workflows/build-iso.yml
++++ b/.github/workflows/build-iso.yml
+@@ -167,7 +167,7 @@ jobs:
+           # Sin este paso, el instalador loguea "script missing" para los 6 y
+           # ninguno queda en /usr/local/bin del sistema instalado.
+           mkdir -p "$AIROOTFS/usr/share/avalos/configs/scripts"
+-          for _s in avalos-settings avalos-wallpaper avalos-about avalos-store avalos-update avalos-update-helper avalos-restore avalos-doctor avalos-welcome; do
++          for _s in avalos-settings avalos-wallpaper avalos-about avalos-store avalos-update avalos-update-helper avalos-restore avalos-doctor avalos-welcome avalos-control; do
+             if [[ -f "scripts/$_s" ]]; then
+               cp "scripts/$_s" "$AIROOTFS/usr/share/avalos/configs/scripts/$_s"
+             else
+diff --git a/README.md b/README.md
+index 821ddda..56e522c 100644
+--- a/README.md
++++ b/README.md
+@@ -19,7 +19,7 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
+ - **Filesystem**: Btrfs with Snapper snapshots by default
+ - **Pre-configured Rice**: Beautiful and functional Hyprland + Waybar + Kitty + Rofi setup included
+ - **Extras**: ZRAM, BBR congestion control, carefully selected firmware (AMD/Intel only)
+-- **Built-in tools**: AvalOS Welcome, Settings, Store, Update, Restore and Doctor (see [AvalOS Tools](#-avalos-tools))
++- **Built-in tools**: AvalOS Control Center, Welcome, Settings, Store, Update, Restore and Doctor (see [AvalOS Tools](#-avalos-tools))
+ - **Languages**: the installer and the tools are available in English, Español, 中文简体 and 日本語
+ 
+ > **Note**: AvalOS currently supports **AMD and Intel** hardware only. NVIDIA is not supported, but could be possible (If you know how to install NVIDIA packages and all).
+@@ -80,6 +80,7 @@ AvalOS ships its own small apps, all available from the app launcher:
+ 
+ | Tool | What it does |
+ |------|--------------|
++| **AvalOS Control Center** | All your settings and the AvalOS tools in one window, with a system summary and an on-demand health check (`Super + Alt + C`) |
+ | **AvalOS Welcome** | First steps and key shortcuts, shown on your first login |
+ | **AvalOS Settings** | Control center for your installed system |
+ | **AvalOS Store** | Install games, apps and utilities from a curated catalog (Pacman, AUR and Flatpak) |
+diff --git a/configs/avalos-control.desktop b/configs/avalos-control.desktop
+new file mode 100644
+index 0000000..3b21da0
+--- /dev/null
++++ b/configs/avalos-control.desktop
+@@ -0,0 +1,19 @@
++[Desktop Entry]
++Type=Application
++Version=1.0
++Name=AvalOS Control Center
++Name[es]=Centro de control de AvalOS
++Name[zh_CN]=AvalOS 控制中心
++Name[ja]=AvalOS コントロールセンター
++Comment=System settings and AvalOS tools in one place
++Comment[es]=Ajustes del sistema y herramientas de AvalOS en un solo lugar
++Comment[zh_CN]=系统设置与 AvalOS 工具，集中在一处
++Comment[ja]=システム設定と AvalOS ツールをひとまとめに
++Exec=avalos-control
++Icon=avalos-control
++Terminal=false
++NoDisplay=false
++StartupNotify=true
++StartupWMClass=avalos-control
++Categories=System;Settings;
++Keywords=control;center;settings;config;system;tools;centro de control;ajustes;configuración;herramientas;控制中心;设置;工具;コントロールセンター;設定;
+diff --git a/configs/avalos-control.svg b/configs/avalos-control.svg
+new file mode 100644
+index 0000000..8513e7e
+--- /dev/null
++++ b/configs/avalos-control.svg
+@@ -0,0 +1,21 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
++  <defs>
++    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
++      <stop offset="0%" stop-color="#7aa2f7"/>
++      <stop offset="100%" stop-color="#bb9af7"/>
++    </linearGradient>
++  </defs>
++  <rect x="4" y="4" width="92" height="92" rx="22" fill="#1a1b26"/>
++  <rect x="4" y="4" width="92" height="92" rx="22" fill="url(#bg)" opacity="0.92"/>
++  <!-- tres controles deslizantes: ajustar varias cosas desde un solo lugar -->
++  <g stroke="#1a1b26" stroke-width="6" stroke-linecap="round" opacity="0.95">
++    <line x1="24" y1="32" x2="76" y2="32"/>
++    <line x1="24" y1="50" x2="76" y2="50"/>
++    <line x1="24" y1="68" x2="76" y2="68"/>
++  </g>
++  <g fill="#1a1b26" stroke="url(#bg)" stroke-width="3">
++    <circle cx="58" cy="32" r="8.5"/>
++    <circle cx="38" cy="50" r="8.5"/>
++    <circle cx="64" cy="68" r="8.5"/>
++  </g>
++</svg>
+diff --git a/configs/hyprland/hyprland.lua b/configs/hyprland/hyprland.lua
+index 08b5400..8218b91 100644
+--- a/configs/hyprland/hyprland.lua
++++ b/configs/hyprland/hyprland.lua
+@@ -170,7 +170,7 @@ hl.bind(mod .. " + V",
+ hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
+ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ 
+--- SUPER + ALT + S / U. Hyprland compara el conjunto EXACTO de modificadores, así
++-- SUPER + ALT + S / U / C. Hyprland compara el conjunto EXACTO de modificadores, así
+ -- que SUPER+ALT+S no choca con SUPER+SHIFT+S (captura) ni con SUPER+CTRL+S
+ -- (avalos-settings, arriba).
+ -- NO usar "ALT_L" acá: en un bind, ALT_L es el nombre de una TECLA (sirve para
+@@ -180,6 +180,7 @@ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ -- dos atajos no funcionaban. scripts/validate_app_consistency.py lo detecta.
+ hl.bind(mod .. " + ALT + S", hl.dsp.exec_cmd("avalos-store"))
+ hl.bind(mod .. " + ALT + U", hl.dsp.exec_cmd("avalos-update"))
++hl.bind(mod .. " + ALT + C", hl.dsp.exec_cmd("avalos-control"))
+ 
+ -- Gaming
+ hl.bind(mod .. " + S",        hl.dsp.exec_cmd("steam"))
+@@ -335,6 +336,12 @@ hl.window_rule({
+     center = true,
+     size   = { 760, 680 },
+ })
++hl.window_rule({
++    match  = { class = "avalos-control" },
++    float  = true,
++    center = true,
++    size   = { 880, 660 },
++})
+ hl.window_rule({
+     match  = { class = "avalos-store" },
+     float  = true,
+diff --git a/configs/hyprland/hyprland_conf_lua.template b/configs/hyprland/hyprland_conf_lua.template
+index 6c41825..65f5ce8 100644
+--- a/configs/hyprland/hyprland_conf_lua.template
++++ b/configs/hyprland/hyprland_conf_lua.template
+@@ -285,6 +285,12 @@ hl.window_rule({
+     center = true,
+     size   = { 760, 680 },
+ })
++hl.window_rule({
++    match  = { class = "avalos-control" },
++    float  = true,
++    center = true,
++    size   = { 880, 660 },
++})
+ hl.window_rule({
+     match  = { class = "avalos-store" },
+     float  = true,
+@@ -296,7 +302,7 @@ hl.window_rule({
+ hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
+ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ 
+--- SUPER + ALT + S / U. Hyprland compara el conjunto EXACTO de modificadores, así
++-- SUPER + ALT + S / U / C. Hyprland compara el conjunto EXACTO de modificadores, así
+ -- que SUPER+ALT+S no choca con SUPER+SHIFT+S (captura) ni con SUPER+CTRL+S
+ -- (avalos-settings, arriba).
+ -- NO usar "ALT_L" acá: en un bind, ALT_L es el nombre de una TECLA (sirve para
+@@ -306,3 +312,4 @@ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ -- dos atajos no funcionaban. scripts/validate_app_consistency.py lo detecta.
+ hl.bind(mod .. " + ALT + S", hl.dsp.exec_cmd("avalos-store"))
+ hl.bind(mod .. " + ALT + U", hl.dsp.exec_cmd("avalos-update"))
++hl.bind(mod .. " + ALT + C", hl.dsp.exec_cmd("avalos-control"))
+diff --git a/scripts/avalos-control b/scripts/avalos-control
+new file mode 100755
+index 0000000..1ea59a6
+--- /dev/null
++++ b/scripts/avalos-control
+@@ -0,0 +1,776 @@
++#!/usr/bin/env python3
++# ── AvalOS — avalos-control ─────────────────────────────────────────
++# Centro de control de AvalOS: un solo lugar desde donde abrir los ajustes del sistema y las
++# apps de AvalOS (actualizar, restaurar, salud, tienda, fondo, pantallas, audio, red...), con
++# un resumen del equipo y la salud del sistema bajo demanda. Solo abre otras apps y lee datos
++# del sistema: no necesita root ni polkit y no cambia nada.
++#
++#   avalos-control          abre la ventana (Super+Alt+C, o desde el menú de Settings)
++#   avalos-control --json   imprime el resumen del equipo y qué apps hay, y sale (soporte)
++#
++# La salud la calcula avalos-doctor (solo lectura) cuando el usuario pulsa «Revisar ahora»: abrir
++# esta ventana nunca lanza los 20 chequeos por su cuenta.
++#
++# Requiere: python 3.9+, python-pywebview, webkit2gtk-4.1 y python-gobject (ya los
++# instala el instalador).
++import argparse
++import json
++import os
++import platform
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++# ── Rutas del sistema (se pueden redirigir en las pruebas) ─────────────────
++PROC = Path("/proc")
++OS_RELEASE = Path("/etc/os-release")
++ROOT_FS = "/"
++
++# ── i18n — mismo patrón que avalos-doctor/avalos-welcome ───────────────────
++_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
++_SUPPORTED = ("en", "es", "zh", "ja")
++_HTML_LANG = {"zh": "zh-CN"}
++
++
++def _detectar_idioma() -> str:
++    try:
++        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
++        if code in _SUPPORTED:
++            return code
++    except OSError:
++        pass
++    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
++    return _lang_raw if _lang_raw in _SUPPORTED else "en"
++
++
++LANG = _detectar_idioma()
++
++# Grupos, en el orden en que salen en pantalla. Texto del título: grp-<id>.
++GROUPS = ("system", "apps", "look", "hardware", "session")
++
++# Lanzadores: (grupo, id, comando, icono). Lista cerrada: la página nunca puede lanzar otra
++# cosa que estos comandos exactos. Textos: t-<id> (nombre) y d-<id> (descripción).
++# scripts/validate_app_consistency.py lee esta lista tal cual (tiene que ser un literal de
++# Python) y comprueba que cada comando existe en el repo o lo trae un paquete que el
++# instalador instala, y que no hay ids repetidos ni textos sin traducir.
++TILES = [
++    ("system", "update", ("avalos-update",), "🔄"),
++    ("system", "restore", ("avalos-restore",), "⏪"),
++    ("system", "doctor", ("avalos-doctor",), "🩺"),
++    ("system", "about", ("avalos-about",), "ℹ️"),
++    ("apps", "store", ("avalos-store",), "🛍️"),
++    ("look", "wallpaper", ("avalos-wallpaper",), "🖼️"),
++    ("look", "appearance", ("nwg-look",), "🎨"),
++    ("hardware", "displays", ("nwg-displays",), "🖥️"),
++    ("hardware", "audio", ("pavucontrol",), "🔊"),
++    ("hardware", "network", ("nm-connection-editor",), "📶"),
++    ("hardware", "bluetooth", ("blueman-manager",), "🔵"),
++    ("session", "files", ("thunar",), "📁"),
++    ("session", "account", ("kitty", "--title", "AvalOS — passwd", "--", "passwd"), "🔑"),
++    ("session", "welcome", ("avalos-welcome",), "👋"),
++]
++TILE_ARGV = {tid: argv for _g, tid, argv, _i in TILES}
++
++# Datos del resumen del equipo (claves de system_info()). Texto de la etiqueta: f-<clave>.
++FACTS = ("os", "kernel", "cpu", "memory", "disk", "uptime")
++
++# Cuántos problemas se listan bajo el resumen de salud (los demás se ven en el Doctor).
++MAX_ISSUES = 5
++DOCTOR_TIMEOUT = 90
++
++STRINGS = {
++    "en": {
++        "title": "AvalOS Control Center",
++        "subtitle": "Everything to look after your system, in one place.",
++        "search": "Search settings and tools…",
++        "no-results": "Nothing matches “{q}”.",
++        "h-glance": "At a glance",
++        "f-os": "System", "f-kernel": "Kernel", "f-cpu": "Processor",
++        "f-memory": "Memory", "f-disk": "Disk", "f-uptime": "Uptime",
++        "h-health": "System health",
++        "health-desc": "Read-only checks on disk, boot files, GPU drivers and more. Takes a few seconds.",
++        "health-run": "Run check",
++        "health-again": "Check again",
++        "health-running": "Checking…",
++        "health-summary": "{ok} OK · {warn} warnings · {fail} problems",
++        "health-clean": "Everything looks good.",
++        "health-issues": "Needs attention",
++        "health-open": "Open AvalOS Doctor",
++        "health-na": "AvalOS Doctor isn't installed on this system yet.",
++        "health-err": "The check couldn't finish. Open AvalOS Doctor to see why.",
++        "grp-system": "System", "grp-apps": "Apps", "grp-look": "Appearance",
++        "grp-hardware": "Hardware and network", "grp-session": "Files and account",
++        "t-update": "Updates", "d-update": "Packages, kernel, AUR and Flatpak, with a restore point first.",
++        "t-restore": "Restore points", "d-restore": "Go back to an earlier state of the system.",
++        "t-doctor": "System health", "d-doctor": "Full report on disk, boot, drivers and network.",
++        "t-about": "About this system", "d-about": "Version, kernel and hardware details.",
++        "t-store": "Store", "d-store": "Apps, games and utilities from pacman, Flatpak and AUR.",
++        "t-wallpaper": "Wallpaper", "d-wallpaper": "Pick an image for your desktop.",
++        "t-appearance": "Theme and fonts", "d-appearance": "GTK theme, icons, cursor and fonts.",
++        "t-displays": "Displays", "d-displays": "Resolution, refresh rate and layout.",
++        "t-audio": "Sound", "d-audio": "Volume and audio devices.",
++        "t-network": "Network", "d-network": "Connections, Wi-Fi and VPN.",
++        "t-bluetooth": "Bluetooth", "d-bluetooth": "Wireless devices.",
++        "t-files": "Files", "d-files": "Browse your folders and drives.",
++        "t-account": "Password", "d-account": "Change your account password in a terminal.",
++        "t-welcome": "Welcome", "d-welcome": "First steps and key shortcuts.",
++        "open": "Open",
++        "unavailable": "Not installed on this system yet.",
++        "b-close": "Close",
++        "note": "Shortcut: Super + Alt + C",
++    },
++    "es": {
++        "title": "Centro de control de AvalOS",
++        "subtitle": "Todo para cuidar tu sistema, en un solo lugar.",
++        "search": "Buscar ajustes y herramientas…",
++        "no-results": "Nada coincide con «{q}».",
++        "h-glance": "De un vistazo",
++        "f-os": "Sistema", "f-kernel": "Kernel", "f-cpu": "Procesador",
++        "f-memory": "Memoria", "f-disk": "Disco", "f-uptime": "Tiempo encendido",
++        "h-health": "Salud del sistema",
++        "health-desc": "Chequeos de solo lectura: disco, archivos de arranque, drivers de GPU y más. Tarda unos segundos.",
++        "health-run": "Revisar ahora",
++        "health-again": "Revisar de nuevo",
++        "health-running": "Revisando…",
++        "health-summary": "{ok} bien · {warn} avisos · {fail} problemas",
++        "health-clean": "Todo se ve bien.",
++        "health-issues": "Requiere atención",
++        "health-open": "Abrir AvalOS Doctor",
++        "health-na": "AvalOS Doctor todavía no está instalado en este sistema.",
++        "health-err": "No se pudo terminar la revisión. Abre AvalOS Doctor para ver por qué.",
++        "grp-system": "Sistema", "grp-apps": "Apps", "grp-look": "Apariencia",
++        "grp-hardware": "Hardware y red", "grp-session": "Archivos y cuenta",
++        "t-update": "Actualizaciones", "d-update": "Paquetes, kernel, AUR y Flatpak, con un punto de restauración antes.",
++        "t-restore": "Puntos de restauración", "d-restore": "Vuelve a un estado anterior del sistema.",
++        "t-doctor": "Salud del sistema", "d-doctor": "Informe completo de disco, arranque, drivers y red.",
++        "t-about": "Acerca de este sistema", "d-about": "Versión, kernel y datos del hardware.",
++        "t-store": "Tienda", "d-store": "Apps, juegos y utilidades de pacman, Flatpak y AUR.",
++        "t-wallpaper": "Fondo de pantalla", "d-wallpaper": "Elige una imagen para tu escritorio.",
++        "t-appearance": "Tema y fuentes", "d-appearance": "Tema GTK, íconos, cursor y fuentes.",
++        "t-displays": "Pantallas", "d-displays": "Resolución, tasa de refresco y disposición.",
++        "t-audio": "Sonido", "d-audio": "Volumen y dispositivos de audio.",
++        "t-network": "Red", "d-network": "Conexiones, Wi-Fi y VPN.",
++        "t-bluetooth": "Bluetooth", "d-bluetooth": "Dispositivos inalámbricos.",
++        "t-files": "Archivos", "d-files": "Explora tus carpetas y unidades.",
++        "t-account": "Contraseña", "d-account": "Cambia la contraseña de tu cuenta en una terminal.",
++        "t-welcome": "Bienvenida", "d-welcome": "Primeros pasos y atajos de teclado.",
++        "open": "Abrir",
++        "unavailable": "Todavía no está instalado en este sistema.",
++        "b-close": "Cerrar",
++        "note": "Atajo: Super + Alt + C",
++    },
++    "zh": {
++        "title": "AvalOS 控制中心",
++        "subtitle": "管理系统所需的一切，集中在一处。",
++        "search": "搜索设置和工具…",
++        "no-results": "没有与“{q}”匹配的内容。",
++        "h-glance": "概览",
++        "f-os": "系统", "f-kernel": "内核", "f-cpu": "处理器",
++        "f-memory": "内存", "f-disk": "磁盘", "f-uptime": "运行时间",
++        "h-health": "系统健康",
++        "health-desc": "只读检查：磁盘、启动文件、显卡驱动等。需要几秒钟。",
++        "health-run": "立即检查",
++        "health-again": "重新检查",
++        "health-running": "正在检查…",
++        "health-summary": "{ok} 正常 · {warn} 警告 · {fail} 问题",
++        "health-clean": "一切正常。",
++        "health-issues": "需要关注",
++        "health-open": "打开 AvalOS 诊断",
++        "health-na": "此系统尚未安装 AvalOS 诊断。",
++        "health-err": "检查未能完成。请打开 AvalOS 诊断查看原因。",
++        "grp-system": "系统", "grp-apps": "应用", "grp-look": "外观",
++        "grp-hardware": "硬件与网络", "grp-session": "文件与账户",
++        "t-update": "更新", "d-update": "更新软件包、内核、AUR 和 Flatpak，更新前先创建还原点。",
++        "t-restore": "还原点", "d-restore": "回到系统的较早状态。",
++        "t-doctor": "系统健康", "d-doctor": "磁盘、启动、驱动和网络的完整报告。",
++        "t-about": "关于本系统", "d-about": "版本、内核和硬件信息。",
++        "t-store": "商店", "d-store": "来自 pacman、Flatpak 和 AUR 的应用、游戏和工具。",
++        "t-wallpaper": "壁纸", "d-wallpaper": "为桌面选一张图片。",
++        "t-appearance": "主题和字体", "d-appearance": "GTK 主题、图标、光标和字体。",
++        "t-displays": "显示器", "d-displays": "分辨率、刷新率和布局。",
++        "t-audio": "声音", "d-audio": "音量和音频设备。",
++        "t-network": "网络", "d-network": "连接、Wi-Fi 和 VPN。",
++        "t-bluetooth": "蓝牙", "d-bluetooth": "无线设备。",
++        "t-files": "文件", "d-files": "浏览文件夹和磁盘。",
++        "t-account": "密码", "d-account": "在终端中修改账户密码。",
++        "t-welcome": "欢迎", "d-welcome": "开始使用与常用快捷键。",
++        "open": "打开",
++        "unavailable": "此系统尚未安装该应用。",
++        "b-close": "关闭",
++        "note": "快捷键：Super + Alt + C",
++    },
++    "ja": {
++        "title": "AvalOS コントロールセンター",
++        "subtitle": "システムの管理に必要なものを、ひとつの場所に。",
++        "search": "設定やツールを検索…",
++        "no-results": "「{q}」に一致する項目はありません。",
++        "h-glance": "概要",
++        "f-os": "システム", "f-kernel": "カーネル", "f-cpu": "プロセッサ",
++        "f-memory": "メモリ", "f-disk": "ディスク", "f-uptime": "稼働時間",
++        "h-health": "システムの健康状態",
++        "health-desc": "ディスク、起動ファイル、GPU ドライバーなどの読み取り専用チェックです。数秒かかります。",
++        "health-run": "今すぐチェック",
++        "health-again": "もう一度チェック",
++        "health-running": "チェック中…",
++        "health-summary": "正常 {ok} · 警告 {warn} · 問題 {fail}",
++        "health-clean": "問題は見つかりませんでした。",
++        "health-issues": "要確認",
++        "health-open": "AvalOS ドクターを開く",
++        "health-na": "このシステムにはまだ AvalOS ドクターがインストールされていません。",
++        "health-err": "チェックを完了できませんでした。AvalOS ドクターを開いて原因を確認してください。",
++        "grp-system": "システム", "grp-apps": "アプリ", "grp-look": "外観",
++        "grp-hardware": "ハードウェアとネットワーク", "grp-session": "ファイルとアカウント",
++        "t-update": "アップデート", "d-update": "パッケージ、カーネル、AUR、Flatpak を更新（事前に復元ポイントを作成）。",
++        "t-restore": "復元ポイント", "d-restore": "システムを以前の状態に戻します。",
++        "t-doctor": "システムの健康状態", "d-doctor": "ディスク、起動、ドライバー、ネットワークの詳細レポート。",
++        "t-about": "このシステムについて", "d-about": "バージョン、カーネル、ハードウェア情報。",
++        "t-store": "ストア", "d-store": "pacman、Flatpak、AUR のアプリ、ゲーム、ユーティリティ。",
++        "t-wallpaper": "壁紙", "d-wallpaper": "デスクトップの画像を選びます。",
++        "t-appearance": "テーマとフォント", "d-appearance": "GTK テーマ、アイコン、カーソル、フォント。",
++        "t-displays": "ディスプレイ", "d-displays": "解像度、リフレッシュレート、レイアウト。",
++        "t-audio": "サウンド", "d-audio": "音量とオーディオデバイス。",
++        "t-network": "ネットワーク", "d-network": "接続、Wi-Fi、VPN。",
++        "t-bluetooth": "Bluetooth", "d-bluetooth": "ワイヤレスデバイス。",
++        "t-files": "ファイル", "d-files": "フォルダーとドライブを表示します。",
++        "t-account": "パスワード", "d-account": "ターミナルでアカウントのパスワードを変更します。",
++        "t-welcome": "ようこそ", "d-welcome": "はじめにとショートカット。",
++        "open": "開く",
++        "unavailable": "このシステムにはまだインストールされていません。",
++        "b-close": "閉じる",
++        "note": "ショートカット: Super + Alt + C",
++    },
++}
++
++
++# ── Resumen del equipo (solo lectura, sin subprocesos) ─────────────────────
++NA = "—"
++
++
++def _read(path: Path) -> str:
++    try:
++        return path.read_text(encoding="utf-8", errors="replace")
++    except OSError:
++        return ""
++
++
++def _gib(kib: float) -> float:
++    return kib / (1024 * 1024)
++
++
++def _os_name() -> str:
++    for line in _read(OS_RELEASE).splitlines():
++        key, _, value = line.partition("=")
++        if key == "PRETTY_NAME":
++            return value.strip().strip('"\'') or "AvalOS"
++    return "AvalOS"
++
++
++def _cpu_model() -> str:
++    for line in _read(PROC / "cpuinfo").splitlines():
++        key, _, value = line.partition(":")
++        if key.strip() == "model name":
++            return " ".join(value.split()) or NA
++    return NA
++
++
++def _memory() -> str:
++    values = {}
++    for line in _read(PROC / "meminfo").splitlines():
++        key, _, rest = line.partition(":")
++        parts = rest.split()
++        if key in ("MemTotal", "MemAvailable") and parts and parts[0].isdigit():
++            values[key] = int(parts[0])
++    total, avail = values.get("MemTotal"), values.get("MemAvailable")
++    if not total or avail is None:
++        return NA
++    return f"{_gib(total - avail):.1f} / {_gib(total):.1f} GiB"
++
++
++def _disk() -> str:
++    try:
++        usage = shutil.disk_usage(ROOT_FS)
++    except OSError:
++        return NA
++    if not usage.total:
++        return NA
++    gib = 1024 ** 3
++    return f"{usage.used / gib:.0f} / {usage.total / gib:.0f} GiB ({usage.used * 100 // usage.total}%)"
++
++
++def _uptime() -> str:
++    try:
++        seconds = int(float(_read(PROC / "uptime").split()[0]))
++    except (IndexError, ValueError):
++        return NA
++    days, rest = divmod(seconds, 86400)
++    hours, rest = divmod(rest, 3600)
++    minutes = rest // 60
++    if days:
++        return f"{days}d {hours}h"
++    if hours:
++        return f"{hours}h {minutes}m"
++    return f"{minutes}m"
++
++
++def system_info() -> dict:
++    """Los datos de la tarjeta «de un vistazo». Nunca lanza: lo que no se pueda leer sale «—»."""
++    return {
++        "os": _os_name(),
++        "kernel": platform.release() or NA,
++        "cpu": _cpu_model(),
++        "memory": _memory(),
++        "disk": _disk(),
++        "uptime": _uptime(),
++    }
++
++
++# ── Salud (la calcula avalos-doctor) ───────────────────────────────────────
++def health_summary() -> dict:
++    """Corre `avalos-doctor --json` (solo lectura) y lo reduce a lo que muestra la tarjeta:
++    {"state": "missing"|"error"|"done", "ok", "warn", "fail", "issues": [{"title", "status"}]}."""
++    exe = shutil.which("avalos-doctor")
++    if not exe:
++        return {"state": "missing"}
++    try:
++        res = subprocess.run([exe, "--json", "--no-network", "--lang", LANG], capture_output=True,
++                             text=True, timeout=DOCTOR_TIMEOUT, stdin=subprocess.DEVNULL)
++        data = json.loads(res.stdout)
++        summary = data["summary"]
++        findings = data.get("findings") or []
++    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
++        return {"state": "error"}
++    if not isinstance(summary, dict) or not isinstance(findings, list):
++        return {"state": "error"}
++    order = {"fail": 0, "warn": 1}
++    problems = sorted((f for f in findings if isinstance(f, dict) and f.get("status") in order),
++                      key=lambda f: order[f["status"]])
++    return {
++        "state": "done",
++        "ok": int(summary.get("ok", 0)),
++        "warn": int(summary.get("warn", 0)),
++        "fail": int(summary.get("fail", 0)),
++        "issues": [{"title": str(f.get("title", "")), "status": f["status"]} for f in problems[:MAX_ISSUES]],
++    }
++
++
++# ── Lanzar apps ────────────────────────────────────────────────────────────
++def _spawn(cmd) -> bool:
++    try:
++        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
++                         stderr=subprocess.DEVNULL, start_new_session=True)
++        return True
++    except OSError:
++        return False
++
++
++def _has_display() -> bool:
++    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
++
++
++def available_tiles() -> dict:
++    """Qué lanzadores existen en este sistema (los viejos no tienen todo hasta la próxima sync)."""
++    return {tid: bool(shutil.which(argv[0])) for tid, argv in TILE_ARGV.items()}
++
++
++# ── API expuesta a la ventana ──────────────────────────────────────────────
++class ControlAPI:
++    window = None
++
++    def info(self):
++        return system_info()
++
++    def available(self):
++        return available_tiles()
++
++    def open_tile(self, tile_id):
++        argv = TILE_ARGV.get(tile_id) if isinstance(tile_id, str) else None
++        if not argv or not shutil.which(argv[0]):
++            return False
++        return _spawn(list(argv))
++
++    def health(self):
++        return health_summary()
++
++    def close(self):
++        if self.window:
++            self.window.destroy()
++
++
++def _build_html():
++    return r"""<!DOCTYPE html>
++<html lang="LANG_PLACEHOLDER">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>AvalOS</title>
++<style>
++  :root {
++    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
++    --border: #414868; --text: #c0caf5; --text-mid: #9aa5ce; --text-dim: #565f89;
++    --blue: #7aa2f7; --purple: #bb9af7; --yellow: #e0af68; --red: #f7768e; --green: #9ece6a;
++  }
++  * { box-sizing: border-box; }
++  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
++    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
++    overflow: hidden; height: 100%; font-size: 13px; }
++  .app { display: flex; flex-direction: column; height: 100vh; }
++  .hidden { display: none !important; }
++
++  header { padding: 20px 26px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
++  .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
++  header h1 { font-size: 20px; margin: 0 0 5px; font-weight: 600; letter-spacing: .2px; }
++  .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
++    -webkit-background-clip: text; background-clip: text; color: transparent; }
++  header .sub { font-size: 12.5px; color: var(--text-mid); line-height: 1.5; }
++  .search { flex: 0 1 280px; font: inherit; font-size: 12.5px; color: var(--text);
++    background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px;
++    padding: 8px 12px; min-width: 150px; }
++  .search:focus { outline: none; border-color: var(--blue); }
++  .search::placeholder { color: var(--text-dim); }
++
++  .body { flex: 1; overflow-y: auto; padding: 4px 26px 14px; }
++  h2 { font-size: 13px; font-weight: 600; margin: 18px 0 9px; }
++
++  .glance { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
++  .fact { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
++    padding: 9px 12px; min-width: 0; }
++  .fact .k { color: var(--text-dim); font-size: 11px; }
++  .fact .v { margin-top: 3px; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis;
++    white-space: nowrap; }
++
++  .health { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
++    padding: 12px 14px; }
++  .health .row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
++  .health .d { color: var(--text-mid); font-size: 12px; line-height: 1.45; }
++  .health .res { margin-top: 10px; font-size: 12.5px; line-height: 1.5; }
++  .health .res .sum b { font-weight: 600; }
++  .health .res .clean { color: var(--green); }
++  .health .issues { margin: 8px 0 0; padding: 0; list-style: none; }
++  .health .issues li { padding: 3px 0; color: var(--text-mid); }
++  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
++  .dot.fail { background: var(--red); } .dot.warn { background: var(--yellow); }
++  .health .acts { margin-top: 10px; }
++
++  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
++  .tile { font: inherit; text-align: left; color: var(--text); background: var(--surface);
++    border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; cursor: pointer;
++    display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
++  .tile:hover:not(:disabled), .tile:focus-visible { border-color: var(--blue); outline: none;
++    background: var(--surface-hi); }
++  .tile:disabled { cursor: default; opacity: .55; }
++  .tile .ic { font-size: 20px; line-height: 1.2; flex-shrink: 0; }
++  .tile .t { font-weight: 600; font-size: 13px; }
++  .tile .d { color: var(--text-mid); font-size: 11.5px; margin-top: 3px; line-height: 1.4; }
++  .empty { color: var(--text-dim); padding: 28px 0; text-align: center; }
++
++  .btn { font: inherit; font-size: 12px; color: var(--text); background: var(--surface-hi);
++    border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; cursor: pointer; flex-shrink: 0; }
++  .btn:hover:not(:disabled) { border-color: var(--blue); }
++  .btn:disabled { cursor: default; opacity: .7; }
++  .btn.primary { background: linear-gradient(135deg, var(--blue), var(--purple));
++    color: #1a1b26; border-color: transparent; font-weight: 600; }
++  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
++
++  footer { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
++    gap: 14px; padding: 12px 26px; border-top: 1px solid var(--border); }
++  footer .note { color: var(--text-dim); font-size: 11.5px; }
++
++  .toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: 86%;
++    background: var(--surface-hi); border: 1px solid var(--yellow); color: var(--yellow);
++    border-radius: 8px; padding: 8px 14px; font-size: 12px; }
++
++  @media (max-width: 660px) {
++    .top { flex-direction: column; }
++    .search { flex-basis: auto; width: 100%; }
++    .health .row { flex-direction: column; align-items: stretch; }
++  }
++</style>
++</head>
++<body>
++<div class="app">
++  <header>
++    <div class="top">
++      <div>
++        <h1 id="title"></h1>
++        <div class="sub" id="subtitle"></div>
++      </div>
++      <input type="search" id="search" class="search" autocomplete="off" spellcheck="false">
++    </div>
++  </header>
++  <main class="body" id="main">
++    <div id="overview">
++      <h2 id="h-glance"></h2>
++      <div id="glance" class="glance"></div>
++      <h2 id="h-health"></h2>
++      <div class="health">
++        <div class="row">
++          <div class="d" id="health-desc"></div>
++          <button type="button" class="btn" id="health-btn"></button>
++        </div>
++        <div class="res hidden" id="health-res"></div>
++      </div>
++    </div>
++    <div id="groups"></div>
++    <div id="empty" class="empty hidden"></div>
++  </main>
++  <footer>
++    <div class="note" id="note"></div>
++    <button type="button" class="btn primary" id="b-close"></button>
++  </footer>
++  <div id="toast" class="toast hidden" role="status"></div>
++</div>
++<script>
++const S = STRINGS_PLACEHOLDER;
++const TILES = TILES_PLACEHOLDER;
++const GROUPS = GROUPS_PLACEHOLDER;
++const FACTS = FACTS_PLACEHOLDER;
++const $ = (id) => document.getElementById(id);
++
++let avail = {};
++let query = '';
++
++function mk(tag, cls, text) {
++  const e = document.createElement(tag);
++  if (cls) e.className = cls;
++  if (text !== undefined) e.textContent = text;
++  return e;
++}
++function api() { return (window.pywebview && window.pywebview.api) || null; }
++
++function toast(msg) {
++  const t = $('toast');
++  t.textContent = msg;
++  t.classList.remove('hidden');
++  clearTimeout(toast._t);
++  toast._t = setTimeout(() => t.classList.add('hidden'), 4500);
++}
++
++// «AvalOS» lleva el degradado de marca, igual que en las demás apps.
++function setTitle(text) {
++  const h = $('title');
++  h.textContent = '';
++  const i = text.indexOf('AvalOS');
++  if (i < 0) { h.textContent = text; return; }
++  h.appendChild(document.createTextNode(text.slice(0, i)));
++  h.appendChild(mk('span', 'accent', 'AvalOS'));
++  h.appendChild(document.createTextNode(text.slice(i + 'AvalOS'.length)));
++}
++
++function renderGlance(info) {
++  const box = $('glance');
++  box.textContent = '';
++  FACTS.forEach((key) => {
++    const f = mk('div', 'fact');
++    f.appendChild(mk('div', 'k', S['f-' + key]));
++    const v = mk('div', 'v', (info && info[key]) || '—');
++    v.title = v.textContent;
++    f.appendChild(v);
++    box.appendChild(f);
++  });
++}
++
++function matches(tile, q) {
++  if (!q) return true;
++  const id = tile[1];
++  const hay = (S['t-' + id] + ' ' + S['d-' + id] + ' ' + tile[2][0]).toLowerCase();
++  return hay.indexOf(q) !== -1;
++}
++
++function visibleTiles() {
++  const q = query.trim().toLowerCase();
++  return TILES.filter((t) => matches(t, q));
++}
++
++async function openTile(id) {
++  const a = api();
++  if (!a) return;
++  let ok = false;
++  try { ok = await a.open_tile(id); } catch (e) { ok = false; }
++  if (!ok) toast(S.unavailable);
++}
++
++function renderTiles() {
++  const box = $('groups');
++  box.textContent = '';
++  const shown = visibleTiles();
++  GROUPS.forEach((g) => {
++    const items = shown.filter((t) => t[0] === g);
++    if (!items.length) return;
++    box.appendChild(mk('h2', '', S['grp-' + g]));
++    const grid = mk('div', 'grid');
++    items.forEach(([_g, id, argv, icon]) => {
++      const on = avail[id] !== false;               // sin dato: se asume instalada
++      const b = mk('button', 'tile');
++      b.type = 'button';
++      b.disabled = !on;
++      b.dataset.tile = id;
++      b.appendChild(mk('span', 'ic', icon));
++      const info = mk('span', 'info');
++      info.appendChild(mk('div', 't', S['t-' + id]));
++      info.appendChild(mk('div', 'd', on ? S['d-' + id] : S.unavailable));
++      b.appendChild(info);
++      b.addEventListener('click', () => openTile(id));
++      grid.appendChild(b);
++    });
++    box.appendChild(grid);
++  });
++  const empty = $('empty');
++  empty.textContent = shown.length ? '' : S['no-results'].replace('{q}', query.trim());
++  empty.classList.toggle('hidden', shown.length > 0);
++  $('overview').classList.toggle('hidden', query.trim() !== '');
++}
++
++function renderHealth(r) {
++  const res = $('health-res');
++  res.textContent = '';
++  res.classList.remove('hidden');
++  const btn = $('health-btn');
++  btn.disabled = false;
++  btn.textContent = S['health-again'];
++  if (r.state === 'missing') { res.textContent = S['health-na']; btn.disabled = true; return; }
++  if (r.state !== 'done') { res.textContent = S['health-err']; return; }
++  const sum = mk('div', 'sum');
++  sum.appendChild(mk('b', '', S['health-summary']
++    .replace('{ok}', r.ok).replace('{warn}', r.warn).replace('{fail}', r.fail)));
++  res.appendChild(sum);
++  if (!r.issues.length) {
++    res.appendChild(mk('div', 'clean', S['health-clean']));
++  } else {
++    res.appendChild(mk('div', 'd', S['health-issues']));
++    const ul = mk('ul', 'issues');
++    r.issues.forEach((i) => {
++      const li = mk('li');
++      li.appendChild(mk('span', 'dot ' + i.status));
++      li.appendChild(document.createTextNode(i.title));
++      ul.appendChild(li);
++    });
++    res.appendChild(ul);
++  }
++  const acts = mk('div', 'acts');
++  const open = mk('button', 'btn', S['health-open']);
++  open.type = 'button';
++  open.addEventListener('click', () => openTile('doctor'));
++  acts.appendChild(open);
++  res.appendChild(acts);
++}
++
++async function runHealth() {
++  const a = api();
++  const btn = $('health-btn');
++  btn.disabled = true;
++  btn.textContent = S['health-running'];
++  let r = { state: 'error' };
++  if (a) { try { r = await a.health(); } catch (e) { r = { state: 'error' }; } }
++  renderHealth(r);
++}
++
++function closeWin() { const a = api(); if (a) a.close(); }
++
++setTitle(S.title);
++$('subtitle').textContent = S.subtitle;
++$('search').placeholder = S.search;
++$('h-glance').textContent = S['h-glance'];
++$('h-health').textContent = S['h-health'];
++$('health-desc').textContent = S['health-desc'];
++$('health-btn').textContent = S['health-run'];
++$('note').textContent = S.note;
++$('b-close').textContent = S['b-close'];
++renderGlance(null);
++renderTiles();
++$('health-btn').addEventListener('click', runHealth);
++$('b-close').addEventListener('click', closeWin);
++$('search').addEventListener('input', (ev) => { query = ev.target.value; renderTiles(); });
++$('search').addEventListener('keydown', (ev) => {
++  if (ev.key !== 'Enter') return;
++  const first = visibleTiles().find((t) => avail[t[1]] !== false);
++  if (first) openTile(first[1]);
++});
++document.addEventListener('keydown', (ev) => {
++  if (ev.key === 'Escape') {
++    if (query) { query = ''; $('search').value = ''; renderTiles(); } else { closeWin(); }
++  } else if (ev.key === '/' && document.activeElement !== $('search')) {
++    ev.preventDefault();
++    $('search').focus();
++  }
++});
++
++// Con la ventana ya dibujada: datos del equipo y qué apps tiene este sistema.
++async function ready() {
++  const a = api();
++  if (!a) return;
++  try { renderGlance(await a.info()); } catch (e) { /* se quedan los «—» */ }
++  try { avail = await a.available(); renderTiles(); } catch (e) { /* todas activas */ }
++}
++window.addEventListener('pywebviewready', ready);
++</script>
++</body>
++</html>"""
++
++
++def _js(obj) -> str:
++    # Va dentro de un <script>: que un "</" nunca cierre la etiqueta antes de tiempo.
++    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
++
++
++def _render_html(lang: str) -> str:
++    return (_build_html()
++            .replace("LANG_PLACEHOLDER", _HTML_LANG.get(lang, lang))
++            .replace("STRINGS_PLACEHOLDER", _js(STRINGS[lang]))
++            .replace("TILES_PLACEHOLDER", _js(TILES))
++            .replace("GROUPS_PLACEHOLDER", _js(GROUPS))
++            .replace("FACTS_PLACEHOLDER", _js(FACTS)))
++
++
++def _gui():
++    import webview  # solo la ventana lo necesita
++    T = STRINGS[LANG]
++    html = _render_html(LANG)
++
++    # Mismo fix que las demás apps: sin esto GTK usa "python3" como app_id en Wayland y
++    # la window rule (class = "avalos-control") nunca matchea.
++    try:
++        from gi.repository import GLib
++        GLib.set_prgname("avalos-control")
++    except Exception:
++        pass
++
++    api = ControlAPI()
++    win = webview.create_window(
++        title            = T["title"],
++        html             = html,
++        js_api           = api,
++        width            = 880,
++        height           = 660,
++        min_size         = (620, 480),
++        resizable        = True,
++        background_color = "#1a1b26",
++    )
++    api.window = win
++    try:
++        webview.start(debug=False)
++    except Exception as e:  # noqa: BLE001
++        print(f"ERROR al iniciar pywebview: {e}", file=sys.stderr)
++        return 1
++    return 0
++
++
++def main(argv=None):
++    global LANG
++    ap = argparse.ArgumentParser(prog="avalos-control", description="AvalOS Control Center: system settings and AvalOS tools in one window.")
++    ap.add_argument("--json", action="store_true", help="print the system summary and available tools, then exit")
++    ap.add_argument("--lang", choices=_SUPPORTED, help="language of the window")
++    a = ap.parse_args(argv)
++    if a.lang:
++        LANG = a.lang
++    if a.json:
++        print(json.dumps({"info": system_info(), "available": available_tiles()}, ensure_ascii=False, indent=2))
++        return 0
++    if not _has_display():
++        print("avalos-control: no graphical session found (WAYLAND_DISPLAY/DISPLAY)", file=sys.stderr)
++        return 1
++    return _gui()
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/avalos-settings b/scripts/avalos-settings
+index ba044ab..d1394d6 100644
+--- a/scripts/avalos-settings
++++ b/scripts/avalos-settings
+@@ -29,6 +29,7 @@ esac
+ case "$LANG_CODE" in
+   es)
+     T_TITLE="  Configuración AvalOS"
++    T_CONTROL=" Centro de control  Todo en una ventana"
+     T_APPEARANCE=" Apariencia  GTK · Íconos · Cursor · Fuentes"
+     T_DISPLAY=" Pantallas  Resolución · Disposición"
+     T_AUDIO=" Audio  Volumen · Dispositivos de sonido"
+@@ -45,6 +46,7 @@ case "$LANG_CODE" in
+     ;;
+   zh)
+     T_TITLE="  AvalOS 设置"
++    T_CONTROL=" 控制中心  所有设置集中在一个窗口"
+     T_APPEARANCE=" 外观  GTK · 图标 · 光标 · 字体"
+     T_DISPLAY=" 显示器  分辨率 · 布局"
+     T_AUDIO=" 音频  音量 · 声音设备"
+@@ -61,6 +63,7 @@ case "$LANG_CODE" in
+     ;;
+   ja)
+     T_TITLE="  AvalOS 設定"
++    T_CONTROL=" コントロールセンター  すべての設定をひとつの画面で"
+     T_APPEARANCE=" 外観  GTK・アイコン・カーソル・フォント"
+     T_DISPLAY=" ディスプレイ  解像度・レイアウト"
+     T_AUDIO=" オーディオ  音量・サウンドデバイス"
+@@ -77,6 +80,7 @@ case "$LANG_CODE" in
+     ;;
+   *)  # English (default)
+     T_TITLE="  AvalOS Settings"
++    T_CONTROL=" Control Center  Everything in one window"
+     T_APPEARANCE=" Appearance  GTK · Icons · Cursor · Fonts"
+     T_DISPLAY=" Displays  Resolution · Layout"
+     T_AUDIO=" Audio  Volume · Sound devices"
+@@ -108,6 +112,7 @@ _run() {
+ 
+ # ── Menú principal ────────────────────────────────────────────────────────
+ chosen=$(printf '%s\n' \
++    "$T_CONTROL"    \
+     "$T_APPEARANCE" \
+     "$T_DISPLAY"    \
+     "$T_AUDIO"      \
+@@ -124,12 +129,16 @@ chosen=$(printf '%s\n' \
+          -i \
+          -no-custom \
+          -p "$T_TITLE" \
+-         -theme-str 'window {width: 480px;} listview {lines: 12;}')
++         -theme-str 'window {width: 480px;} listview {lines: 13;}')
+ 
+ [[ -z "$chosen" ]] && exit 0
+ 
+ # ── Acciones por sección ──────────────────────────────────────────────────
+-if   [[ "$chosen" == "$T_APPEARANCE" ]]; then
++if   [[ "$chosen" == "$T_CONTROL" ]]; then
++    # avalos-control: centro de control gráfico (llega con la próxima sync/ISO en sistemas viejos).
++    _run avalos-control
++
++elif [[ "$chosen" == "$T_APPEARANCE" ]]; then
+     _run nwg-look
+ 
+ elif [[ "$chosen" == "$T_DISPLAY" ]]; then
+diff --git a/scripts/avalos-update-helper b/scripts/avalos-update-helper
+index 957da47..7480242 100644
+--- a/scripts/avalos-update-helper
++++ b/scripts/avalos-update-helper
+@@ -640,6 +640,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+         ("scripts/avalos-restore", "/usr/local/bin/avalos-restore", 0o755),
+         ("scripts/avalos-doctor", "/usr/local/bin/avalos-doctor", 0o755),
+         ("scripts/avalos-welcome", "/usr/local/bin/avalos-welcome", 0o755),
++        ("scripts/avalos-control", "/usr/local/bin/avalos-control", 0o755),
+         ("configs/avalos-store-catalog.json", "/usr/local/bin/avalos-store-catalog.json", 0o644),
+         ("configs/avalos-settings.desktop", "/usr/share/applications/avalos-settings.desktop", 0o644),
+         ("configs/avalos-store.desktop", "/usr/share/applications/avalos-store.desktop", 0o644),
+@@ -654,6 +655,8 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+         ("configs/avalos-doctor.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-doctor.svg", 0o644),
+         ("configs/avalos-welcome.desktop", "/usr/share/applications/avalos-welcome.desktop", 0o644),
+         ("configs/avalos-welcome.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-welcome.svg", 0o644),
++        ("configs/avalos-control.desktop", "/usr/share/applications/avalos-control.desktop", 0o644),
++        ("configs/avalos-control.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-control.svg", 0o644),
+         ("configs/hyprland/hyprland_conf_lua.template", "/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template", 0o644),
+         ("configs/hyprland/hyprpaper.conf", "/usr/share/avalos/configs/hyprland/hyprpaper.conf", 0o644),
+         ("configs/hyprland/hypridle.conf", "/usr/share/avalos/configs/hyprland/hypridle.conf", 0o644),
+diff --git a/scripts/avalos-welcome b/scripts/avalos-welcome
+index 8cf46b4..5f543fa 100755
+--- a/scripts/avalos-welcome
++++ b/scripts/avalos-welcome
+@@ -81,6 +81,7 @@ SHORTCUTS = [
+     (("Super", "V"), "k-clip"),
+     (("Super", "Alt", "S"), "k-store"),
+     (("Super", "Alt", "U"), "k-update"),
++    (("Super", "Alt", "C"), "k-control"),
+     (("Super", "Ctrl", "S"), "k-settings"),
+     (("Super", "Ctrl", "W"), "k-wall"),
+     (("Super", "Shift", "E"), "k-power"),
+@@ -115,6 +116,7 @@ STRINGS = {
+         "k-clip": "Clipboard history",
+         "k-store": "AvalOS store",
+         "k-update": "Updates",
++        "k-control": "Control center",
+         "k-settings": "AvalOS settings",
+         "k-wall": "Wallpaper",
+         "k-power": "Power menu",
+@@ -152,6 +154,7 @@ STRINGS = {
+         "k-clip": "Historial del portapapeles",
+         "k-store": "Tienda de AvalOS",
+         "k-update": "Actualizaciones",
++        "k-control": "Centro de control",
+         "k-settings": "Configuración de AvalOS",
+         "k-wall": "Fondo de pantalla",
+         "k-power": "Menú de energía",
+@@ -189,6 +192,7 @@ STRINGS = {
+         "k-clip": "剪贴板历史",
+         "k-store": "AvalOS 商店",
+         "k-update": "系统更新",
++        "k-control": "控制中心",
+         "k-settings": "AvalOS 设置",
+         "k-wall": "壁纸",
+         "k-power": "电源菜单",
+@@ -226,6 +230,7 @@ STRINGS = {
+         "k-clip": "クリップボード履歴",
+         "k-store": "AvalOS ストア",
+         "k-update": "アップデート",
++        "k-control": "コントロールセンター",
+         "k-settings": "AvalOS 設定",
+         "k-wall": "壁紙",
+         "k-power": "電源メニュー",
+diff --git a/scripts/avalos_installer/system/optimize.py b/scripts/avalos_installer/system/optimize.py
+index ab17a6c..f852729 100644
+--- a/scripts/avalos_installer/system/optimize.py
++++ b/scripts/avalos_installer/system/optimize.py
+@@ -103,7 +103,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
+ 
+     session.log(session.t("log-installing-scripts"), "info")
+     _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
+-                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome")
++                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control")
+     for _script_name in _avalos_scripts:
+         _content = read_config(f"scripts/{_script_name}")
+         if _content:
+@@ -239,6 +239,14 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
+     else:
+         session.log(session.t("log-welcome-desktop-missing"), "warn")
+ 
++    # avalos-control: centro de control (solo abre otras apps y lee datos; sin polkit).
++    _content = read_config("avalos-control.desktop")
++    if _content:
++        (_apps_dir / "avalos-control.desktop").write_text(_content, encoding="utf-8")
++        session.log(session.t("log-control-desktop-installed"), "ok")
++    else:
++        session.log(session.t("log-control-desktop-missing"), "warn")
++
+     _content = read_config("avalos-restore.svg")
+     if _content:
+         (_icon_dir / "avalos-restore.svg").write_text(_content, encoding="utf-8")
+@@ -260,6 +268,13 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
+     else:
+         session.log(session.t("log-welcome-icon-missing"), "warn")
+ 
++    _content = read_config("avalos-control.svg")
++    if _content:
++        (_icon_dir / "avalos-control.svg").write_text(_content, encoding="utf-8")
++        session.log(session.t("log-control-icon-installed"), "ok")
++    else:
++        session.log(session.t("log-control-icon-missing"), "warn")
++
+     (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
+         datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+         encoding="utf-8"
+diff --git a/scripts/gen-sync-manifest.py b/scripts/gen-sync-manifest.py
+index 34fbbde..83b7173 100755
+--- a/scripts/gen-sync-manifest.py
++++ b/scripts/gen-sync-manifest.py
+@@ -60,6 +60,7 @@ RUTAS = [
+     "scripts/avalos-restore",
+     "scripts/avalos-doctor",
+     "scripts/avalos-welcome",
++    "scripts/avalos-control",
+     "configs/avalos-store-catalog.json",
+     "configs/avalos-settings.desktop",
+     "configs/avalos-store.desktop",
+@@ -74,6 +75,8 @@ RUTAS = [
+     "configs/avalos-doctor.svg",
+     "configs/avalos-welcome.desktop",
+     "configs/avalos-welcome.svg",
++    "configs/avalos-control.desktop",
++    "configs/avalos-control.svg",
+     "configs/hyprland/hyprland_conf_lua.template",
+     "configs/hyprland/hyprpaper.conf",
+     "configs/hyprland/hypridle.conf",
+diff --git a/scripts/skill_instalar_usb.py b/scripts/skill_instalar_usb.py
+index 27a6781..cd95b5a 100644
+--- a/scripts/skill_instalar_usb.py
++++ b/scripts/skill_instalar_usb.py
+@@ -3057,7 +3057,7 @@ class VentanaInstalador :
+         self ._log (self ._t ("log-gpu-env-installed"),"ok")
+ 
+         self ._log (self ._t ("log-installing-scripts"),"info")
+-        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about","avalos-update","avalos-update-helper","avalos-store","avalos-restore","avalos-doctor","avalos-welcome"):
++        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about","avalos-update","avalos-update-helper","avalos-store","avalos-restore","avalos-doctor","avalos-welcome","avalos-control"):
+             _contenido =_leer_config (f"scripts/{_script_name }")
+             if _contenido :
+                 _script_path =_bin_dir /_script_name
+@@ -3126,6 +3126,14 @@ class VentanaInstalador :
+         else :
+             self ._log (self ._t ("log-welcome-desktop-missing"),"warn")
+ 
++        # avalos-control: mismo caso, ver optimize.py del instalador modular.
++        _contenido =_leer_config ("avalos-control.desktop")
++        if _contenido :
++            (_apps_dir /"avalos-control.desktop").write_text (_contenido ,encoding ="utf-8")
++            self ._log (self ._t ("log-control-desktop-installed"),"ok")
++        else :
++            self ._log (self ._t ("log-control-desktop-missing"),"warn")
++
+         # avalos-update necesita pkexec para elevar avalos-update-helper (ver
+         # avalos-update.policy) — polkitd + hyprpolkitagent ya corren en el
+         # sistema instalado (servicios habilitados / exec-once de Hyprland),
+@@ -3204,6 +3212,13 @@ class VentanaInstalador :
+         else :
+             self ._log (self ._t ("log-welcome-icon-missing"),"warn")
+ 
++        _contenido =_leer_config ("avalos-control.svg")
++        if _contenido :
++            (_icon_dir /"avalos-control.svg").write_text (_contenido ,encoding ="utf-8")
++            self ._log (self ._t ("log-control-icon-installed"),"ok")
++        else :
++            self ._log (self ._t ("log-control-icon-missing"),"warn")
++
+         (MOUNT_ROOT /"etc"/"avalos-install-date").write_text (
+         datetime .datetime .now ().strftime ("%Y-%m-%d %H:%M"),
+         encoding ="utf-8"
+diff --git a/scripts/translations.py b/scripts/translations.py
+index 4430738..d283fc4 100644
+--- a/scripts/translations.py
++++ b/scripts/translations.py
+@@ -487,6 +487,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-welcome-desktop-missing": "avalos-welcome.desktop not found — AvalOS Welcome will not appear in the app launcher",
+         "log-welcome-icon-installed": "avalos-welcome icon installed",
+         "log-welcome-icon-missing": "avalos-welcome.svg not found — the app will show a generic icon",
++        "log-control-desktop-installed": "avalos-control installed to desktop",
++        "log-control-desktop-missing": "avalos-control.desktop not found — AvalOS Control Center will not appear in the app launcher",
++        "log-control-icon-installed": "avalos-control icon installed",
++        "log-control-icon-missing": "avalos-control.svg not found — the app will show a generic icon",
+         "log-snapper-config-created": "Snapper configuration created",
+         "log-snapper-create-config-fail": "Snapper config creation failed (exit {rc}): {out}",
+         "log-snapper-skipped-continuing": "Continuing without snapshot support — the rest of the install is unaffected",
+@@ -1033,6 +1037,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-welcome-desktop-missing": "avalos-welcome.desktop no encontrado — Bienvenida de AvalOS no aparecerá en el lanzador de apps",
+         "log-welcome-icon-installed": "ícono de avalos-welcome instalado",
+         "log-welcome-icon-missing": "avalos-welcome.svg no encontrado — la app mostrará un ícono genérico",
++        "log-control-desktop-installed": "avalos-control instalado en el escritorio",
++        "log-control-desktop-missing": "avalos-control.desktop no encontrado — el Centro de control de AvalOS no aparecerá en el lanzador de apps",
++        "log-control-icon-installed": "ícono de avalos-control instalado",
++        "log-control-icon-missing": "avalos-control.svg no encontrado — la app mostrará un ícono genérico",
+         "log-snapper-config-created": "Configuración de Snapper creada",
+         "log-snapper-create-config-fail": "Creación de config de Snapper falló (código {rc}): {out}",
+         "log-snapper-skipped-continuing": "Continuando sin soporte de snapshots — el resto de la instalación no se ve afectado",
+@@ -1578,6 +1586,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-welcome-desktop-missing": "未找到 avalos-welcome.desktop — AvalOS 欢迎不会出现在应用启动器中",
+         "log-welcome-icon-installed": "已安装 avalos-welcome 图标",
+         "log-welcome-icon-missing": "未找到 avalos-welcome.svg — 应用将显示通用图标",
++        "log-control-desktop-installed": "avalos-control 已安装到桌面",
++        "log-control-desktop-missing": "未找到 avalos-control.desktop — AvalOS 控制中心不会出现在应用启动器中",
++        "log-control-icon-installed": "已安装 avalos-control 图标",
++        "log-control-icon-missing": "未找到 avalos-control.svg — 应用将显示通用图标",
+         "log-snapper-config-created": "Snapper 配置已创建",
+         "log-snapper-create-config-fail": "Snapper 配置创建失败（退出码 {rc}）：{out}",
+         "log-snapper-skipped-continuing": "跳过快照支持，继续安装 — 其余安装不受影响",
+@@ -2132,6 +2144,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-welcome-desktop-missing": "avalos-welcome.desktop が見つかりません — AvalOS ようこそ はアプリランチャーに表示されません",
+         "log-welcome-icon-installed": "avalos-welcome のアイコンをインストールしました",
+         "log-welcome-icon-missing": "avalos-welcome.svg が見つかりません — 汎用アイコンで表示されます",
++        "log-control-desktop-installed": "avalos-control をデスクトップにインストールしました",
++        "log-control-desktop-missing": "avalos-control.desktop が見つかりません — AvalOS コントロールセンターはアプリランチャーに表示されません",
++        "log-control-icon-installed": "avalos-control のアイコンをインストールしました",
++        "log-control-icon-missing": "avalos-control.svg が見つかりません — 汎用アイコンで表示されます",
+         "log-snapper-config-created": "Snapper の設定を作成しました",
+         "log-snapper-create-config-fail": "Snapper の設定作成に失敗しました（終了コード {rc}）：{out}",
+         "log-snapper-skipped-continuing": "スナップショット機能なしで続行します — 残りのインストールには影響しません",
+diff --git a/scripts/validate_app_consistency.py b/scripts/validate_app_consistency.py
+index 12d1277..cd02728 100755
+--- a/scripts/validate_app_consistency.py
++++ b/scripts/validate_app_consistency.py
+@@ -47,7 +47,13 @@ LIVE = ROOT / "configs" / "hyprland" / "hyprland.lua"
+ TEMPLATE = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
+ CATALOG = ROOT / "configs" / "avalos-store-catalog.json"
+ MODS = {"SUPER", "SHIFT", "CTRL", "ALT"}
+-NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome"}
++NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control"}
++# Herramientas que abre el Centro de control y que NO son de AvalOS: comando -> paquete que las instala.
++CONTROL_TOOL_PACKAGES = {
++    "nwg-look": "nwg-look", "nwg-displays": "nwg-displays", "pavucontrol": "pavucontrol",
++    "nm-connection-editor": "network-manager-applet", "blueman-manager": "blueman",
++    "thunar": "thunar", "kitty": "kitty",
++}
+ FLAG_WORDS = ("long_press", "release", "repeating", "locked", "mouse", "click", "drag", "non_consuming", "transparent", "ignore_mods")
+ 
+ fails: list[str] = []
+@@ -262,6 +268,78 @@ def check_welcome_shortcuts() -> None:
+         ok(f"welcome: {checked} atajos mostrados existen en {rel(TEMPLATE)}")
+ 
+ 
++# ── 2c) lanzadores del Centro de control ─────────────────────────────────────────
++def check_control_tiles() -> None:
++    """Cada lanzador de TILES (scripts/avalos-control) apunta a algo que existe: una app de AvalOS
++    del repo (con su .desktop si hace falta) o una herramienta cuyo paquete instala el instalador;
++    sin ids repetidos, en un grupo conocido y con nombre y descripción en los 4 idiomas."""
++    script = ROOT / "scripts" / "avalos-control"
++    if not script.is_file():
++        return
++    text = script.read_text(encoding="utf-8")
++
++    # avalos-control es un archivo Python válido: se leen sus constantes con ast, sin regex.
++    try:
++        tree = ast.parse(text)
++    except SyntaxError as e:
++        bad("control: lanzadores", f"scripts/avalos-control no compila: {e}")
++        return
++
++    def literal(name: str):
++        for node in tree.body:
++            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
++                try:
++                    return ast.literal_eval(node.value)
++                except ValueError:
++                    return None
++        return None
++
++    tiles, groups, strings = literal("TILES"), literal("GROUPS"), literal("STRINGS")
++    if not tiles or not groups or not isinstance(strings, dict):
++        bad("control: lanzadores", "no se pudieron leer TILES/GROUPS/STRINGS de scripts/avalos-control (tienen que ser literales de Python)")
++        return
++    pacstrap = (ROOT / "scripts/avalos_installer/system/pacstrap.py").read_text(encoding="utf-8")
++    legacy = (ROOT / "scripts/skill_instalar_usb.py").read_text(encoding="utf-8")
++    errs, seen = [], set()
++    for group, tid, argv, _icon in tiles:
++        if tid in seen:
++            errs.append(f"{tid}: id repetido")
++        seen.add(tid)
++        if group not in groups:
++            errs.append(f"{tid}: el grupo '{group}' no está en GROUPS")
++        cmd = argv[0]
++        if cmd.startswith("avalos-"):
++            if not (ROOT / "scripts" / cmd).is_file():
++                errs.append(f"{tid}: no existe scripts/{cmd}")
++            elif cmd in NEEDS_DESKTOP and not (ROOT / "configs" / f"{cmd}.desktop").is_file():
++                errs.append(f"{tid}: falta configs/{cmd}.desktop")
++        else:
++            pkg = CONTROL_TOOL_PACKAGES.get(cmd)
++            if not pkg:
++                errs.append(f"{tid}: '{cmd}' no está en CONTROL_TOOL_PACKAGES (¿qué paquete lo instala?)")
++            else:
++                for label, src in (("pacstrap.py", pacstrap), ("el instalador legado", legacy)):
++                    if f'"{pkg}"' not in src:
++                        errs.append(f"{tid}: el paquete {pkg} (de {cmd}) no está en la lista de {label}")
++        for lang, table in strings.items():
++            for key in (f"t-{tid}", f"d-{tid}"):
++                if not table.get(key):
++                    errs.append(f"{tid}: falta '{key}' en '{lang}'")
++    for lang, table in strings.items():
++        for g in groups:
++            if not table.get(f"grp-{g}"):
++                errs.append(f"falta 'grp-{g}' en '{lang}'")
++    keysets = {lang: set(table) for lang, table in strings.items()}
++    base = next(iter(keysets.values()))
++    for lang, keys in keysets.items():
++        if keys != base:
++            errs.append(f"'{lang}' no tiene las mismas claves que los demás idiomas: {sorted(keys ^ base)}")
++    if errs:
++        bad("control: lanzadores", "\n".join(errs))
++    else:
++        ok(f"control: {len(tiles)} lanzadores válidos, textos en {len(strings)} idiomas")
++
++
+ # ── 3) catálogo de la Store ──────────────────────────────────────────────────────
+ def check_catalog() -> None:
+     if not CATALOG.exists():
+@@ -304,7 +382,7 @@ def check_catalog() -> None:
+ 
+ 
+ def main() -> int:
+-    for fn in (check_binds, check_apps, check_welcome_shortcuts, check_catalog):
++    for fn in (check_binds, check_apps, check_welcome_shortcuts, check_control_tiles, check_catalog):
+         fn()
+     print(f"\n{len(fails)} con error · {len(warns)} avisos")
+     if fails:
+diff --git a/tests/js/control_center_ui.js b/tests/js/control_center_ui.js
+new file mode 100644
+index 0000000..359c8b3
+--- /dev/null
++++ b/tests/js/control_center_ui.js
+@@ -0,0 +1,110 @@
++// Prueba de humo del front-end de avalos-control con jsdom (sin navegador).
++//   node control_center_ui.js <pagina.html> <idioma>      (jsdom en NODE_PATH)
++// Imprime una línea "ok: ..." por comprobación y sale con 1 en la primera que falle.
++const fs = require('fs');
++const { JSDOM } = require('jsdom');
++
++const [, , file, lang] = process.argv;
++const html = fs.readFileSync(file, 'utf8');
++const STR = JSON.parse(/const S = (\{.*?\});\nconst TILES/s.exec(html)[1]);
++
++const calls = [];
++const state = { avail: {}, health: { state: 'error' }, info: { os: 'AvalOS', kernel: '6.x', cpu: 'CPU', memory: '1 / 2 GiB', disk: '3 / 4 GiB (75%)', uptime: '5m' }, opened: true };
++const errors = [];
++
++const dom = new JSDOM(html, {
++  runScripts: 'dangerously', pretendToBeVisual: true,
++  beforeParse(window) {
++    window.addEventListener('error', (e) => errors.push(String(e.error || e.message)));
++    window.pywebview = { api: {
++      info: async () => state.info,
++      available: async () => state.avail,
++      open_tile: async (id) => { calls.push(['open_tile', id]); return state.opened; },
++      health: async () => { calls.push(['health']); return state.health; },
++      close: async () => { calls.push(['close']); },
++    } };
++  },
++});
++const { window } = dom;
++const doc = window.document;
++const tick = () => new Promise((r) => setTimeout(r, 20));
++const q = (sel) => doc.querySelector(sel);
++const qa = (sel) => Array.from(doc.querySelectorAll(sel));
++let n = 0;
++function check(cond, what) { n++; if (!cond) { console.log('FALLA: ' + what); process.exit(1); } console.log('ok: ' + what); }
++const key = (target, k) => target.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
++const type = (text) => { const s = q('#search'); s.value = text; s.dispatchEvent(new window.Event('input', { bubbles: true })); };
++
++(async () => {
++  check(doc.documentElement.lang === (lang === 'zh' ? 'zh-CN' : lang), 'lang del documento');
++  check(q('#title').textContent === STR.title, 'título');
++  check(q('.accent') === null || q('.accent').textContent === 'AvalOS', 'AvalOS con degradado en el título');
++  check(qa('.tile').length === 14, '14 lanzadores dibujados');
++  check(qa('#groups h2').length === 5, '5 grupos');
++  check(qa('.fact').length === 6 && qa('.fact .v').every((v) => v.textContent === '—'), 'resumen con «—» antes de cargar');
++
++  // la ventana ya dibujada: datos reales y lanzadores no instalados
++  state.avail = { doctor: false, nm: true };
++  window.dispatchEvent(new window.Event('pywebviewready'));
++  await tick();
++  check(qa('.fact .v').map((v) => v.textContent).join('|') === 'AvalOS|6.x|CPU|1 / 2 GiB|3 / 4 GiB (75%)|5m', 'resumen del equipo cargado');
++  const doctor = q('[data-tile="doctor"]');
++  check(doctor.disabled && doctor.querySelector('.d').textContent === STR.unavailable, 'lanzador no instalado: desactivado y con aviso');
++  check(!q('[data-tile="update"]').disabled, 'los demás siguen activos');
++
++  // clic
++  q('[data-tile="update"]').click(); await tick();
++  check(JSON.stringify(calls.at(-1)) === '["open_tile","update"]', 'clic abre el lanzador correcto');
++  state.opened = false; q('[data-tile="store"]').click(); await tick();
++  check(!q('#toast').classList.contains('hidden') && q('#toast').textContent === STR.unavailable, 'si no se puede abrir: aviso');
++  state.opened = true;
++
++  // búsqueda
++  type('wi-fi');
++  check(qa('.tile').length === 1 && q('.tile').dataset.tile === 'network', 'buscar «wi-fi» deja solo Red');
++  check(q('#overview').classList.contains('hidden'), 'al buscar se oculta el resumen');
++  check(qa('#groups h2').length === 1, 'al buscar solo queda el grupo con resultados');
++  type('zzzz-nada');
++  check(qa('.tile').length === 0 && !q('#empty').classList.contains('hidden') && q('#empty').textContent.includes('zzzz-nada'), 'sin resultados: mensaje con lo buscado');
++  type('<img src=x onerror=alert(1)>');
++  check(qa('img').length === 0 && q('#empty').textContent.includes('<img'), 'lo buscado se muestra como texto, nunca como HTML');
++  type('');
++  check(qa('.tile').length === 14 && !q('#overview').classList.contains('hidden'), 'vaciar la búsqueda lo restaura todo');
++
++  // Enter abre el primer resultado activo (el Doctor está desactivado, así que no cuenta)
++  type('health'); calls.length = 0;
++  key(q('#search'), 'Enter'); await tick();
++  const first = calls.at(-1);
++  check(!first || first[1] !== 'doctor', 'Enter no abre un lanzador desactivado');
++  type('wallpaper'); calls.length = 0; key(q('#search'), 'Enter'); await tick();
++  check(JSON.stringify(calls.at(-1)) === '["open_tile","wallpaper"]', 'Enter abre el primer resultado activo');
++  type('');
++
++  // teclado
++  doc.activeElement.blur && doc.activeElement.blur();
++  key(doc, '/'); check(doc.activeElement === q('#search'), '«/» enfoca la búsqueda');
++  type('red'); calls.length = 0;
++  key(doc, 'Escape'); check(q('#search').value === '' && calls.length === 0, 'Escape con búsqueda: la borra y no cierra');
++  key(doc, 'Escape'); await tick(); check(JSON.stringify(calls.at(-1)) === '["close"]', 'Escape sin búsqueda: cierra la ventana');
++
++  // salud
++  state.health = { state: 'done', ok: 12, warn: 1, fail: 1, issues: [{ title: '<b>Disco</b> casi lleno', status: 'fail' }, { title: 'Mirrors lentos', status: 'warn' }] };
++  q('#health-btn').click(); check(q('#health-btn').disabled && q('#health-btn').textContent === STR['health-running'], 'salud: botón en «Revisando…»');
++  await tick();
++  const sum = STR['health-summary'].replace('{ok}', 12).replace('{warn}', 1).replace('{fail}', 1);
++  check(q('#health-res .sum').textContent === sum, 'salud: resumen con los conteos');
++  check(qa('#health-res li').length === 2 && qa('#health-res li .dot.fail').length === 1 && qa('#health-res b').length === 1, 'salud: problemas listados, su HTML no se interpreta');
++  check(q('#health-btn').textContent === STR['health-again'] && !q('#health-btn').disabled, 'salud: botón pasa a «Revisar de nuevo»');
++  calls.length = 0; qa('#health-res .btn')[0].click(); await tick();
++  check(JSON.stringify(calls.at(-1)) === '["open_tile","doctor"]', 'salud: abre el Doctor');
++  state.health = { state: 'done', ok: 20, warn: 0, fail: 0, issues: [] };
++  q('#health-btn').click(); await tick();
++  check(q('#health-res .clean').textContent === STR['health-clean'] && qa('#health-res li').length === 0, 'salud limpia: mensaje y sin lista');
++  state.health = { state: 'error' }; q('#health-btn').click(); await tick();
++  check(q('#health-res').textContent === STR['health-err'] && !q('#health-btn').disabled, 'Doctor falla: aviso y el botón vuelve a estar activo');
++  state.health = { state: 'missing' }; q('#health-btn').click(); await tick();
++  check(q('#health-res').textContent === STR['health-na'] && q('#health-btn').disabled, 'Doctor no instalado: aviso y botón desactivado');
++  check(errors.length === 0, 'sin errores de JavaScript');
++  console.log('TODO OK (' + n + ' comprobaciones, ' + lang + ')');
++  process.exit(0);
++})().catch((e) => { console.log('EXCEPCIÓN: ' + (e && e.stack || e)); process.exit(1); });
+diff --git a/tests/test_control_center.py b/tests/test_control_center.py
+new file mode 100644
+index 0000000..9638cb1
+--- /dev/null
++++ b/tests/test_control_center.py
+@@ -0,0 +1,362 @@
++"""AvalOS Control Center (scripts/avalos-control).
++
++Un hub que solo abre otras apps y lee datos: lo que se vigila es que nunca pueda lanzar algo fuera
++de su lista cerrada, que los datos del equipo no revienten con archivos que faltan, que el resumen
++de salud se arme bien con lo que devuelve avalos-doctor (y se degrade con gracia si no hay Doctor, si
++falla o si se cuelga), que los textos existan en los 4 idiomas y que la app esté registrada en todos
++los sitios (ISO, instaladores, sync, atajo, menú de Settings, Welcome).
++"""
++import importlib.machinery
++import importlib.util
++import io
++import json
++import re
++import subprocess
++import sys
++import tempfile
++import unittest
++from contextlib import redirect_stdout
++from pathlib import Path
++from types import SimpleNamespace
++from unittest import mock
++
++ROOT = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(ROOT / "scripts"))
++
++import translations  # noqa: E402
++
++SCRIPT = ROOT / "scripts" / "avalos-control"
++LANGS = ("en", "es", "zh", "ja")
++
++
++def load():
++    loader = importlib.machinery.SourceFileLoader("avalos_control_under_test", str(SCRIPT))
++    spec = importlib.util.spec_from_loader(loader.name, loader)
++    module = importlib.util.module_from_spec(spec)
++    loader.exec_module(module)
++    return module
++
++
++ctl = load()
++
++
++class Texts(unittest.TestCase):
++    def test_every_language_has_exactly_the_same_keys(self):
++        base = set(ctl.STRINGS["en"])
++        for lang in LANGS:
++            self.assertEqual(set(ctl.STRINGS[lang]), base, f"{lang}: {sorted(set(ctl.STRINGS[lang]) ^ base)}")
++
++    def test_no_text_is_empty_and_the_title_keeps_the_brand_word(self):
++        for lang in LANGS:
++            for key, value in ctl.STRINGS[lang].items():
++                self.assertTrue(value.strip(), f"{lang}/{key} vacío")
++            self.assertIn("AvalOS", ctl.STRINGS[lang]["title"], "el título lleva el degradado en «AvalOS»")
++
++    def test_placeholders_survive_in_every_language(self):
++        needs = {"no-results": ("{q}",), "health-summary": ("{ok}", "{warn}", "{fail}")}
++        for lang in LANGS:
++            for key, marks in needs.items():
++                for mark in marks:
++                    self.assertIn(mark, ctl.STRINGS[lang][key], f"{lang}/{key}")
++
++    def test_every_tile_group_and_fact_has_its_texts(self):
++        for lang in LANGS:
++            table = ctl.STRINGS[lang]
++            for _g, tid, _argv, _icon in ctl.TILES:
++                self.assertIn(f"t-{tid}", table, f"{lang}")
++                self.assertIn(f"d-{tid}", table, f"{lang}")
++            for g in ctl.GROUPS:
++                self.assertIn(f"grp-{g}", table)
++            for fact in ctl.FACTS:
++                self.assertIn(f"f-{fact}", table)
++
++
++class Tiles(unittest.TestCase):
++    def test_ids_are_unique_and_groups_known(self):
++        ids = [t[1] for t in ctl.TILES]
++        self.assertEqual(len(ids), len(set(ids)))
++        self.assertTrue(all(t[0] in ctl.GROUPS for t in ctl.TILES))
++
++    def test_every_command_is_a_fixed_tuple_of_strings(self):
++        for _g, _tid, argv, _icon in ctl.TILES:
++            self.assertIsInstance(argv, tuple)
++            self.assertTrue(argv and all(isinstance(a, str) and a for a in argv), argv)
++        self.assertEqual(set(ctl.TILE_ARGV), {t[1] for t in ctl.TILES})
++
++    def test_every_group_shows_something(self):
++        self.assertEqual({t[0] for t in ctl.TILES}, set(ctl.GROUPS))
++
++
++class OpeningApps(unittest.TestCase):
++    def setUp(self):
++        self.api = ctl.ControlAPI()
++
++    def test_an_unknown_or_malformed_id_never_launches_anything(self):
++        with mock.patch.object(ctl, "_spawn") as spawn, mock.patch.object(ctl.shutil, "which", return_value="/usr/bin/x"):
++            for bad in ("rm", "../etc/passwd", "update; rm -rf /", "", None, 7, ["update"], {"id": "update"}):
++                self.assertFalse(self.api.open_tile(bad), repr(bad))
++        spawn.assert_not_called()
++
++    def test_a_known_tile_launches_exactly_its_fixed_command(self):
++        with mock.patch.object(ctl, "_spawn", return_value=True) as spawn, mock.patch.object(ctl.shutil, "which", return_value="/usr/bin/x"):
++            self.assertTrue(self.api.open_tile("update"))
++            self.assertTrue(self.api.open_tile("account"))
++        self.assertEqual(spawn.call_args_list[0].args[0], ["avalos-update"])
++        self.assertEqual(spawn.call_args_list[1].args[0], ["kitty", "--title", "AvalOS — passwd", "--", "passwd"])
++
++    def test_a_tool_that_is_not_installed_is_not_launched(self):
++        with mock.patch.object(ctl, "_spawn") as spawn, mock.patch.object(ctl.shutil, "which", return_value=None):
++            self.assertFalse(self.api.open_tile("doctor"))
++        spawn.assert_not_called()
++
++    def test_availability_looks_up_the_program_not_its_arguments(self):
++        looked = []
++        with mock.patch.object(ctl.shutil, "which", side_effect=lambda c: looked.append(c) or (c if c == "kitty" else None)):
++            avail = ctl.available_tiles()
++        self.assertTrue(avail["account"])
++        self.assertFalse(avail["update"])
++        self.assertNotIn("passwd", looked)
++        self.assertEqual(set(avail), set(ctl.TILE_ARGV))
++
++    def test_spawn_survives_a_missing_binary(self):
++        with mock.patch.object(ctl.subprocess, "Popen", side_effect=OSError("no existe")):
++            self.assertFalse(ctl._spawn(["nada"]))
++        with mock.patch.object(ctl.subprocess, "Popen") as popen:
++            self.assertTrue(ctl._spawn(["avalos-update"]))
++        self.assertTrue(popen.call_args.kwargs["start_new_session"], "la app no debe morir con la ventana")
++
++
++class SystemInfo(unittest.TestCase):
++    def fake_system(self, **files):
++        tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(tmp.cleanup)
++        proc = Path(tmp.name) / "proc"
++        proc.mkdir()
++        for name, text in files.items():
++            (proc / name).write_text(text, encoding="utf-8")
++        osr = Path(tmp.name) / "os-release"
++        patches = [mock.patch.object(ctl, "PROC", proc), mock.patch.object(ctl, "OS_RELEASE", osr)]
++        for p in patches:
++            p.start()
++            self.addCleanup(p.stop)
++        return osr
++
++    def test_reads_the_hardware_facts(self):
++        osr = self.fake_system(
++            cpuinfo="processor\t: 0\nmodel name\t: AMD  Ryzen 5   5600G\nmodel name\t: otra\n",
++            meminfo="MemTotal:       16384000 kB\nMemFree:  1000 kB\nMemAvailable:    12288000 kB\n",
++            uptime="11520.55 90000.1\n")
++        osr.write_text('NAME="AvalOS"\nPRETTY_NAME="AvalOS 1.2"\n', encoding="utf-8")
++        with mock.patch.object(ctl.platform, "release", return_value="7.2.11-avalos"), \
++                mock.patch.object(ctl.shutil, "disk_usage", return_value=SimpleNamespace(total=500 * 1024**3, used=125 * 1024**3, free=0)):
++            info = ctl.system_info()
++        self.assertEqual(info, {"os": "AvalOS 1.2", "kernel": "7.2.11-avalos", "cpu": "AMD Ryzen 5 5600G",
++                                "memory": "3.9 / 15.6 GiB", "disk": "125 / 500 GiB (25%)", "uptime": "3h 12m"})
++        self.assertEqual(tuple(info), ctl.FACTS)
++
++    def test_a_system_without_proc_files_still_answers(self):
++        self.fake_system()
++        with mock.patch.object(ctl.platform, "release", return_value=""), \
++                mock.patch.object(ctl.shutil, "disk_usage", side_effect=OSError("sin disco")):
++            info = ctl.system_info()
++        self.assertEqual(info["os"], "AvalOS")
++        self.assertEqual([info[k] for k in ("kernel", "cpu", "memory", "disk", "uptime")], ["—"] * 5)
++
++    def test_garbage_in_proc_files_does_not_raise(self):
++        self.fake_system(cpuinfo="\x00\x01 sin formato", meminfo="MemTotal: mucho kB\nMemAvailable: x\n", uptime="no es un número")
++        info = ctl.system_info()
++        self.assertEqual([info[k] for k in ("cpu", "memory", "uptime")], ["—"] * 3)
++
++    def test_uptime_format(self):
++        cases = {59: "0m", 180: "3m", 3600: "1h 0m", 11520: "3h 12m", 86400 + 3 * 3600 + 59: "1d 3h", 5 * 86400: "5d 0h"}
++        for seconds, text in cases.items():
++            self.fake_system(uptime=f"{seconds}.12 1.0\n")
++            self.assertEqual(ctl._uptime(), text, seconds)
++
++    def test_a_zero_sized_disk_does_not_divide_by_zero(self):
++        with mock.patch.object(ctl.shutil, "disk_usage", return_value=SimpleNamespace(total=0, used=0, free=0)):
++            self.assertEqual(ctl._disk(), "—")
++
++
++def doctor_json(**overrides):
++    data = {
++        "summary": {"fail": 1, "warn": 3, "info": 4, "skip": 2, "ok": 11},
++        "findings": [
++            {"id": "a", "status": "ok", "title": "Bien"},
++            {"id": "b", "status": "warn", "title": "Aviso 1"},
++            {"id": "c", "status": "fail", "title": "Problema"},
++            {"id": "d", "status": "info", "title": "Dato"},
++            {"id": "e", "status": "warn", "title": "Aviso 2"},
++        ],
++    }
++    data.update(overrides)
++    return json.dumps(data)
++
++
++class Health(unittest.TestCase):
++    def run_doctor(self, stdout="", returncode=0, side_effect=None, exe="/usr/bin/avalos-doctor"):
++        with mock.patch.object(ctl.shutil, "which", return_value=exe), \
++                mock.patch.object(ctl.subprocess, "run", side_effect=side_effect,
++                                  return_value=SimpleNamespace(stdout=stdout, returncode=returncode)) as run:
++            return ctl.health_summary(), run
++
++    def test_without_the_doctor_it_says_so(self):
++        result, run = self.run_doctor(exe=None)
++        self.assertEqual(result, {"state": "missing"})
++        run.assert_not_called()
++
++    def test_it_reduces_the_report_to_counts_and_the_worst_problems_first(self):
++        result, run = self.run_doctor(doctor_json())
++        self.assertEqual(result, {"state": "done", "ok": 11, "warn": 3, "fail": 1,
++                                  "issues": [{"title": "Problema", "status": "fail"},
++                                             {"title": "Aviso 1", "status": "warn"},
++                                             {"title": "Aviso 2", "status": "warn"}]})
++        cmd = run.call_args.args[0]
++        self.assertEqual(cmd[1:], ["--json", "--no-network", "--lang", ctl.LANG])
++        self.assertEqual(run.call_args.kwargs["timeout"], ctl.DOCTOR_TIMEOUT)
++
++    def test_at_most_five_issues_are_listed(self):
++        findings = [{"status": "warn", "title": f"w{i}"} for i in range(9)]
++        result, _ = self.run_doctor(doctor_json(findings=findings))
++        self.assertEqual(len(result["issues"]), ctl.MAX_ISSUES)
++
++    def test_a_report_with_problems_is_read_even_if_the_doctor_exits_non_zero(self):
++        result, _ = self.run_doctor(doctor_json(), returncode=1)
++        self.assertEqual(result["state"], "done")
++
++    def test_every_way_the_doctor_can_fail_becomes_a_plain_error(self):
++        for stdout, effect in (("", None), ("<traceback>", None), ("[]", None), ('{"findings": []}', None),
++                               ('{"summary": 5, "findings": []}', None), ('{"summary": {}, "findings": "x"}', None),
++                               ("", subprocess.TimeoutExpired("avalos-doctor", 90)), ("", OSError("sin permiso"))):
++            result, _ = self.run_doctor(stdout, side_effect=effect)
++            self.assertEqual(result, {"state": "error"}, f"{stdout!r} {effect!r}")
++
++    def test_malformed_findings_are_skipped_not_fatal(self):
++        findings = ["texto", None, {"status": "fail", "title": "Real"}, {"status": "fail"}]
++        result, _ = self.run_doctor(doctor_json(findings=findings))
++        self.assertEqual([i["title"] for i in result["issues"]], ["Real", ""])
++
++
++class Page(unittest.TestCase):
++    def test_every_placeholder_is_filled_in_every_language(self):
++        for lang in LANGS:
++            html = ctl._render_html(lang)
++            self.assertNotRegex(html, r"[A-Z]+_PLACEHOLDER", lang)
++            self.assertIn(f'<html lang="{"zh-CN" if lang == "zh" else lang}">', html)
++
++    def test_the_embedded_data_is_the_real_data(self):
++        html = ctl._render_html("es")
++        strings = json.loads(re.search(r"const S = (\{.*?\});\nconst TILES", html, re.S).group(1))
++        tiles = json.loads(re.search(r"const TILES = (\[.*?\]);\nconst GROUPS", html, re.S).group(1))
++        self.assertEqual(strings, ctl.STRINGS["es"])
++        self.assertEqual([t[1] for t in tiles], [t[1] for t in ctl.TILES])
++
++    def test_a_closing_script_tag_in_the_data_cannot_break_the_page(self):
++        with mock.patch.dict(ctl.STRINGS["en"], {"title": "x</script><script>alert(1)</script>"}):
++            html = ctl._render_html("en")
++        self.assertNotIn("</script><script>alert(1)", html)
++        self.assertEqual(html.count("</script>"), 1, "solo la etiqueta de cierre real; los datos llevan «<\\/»")
++
++    def test_the_window_class_matches_the_hyprland_rule(self):
++        src = SCRIPT.read_text(encoding="utf-8")
++        self.assertIn('set_prgname("avalos-control")', src)
++        for cfg in ("hyprland.lua", "hyprland_conf_lua.template"):
++            self.assertIn('class = "avalos-control"', (ROOT / "configs/hyprland" / cfg).read_text(encoding="utf-8"), cfg)
++
++
++class Language(unittest.TestCase):
++    def detect(self, file_text, env_lang):
++        with tempfile.TemporaryDirectory() as tmp:
++            f = Path(tmp) / "avalos-lang"
++            if file_text is not None:
++                f.write_text(file_text, encoding="utf-8")
++            with mock.patch.object(ctl, "_AVALOS_LANG_FILE", f), mock.patch.dict(ctl.os.environ, {"LANG": env_lang}):
++                return ctl._detectar_idioma()
++
++    def test_the_installer_choice_wins_over_the_regional_locale(self):
++        self.assertEqual(self.detect("ja\n", "es_MX.UTF-8"), "ja")
++
++    def test_without_a_valid_file_it_falls_back_to_the_locale_then_english(self):
++        self.assertEqual(self.detect(None, "es_SV.UTF-8"), "es")
++        self.assertEqual(self.detect("klingon", "zh_CN.UTF-8"), "zh")
++        self.assertEqual(self.detect(None, "pt_BR.UTF-8"), "en")
++
++
++class CommandLine(unittest.TestCase):
++    def test_json_prints_the_summary_and_the_available_tools(self):
++        out = io.StringIO()
++        with mock.patch.object(ctl, "system_info", return_value={"os": "AvalOS"}), \
++                mock.patch.object(ctl, "available_tiles", return_value={"update": True}), redirect_stdout(out):
++            self.assertEqual(ctl.main(["--json"]), 0)
++        self.assertEqual(json.loads(out.getvalue()), {"info": {"os": "AvalOS"}, "available": {"update": True}})
++
++    def test_without_a_graphical_session_it_exits_with_a_message(self):
++        with mock.patch.object(ctl, "_has_display", return_value=False), \
++                mock.patch.object(ctl, "_gui") as gui, mock.patch("sys.stderr", new=io.StringIO()) as err:
++            self.assertEqual(ctl.main([]), 1)
++        gui.assert_not_called()
++        self.assertIn("no graphical session", err.getvalue())
++
++
++class RegisteredEverywhere(unittest.TestCase):
++    """Los sitios que el validador no cubre (y los que sí, a modo de red doble)."""
++
++    def read(self, rel):
++        return (ROOT / rel).read_text(encoding="utf-8")
++
++    def test_it_is_in_the_sync_list_the_helper_and_the_iso(self):
++        for rel in ("scripts/gen-sync-manifest.py", "scripts/avalos-update-helper"):
++            text = self.read(rel)
++            for item in ("scripts/avalos-control", "configs/avalos-control.desktop", "configs/avalos-control.svg"):
++                self.assertIn(item, text, f"{rel} no lista {item}")
++        self.assertRegex(self.read(".github/workflows/build-iso.yml"), r"for _s in [a-z\- ]*avalos-control[a-z\- ]*; do")
++
++    def test_both_installers_copy_the_script_the_desktop_file_and_the_icon(self):
++        modular = self.read("scripts/avalos_installer/system/optimize.py")
++        legacy = self.read("scripts/skill_instalar_usb.py")
++        self.assertIn('"avalos-control")', modular)
++        self.assertIn('"avalos-control")', legacy)
++        for src in (modular, legacy):
++            for key in ("log-control-desktop-installed", "log-control-desktop-missing",
++                        "log-control-icon-installed", "log-control-icon-missing"):
++                self.assertIn(key, src)
++            # que de verdad se ESCRIBAN (no basta con nombrarlos): .desktop en el menú, ícono en hicolor
++            self.assertRegex(src, r'_apps_dir\s*/\s*"avalos-control\.desktop"\)\s*\.write_text\s*\(')
++            self.assertRegex(src, r'_icon_dir\s*/\s*"avalos-control\.svg"\)\s*\.write_text\s*\(')
++
++    def test_the_installer_log_messages_exist_in_the_four_languages(self):
++        for lang in LANGS:
++            table = translations.TRANSLATIONS[lang]
++            for key in ("log-control-desktop-installed", "log-control-desktop-missing",
++                        "log-control-icon-installed", "log-control-icon-missing"):
++                self.assertTrue(table.get(key), f"{lang}/{key}")
++
++    def test_the_shortcut_exists_and_welcome_shows_it(self):
++        for cfg in ("hyprland.lua", "hyprland_conf_lua.template"):
++            self.assertIn('hl.bind(mod .. " + ALT + C", hl.dsp.exec_cmd("avalos-control"))',
++                          self.read(f"configs/hyprland/{cfg}"), cfg)
++        self.assertIn('(("Super", "Alt", "C"), "k-control")', self.read("scripts/avalos-welcome"))
++
++    def test_the_settings_menu_opens_it_in_every_language(self):
++        src = self.read("scripts/avalos-settings")
++        self.assertEqual(len(re.findall(r'^\s+T_CONTROL="', src, re.M)), 4)
++        self.assertIn('"$T_CONTROL"', src)
++        self.assertIn("_run avalos-control", src)
++
++    def test_the_desktop_entry_and_icon_are_well_formed(self):
++        desktop = self.read("configs/avalos-control.desktop")
++        for line in ("Exec=avalos-control", "Icon=avalos-control", "StartupWMClass=avalos-control", "Type=Application"):
++            self.assertIn(line, desktop)
++        for loc in ("es", "zh_CN", "ja"):
++            self.assertIn(f"Name[{loc}]=", desktop)
++            self.assertIn(f"Comment[{loc}]=", desktop)
++        svg = self.read("configs/avalos-control.svg")
++        self.assertTrue(svg.lstrip().startswith("<svg") and svg.rstrip().endswith("</svg>"))
++        self.assertIn('viewBox="0 0 100 100"', svg)
++
++    def test_the_readme_lists_it(self):
++        self.assertRegex(self.read("README.md"), r"(?m)^\| \*\*AvalOS Control Center\*\* \|", "falta su fila en la tabla de herramientas")
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)
+diff --git a/tests/test_control_center_ui.py b/tests/test_control_center_ui.py
+new file mode 100644
+index 0000000..ae325b3
+--- /dev/null
++++ b/tests/test_control_center_ui.py
+@@ -0,0 +1,63 @@
++"""Front-end de avalos-control (la página que dibuja pywebview).
++
++Dos niveles: una comprobación de sintaxis del JavaScript que corre donde haya `node` (los runners de
++GitHub lo traen) y una prueba de humo con jsdom de 29 comprobaciones por idioma (tiles, búsqueda,
++teclado, estados de salud, escapado de HTML) que solo corre si jsdom está disponible. Para correrla
++en local:  cd /tmp && npm install jsdom && NODE_PATH=/tmp/node_modules python3 -m unittest tests.test_control_center_ui
++"""
++import importlib.machinery
++import importlib.util
++import os
++import re
++import shutil
++import subprocess
++import tempfile
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parent.parent
++NODE = shutil.which("node")
++UI_TEST = ROOT / "tests" / "js" / "control_center_ui.js"
++
++
++def render(lang):
++    loader = importlib.machinery.SourceFileLoader("avalos_control_ui", str(ROOT / "scripts" / "avalos-control"))
++    spec = importlib.util.spec_from_loader(loader.name, loader)
++    module = importlib.util.module_from_spec(spec)
++    loader.exec_module(module)
++    return module._render_html(lang)
++
++
++def jsdom_available():
++    if not NODE:
++        return False
++    res = subprocess.run([NODE, "-e", "require.resolve('jsdom')"], capture_output=True, env=os.environ)
++    return res.returncode == 0
++
++
++@unittest.skipUnless(NODE, "falta node")
++class JavaScriptSyntax(unittest.TestCase):
++    def test_the_page_script_parses_in_every_language(self):
++        for lang in ("en", "es", "zh", "ja"):
++            script = re.search(r"<script>(.*)</script>", render(lang), re.S).group(1)
++            with tempfile.TemporaryDirectory() as tmp:
++                path = Path(tmp) / "page.js"
++                path.write_text(script, encoding="utf-8")
++                res = subprocess.run([NODE, "--check", str(path)], capture_output=True, text=True)
++            self.assertEqual(res.returncode, 0, f"{lang}: {res.stderr}")
++
++
++@unittest.skipUnless(jsdom_available(), "falta jsdom (npm install jsdom; NODE_PATH)")
++class Smoke(unittest.TestCase):
++    def test_the_page_works_in_every_language(self):
++        for lang in ("en", "es", "zh", "ja"):
++            with tempfile.TemporaryDirectory() as tmp:
++                page = Path(tmp) / f"page-{lang}.html"
++                page.write_text(render(lang), encoding="utf-8")
++                res = subprocess.run([NODE, str(UI_TEST), str(page), lang], capture_output=True, text=True, timeout=120)
++            self.assertEqual(res.returncode, 0, f"{lang}:\n{res.stdout}\n{res.stderr}")
++            self.assertIn("TODO OK", res.stdout)
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)

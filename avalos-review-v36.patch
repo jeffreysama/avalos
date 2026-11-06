@@ -1,0 +1,2559 @@
+diff --git a/.github/workflows/build-iso.yml b/.github/workflows/build-iso.yml
+index c97fff1..a2c4845 100644
+--- a/.github/workflows/build-iso.yml
++++ b/.github/workflows/build-iso.yml
+@@ -167,7 +167,7 @@ jobs:
+           # Sin este paso, el instalador loguea "script missing" para los 6 y
+           # ninguno queda en /usr/local/bin del sistema instalado.
+           mkdir -p "$AIROOTFS/usr/share/avalos/configs/scripts"
+-          for _s in avalos-settings avalos-wallpaper avalos-about avalos-store avalos-update avalos-update-helper avalos-restore avalos-doctor avalos-welcome avalos-control; do
++          for _s in avalos-settings avalos-wallpaper avalos-about avalos-store avalos-update avalos-update-helper avalos-restore avalos-doctor avalos-welcome avalos-control avalos-gamecenter; do
+             if [[ -f "scripts/$_s" ]]; then
+               cp "scripts/$_s" "$AIROOTFS/usr/share/avalos/configs/scripts/$_s"
+             else
+diff --git a/README.md b/README.md
+index 56e522c..fc4afae 100644
+--- a/README.md
++++ b/README.md
+@@ -19,7 +19,7 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
+ - **Filesystem**: Btrfs with Snapper snapshots by default
+ - **Pre-configured Rice**: Beautiful and functional Hyprland + Waybar + Kitty + Rofi setup included
+ - **Extras**: ZRAM, BBR congestion control, carefully selected firmware (AMD/Intel only)
+-- **Built-in tools**: AvalOS Control Center, Welcome, Settings, Store, Update, Restore and Doctor (see [AvalOS Tools](#-avalos-tools))
++- **Built-in tools**: AvalOS Control Center, Game Center, Welcome, Settings, Store, Update, Restore and Doctor (see [AvalOS Tools](#-avalos-tools))
+ - **Languages**: the installer and the tools are available in English, Español, 中文简体 and 日本語
+ 
+ > **Note**: AvalOS currently supports **AMD and Intel** hardware only. NVIDIA is not supported, but could be possible (If you know how to install NVIDIA packages and all).
+@@ -80,6 +80,7 @@ AvalOS ships its own small apps, all available from the app launcher:
+ 
+ | Tool | What it does |
+ |------|--------------|
++| **AvalOS Game Center** | Launchers (Steam, Lutris, Heroic, Prism, Bottles), GameMode status, MangoHud profiles, copy-ready launch options and Proton versions (`Super + Alt + G`) |
+ | **AvalOS Control Center** | All your settings and the AvalOS tools in one window, with a system summary and an on-demand health check (`Super + Alt + C`) |
+ | **AvalOS Welcome** | First steps and key shortcuts, shown on your first login |
+ | **AvalOS Settings** | Control center for your installed system |
+diff --git a/configs/avalos-gamecenter.desktop b/configs/avalos-gamecenter.desktop
+new file mode 100644
+index 0000000..567171d
+--- /dev/null
++++ b/configs/avalos-gamecenter.desktop
+@@ -0,0 +1,19 @@
++[Desktop Entry]
++Type=Application
++Version=1.0
++Name=AvalOS Game Center
++Name[es]=Game Center de AvalOS
++Name[zh_CN]=AvalOS 游戏中心
++Name[ja]=AvalOS ゲームセンター
++Comment=Launchers, GameMode, MangoHud and launch options
++Comment[es]=Lanzadores, GameMode, MangoHud y opciones de lanzamiento
++Comment[zh_CN]=启动器、GameMode、MangoHud 和启动选项
++Comment[ja]=ランチャー、GameMode、MangoHud、起動オプション
++Exec=avalos-gamecenter
++Icon=avalos-gamecenter
++Terminal=false
++NoDisplay=false
++StartupNotify=true
++StartupWMClass=avalos-gamecenter
++Categories=Game;Settings;
++Keywords=games;gaming;gamemode;mangohud;steam;lutris;proton;launchers;juegos;jugar;lanzadores;游戏;启动器;ゲーム;ランチャー;
+diff --git a/configs/avalos-gamecenter.svg b/configs/avalos-gamecenter.svg
+new file mode 100644
+index 0000000..11dcc9f
+--- /dev/null
++++ b/configs/avalos-gamecenter.svg
+@@ -0,0 +1,18 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
++  <defs>
++    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
++      <stop offset="0%" stop-color="#7aa2f7"/>
++      <stop offset="100%" stop-color="#bb9af7"/>
++    </linearGradient>
++  </defs>
++  <rect x="4" y="4" width="92" height="92" rx="22" fill="#1a1b26"/>
++  <rect x="4" y="4" width="92" height="92" rx="22" fill="url(#bg)" opacity="0.92"/>
++  <!-- mando de juego: cuerpo, cruceta y dos botones -->
++  <path d="M30 34 H70 C80 34 86 44 87 56 C88 66 84 72 78 72 C72 72 69 67 65 62 H35 C31 67 28 72 22 72 C16 72 12 66 13 56 C14 44 20 34 30 34 Z" fill="#1a1b26"/>
++  <g stroke="url(#bg)" stroke-width="5" stroke-linecap="round">
++    <line x1="30" y1="44" x2="30" y2="58"/>
++    <line x1="23" y1="51" x2="37" y2="51"/>
++  </g>
++  <circle cx="68" cy="46" r="4.2" fill="url(#bg)"/>
++  <circle cx="77" cy="55" r="4.2" fill="url(#bg)"/>
++</svg>
+diff --git a/configs/hyprland/hyprland.lua b/configs/hyprland/hyprland.lua
+index 8218b91..7d097fc 100644
+--- a/configs/hyprland/hyprland.lua
++++ b/configs/hyprland/hyprland.lua
+@@ -170,7 +170,7 @@ hl.bind(mod .. " + V",
+ hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
+ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ 
+--- SUPER + ALT + S / U / C. Hyprland compara el conjunto EXACTO de modificadores, así
++-- SUPER + ALT + S / U / C / G. Hyprland compara el conjunto EXACTO de modificadores, así
+ -- que SUPER+ALT+S no choca con SUPER+SHIFT+S (captura) ni con SUPER+CTRL+S
+ -- (avalos-settings, arriba).
+ -- NO usar "ALT_L" acá: en un bind, ALT_L es el nombre de una TECLA (sirve para
+@@ -181,6 +181,7 @@ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ hl.bind(mod .. " + ALT + S", hl.dsp.exec_cmd("avalos-store"))
+ hl.bind(mod .. " + ALT + U", hl.dsp.exec_cmd("avalos-update"))
+ hl.bind(mod .. " + ALT + C", hl.dsp.exec_cmd("avalos-control"))
++hl.bind(mod .. " + ALT + G", hl.dsp.exec_cmd("avalos-gamecenter"))
+ 
+ -- Gaming
+ hl.bind(mod .. " + S",        hl.dsp.exec_cmd("steam"))
+@@ -342,6 +343,12 @@ hl.window_rule({
+     center = true,
+     size   = { 880, 660 },
+ })
++hl.window_rule({
++    match  = { class = "avalos-gamecenter" },
++    float  = true,
++    center = true,
++    size   = { 940, 700 },
++})
+ hl.window_rule({
+     match  = { class = "avalos-store" },
+     float  = true,
+diff --git a/configs/hyprland/hyprland_conf_lua.template b/configs/hyprland/hyprland_conf_lua.template
+index 65f5ce8..0391c68 100644
+--- a/configs/hyprland/hyprland_conf_lua.template
++++ b/configs/hyprland/hyprland_conf_lua.template
+@@ -291,6 +291,12 @@ hl.window_rule({
+     center = true,
+     size   = { 880, 660 },
+ })
++hl.window_rule({
++    match  = { class = "avalos-gamecenter" },
++    float  = true,
++    center = true,
++    size   = { 940, 700 },
++})
+ hl.window_rule({
+     match  = { class = "avalos-store" },
+     float  = true,
+@@ -302,7 +308,7 @@ hl.window_rule({
+ hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
+ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ 
+--- SUPER + ALT + S / U / C. Hyprland compara el conjunto EXACTO de modificadores, así
++-- SUPER + ALT + S / U / C / G. Hyprland compara el conjunto EXACTO de modificadores, así
+ -- que SUPER+ALT+S no choca con SUPER+SHIFT+S (captura) ni con SUPER+CTRL+S
+ -- (avalos-settings, arriba).
+ -- NO usar "ALT_L" acá: en un bind, ALT_L es el nombre de una TECLA (sirve para
+@@ -313,3 +319,4 @@ hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
+ hl.bind(mod .. " + ALT + S", hl.dsp.exec_cmd("avalos-store"))
+ hl.bind(mod .. " + ALT + U", hl.dsp.exec_cmd("avalos-update"))
+ hl.bind(mod .. " + ALT + C", hl.dsp.exec_cmd("avalos-control"))
++hl.bind(mod .. " + ALT + G", hl.dsp.exec_cmd("avalos-gamecenter"))
+diff --git a/scripts/avalos-control b/scripts/avalos-control
+index 1ea59a6..c03db23 100755
+--- a/scripts/avalos-control
++++ b/scripts/avalos-control
+@@ -59,6 +59,7 @@ TILES = [
+     ("system", "restore", ("avalos-restore",), "⏪"),
+     ("system", "doctor", ("avalos-doctor",), "🩺"),
+     ("system", "about", ("avalos-about",), "ℹ️"),
++    ("apps", "games", ("avalos-gamecenter",), "🎮"),
+     ("apps", "store", ("avalos-store",), "🛍️"),
+     ("look", "wallpaper", ("avalos-wallpaper",), "🖼️"),
+     ("look", "appearance", ("nwg-look",), "🎨"),
+@@ -106,6 +107,7 @@ STRINGS = {
+         "t-doctor": "System health", "d-doctor": "Full report on disk, boot, drivers and network.",
+         "t-about": "About this system", "d-about": "Version, kernel and hardware details.",
+         "t-store": "Store", "d-store": "Apps, games and utilities from pacman, Flatpak and AUR.",
++        "t-games": "Game Center", "d-games": "Launchers, GameMode, MangoHud profiles and launch options.",
+         "t-wallpaper": "Wallpaper", "d-wallpaper": "Pick an image for your desktop.",
+         "t-appearance": "Theme and fonts", "d-appearance": "GTK theme, icons, cursor and fonts.",
+         "t-displays": "Displays", "d-displays": "Resolution, refresh rate and layout.",
+@@ -146,6 +148,7 @@ STRINGS = {
+         "t-doctor": "Salud del sistema", "d-doctor": "Informe completo de disco, arranque, drivers y red.",
+         "t-about": "Acerca de este sistema", "d-about": "Versión, kernel y datos del hardware.",
+         "t-store": "Tienda", "d-store": "Apps, juegos y utilidades de pacman, Flatpak y AUR.",
++        "t-games": "Game Center", "d-games": "Lanzadores, GameMode, perfiles de MangoHud y opciones de lanzamiento.",
+         "t-wallpaper": "Fondo de pantalla", "d-wallpaper": "Elige una imagen para tu escritorio.",
+         "t-appearance": "Tema y fuentes", "d-appearance": "Tema GTK, íconos, cursor y fuentes.",
+         "t-displays": "Pantallas", "d-displays": "Resolución, tasa de refresco y disposición.",
+@@ -186,6 +189,7 @@ STRINGS = {
+         "t-doctor": "系统健康", "d-doctor": "磁盘、启动、驱动和网络的完整报告。",
+         "t-about": "关于本系统", "d-about": "版本、内核和硬件信息。",
+         "t-store": "商店", "d-store": "来自 pacman、Flatpak 和 AUR 的应用、游戏和工具。",
++        "t-games": "游戏中心", "d-games": "启动器、GameMode、MangoHud 配置和启动选项。",
+         "t-wallpaper": "壁纸", "d-wallpaper": "为桌面选一张图片。",
+         "t-appearance": "主题和字体", "d-appearance": "GTK 主题、图标、光标和字体。",
+         "t-displays": "显示器", "d-displays": "分辨率、刷新率和布局。",
+@@ -226,6 +230,7 @@ STRINGS = {
+         "t-doctor": "システムの健康状態", "d-doctor": "ディスク、起動、ドライバー、ネットワークの詳細レポート。",
+         "t-about": "このシステムについて", "d-about": "バージョン、カーネル、ハードウェア情報。",
+         "t-store": "ストア", "d-store": "pacman、Flatpak、AUR のアプリ、ゲーム、ユーティリティ。",
++        "t-games": "ゲームセンター", "d-games": "ランチャー、GameMode、MangoHud プロファイル、起動オプション。",
+         "t-wallpaper": "壁紙", "d-wallpaper": "デスクトップの画像を選びます。",
+         "t-appearance": "テーマとフォント", "d-appearance": "GTK テーマ、アイコン、カーソル、フォント。",
+         "t-displays": "ディスプレイ", "d-displays": "解像度、リフレッシュレート、レイアウト。",
+diff --git a/scripts/avalos-gamecenter b/scripts/avalos-gamecenter
+new file mode 100755
+index 0000000..0be9b7f
+--- /dev/null
++++ b/scripts/avalos-gamecenter
+@@ -0,0 +1,1152 @@
++#!/usr/bin/env python3
++# ── AvalOS — avalos-gamecenter ──────────────────────────────────────
++# Game Center de AvalOS: todo lo de jugar en una ventana. Abre los lanzadores (Steam, Lutris,
++# Heroic, Prism, Bottles), muestra el estado de GameMode, deja elegir el perfil de MangoHud y da
++# las «opciones de lanzamiento» listas para copiar. Todo corre como el usuario: no necesita root
++# ni polkit. Lo único que escribe son los perfiles de ~/.config/MangoHud/.
++#
++#   avalos-gamecenter          abre la ventana (Super+Alt+G, o desde el Centro de control)
++#   avalos-gamecenter --json   imprime lo que ve (GameMode, MangoHud, lanzadores...) y sale (soporte)
++#
++# MangoHud solo lee ./MangoHud.conf, $XDG_CONFIG_HOME/MangoHud/ y $MANGOHUD_CONFIGFILE: por eso los
++# perfiles viven ahí y cada juego puede elegir el suyo con MANGOHUD_CONFIGFILE.
++#
++# Requiere: python 3.9+, python-pywebview, webkit2gtk-4.1 y python-gobject (ya los instala el
++# instalador). Opcionales: gamemode, mangohud, wl-clipboard (copiar), hyprctl (pantallas).
++import argparse
++import json
++import os
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++
++try:
++    import grp
++except ImportError:  # pragma: no cover - solo Linux
++    grp = None
++
++# ── Rutas del sistema (se pueden redirigir en las pruebas) ─────────────────
++SYSFS_CPUFREQ = Path("/sys/devices/system/cpu/cpu0/cpufreq")
++SYSFS_DRM = Path("/sys/class/drm")
++GAMEMODE_INI_SYSTEM = (Path("/usr/share/gamemode/gamemode.ini"), Path("/etc/gamemode.ini"))
++STEAM_SYSTEM_TOOLS = Path("/usr/share/steam/compatibilitytools.d")
++FLATPAK_SYSTEM_APPS = Path("/var/lib/flatpak/app")
++
++# ── i18n — mismo patrón que avalos-doctor/avalos-control ───────────────────
++_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
++_SUPPORTED = ("en", "es", "zh", "ja")
++_HTML_LANG = {"zh": "zh-CN"}
++
++
++def _detectar_idioma() -> str:
++    try:
++        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
++        if code in _SUPPORTED:
++            return code
++    except OSError:
++        pass
++    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
++    return _lang_raw if _lang_raw in _SUPPORTED else "en"
++
++
++LANG = _detectar_idioma()
++
++# Lanzadores: (id, nombre, candidatos, icono). Cada candidato es un comando exacto; se usa el
++# primero que exista (un binario en el PATH o una app de Flatpak ya instalada). Lista cerrada:
++# la página nunca puede lanzar otra cosa. Texto de la descripción: d-<id>.
++LAUNCHERS = [
++    ("steam", "Steam", (("steam",),), "🎮"),
++    ("lutris", "Lutris", (("lutris",),), "🍷"),
++    ("heroic", "Heroic Games Launcher", (("heroic",), ("flatpak", "run", "com.heroicgameslauncher.hgl")), "🦸"),
++    ("prism", "Prism Launcher", (("prismlauncher",), ("flatpak", "run", "org.prismlauncher.PrismLauncher")), "⛏️"),
++    ("bottles", "Bottles", (("flatpak", "run", "com.usebottles.bottles"),), "🍾"),
++]
++LAUNCHER_CANDIDATES = {lid: cands for lid, _n, cands, _i in LAUNCHERS}
++
++# ── Perfiles de MangoHud ───────────────────────────────────────────────────
++# Estilo (Tokyo Night) y comportamiento: lo mismo que configs/mangohud/MangoHud.conf, sin las
++# líneas de «qué mostrar». Una prueba compara esto con ese archivo para que no se separen.
++MANGO_STYLE = {
++    "legacy_layout": "0", "position": "top-left", "width": "260", "height": "0",
++    "background_alpha": "0.7", "font_size": "20", "font_size_text": "16",
++    "text_color": "c0caf5", "background_color": "1a1b26", "gpu_color": "7aa2f7",
++    "cpu_color": "9ece6a", "vram_color": "bb9af7", "ram_color": "9ece6a", "wine_color": "7dcfff",
++    "fps_color_change": "1", "fps_value": "30,60", "fps_color": "f7768e,e0af68,9ece6a",
++    "frametime_color": "9ece6a", "toggle_hud": "Shift_R+F12", "toggle_fps_limit": "Shift_R+F1",
++    "reload_cfg": "Shift_R+F4", "upload_log": "Shift_R+F3", "toggle_logging": "Shift_R+F2",
++    "output_folder": "~/.local/share/MangoHud/logs",
++}
++# Claves de «qué mostrar» (las que cambian de un perfil a otro).
++MANGO_METRIC_KEYS = frozenset({
++    "fps", "fps_limit", "frame_timing", "frametime", "cpu_stats", "cpu_temp", "gpu_stats", "gpu_temp",
++    "gpu_power", "vram", "ram", "wine", "engine_version", "cpu_mhz", "gpu_core_clock", "gpu_mem_clock",
++    "swap", "gamemode", "time", "vulkan_driver", "resolution", "no_display",
++})
++_STANDARD = ["fps", "fps_limit=0", "frame_timing=1", "frametime", "cpu_stats", "cpu_temp", "gpu_stats",
++             "gpu_temp", "gpu_power", "vram", "ram", "wine", "engine_version", "no_display=0"]
++MANGO_PROFILES = {
++    "minimal": ["fps", "fps_limit=0", "frame_timing=0", "frametime", "no_display=0"],
++    "standard": _STANDARD,
++    "full": _STANDARD + ["cpu_mhz", "gpu_core_clock", "gpu_mem_clock", "swap", "gamemode", "vulkan_driver",
++                         "resolution", "time"],
++    "hidden": ["fps", "fps_limit=0", "frame_timing=0", "frametime", "no_display=1"],
++}
++MANGO_ORDER = ("minimal", "standard", "full", "hidden")
++MANGO_CONF = "MangoHud.conf"
++MANGO_BACKUP = "MangoHud.conf.avalos-backup"
++
++# Variantes de «opciones de lanzamiento» (id -> plantilla). {cfg} es el perfil elegido.
++LAUNCH_VARIANTS = ("gamemode", "mangohud", "both", "profile")
++MAX_TOOLS = 10
++GAMEMODE_TEST_TIMEOUT = 90
++
++STRINGS = {
++    "en": {
++        "title": "AvalOS Game Center",
++        "subtitle": "Launchers, GameMode, MangoHud and launch options, ready for gaming.",
++        "loading": "Reading your system…",
++        "h-launchers": "Launchers", "h-gamemode": "GameMode", "h-mango": "MangoHud overlay",
++        "h-options": "Launch options", "h-tools": "Proton and compatibility tools", "h-system": "Graphics and displays",
++        "d-steam": "Your Steam library and Proton games.", "d-lutris": "Wine games and other platforms.",
++        "d-heroic": "Epic, GOG and Amazon games.", "d-prism": "Minecraft instances and mods.",
++        "d-bottles": "Windows apps in clean bottles.",
++        "l-missing": "Not installed yet", "l-store": "Browse games in the Store",
++        "gm-missing": "GameMode isn't installed on this system.",
++        "gm-active": "Active: a game is using it right now.",
++        "gm-idle": "Ready: it turns on when a game starts with gamemoderun.",
++        "gm-unknown": "Installed, but its status couldn't be read.",
++        "gm-governor": "CPU governor now", "gm-target": "CPU governor while gaming", "gm-driver": "CPU driver",
++        "gm-epp": "Energy preference", "gm-works": "Works with",
++        "gm-group-ok": "You're in the gamemode group.",
++        "gm-group-no": "You're not in the gamemode group yet: log out and back in.",
++        "gm-group-na": "The gamemode group doesn't exist on this system.",
++        "gm-test": "Run GameMode test", "gm-testing": "Testing…",
++        "gm-test-ok": "GameMode test passed ({n} checks).",
++        "gm-test-fail": "GameMode test found problems ({n} failed).",
++        "gm-test-err": "The test couldn't finish.",
++        "gm-test-note": "Takes a few seconds and briefly switches the CPU governor.",
++        "mg-missing": "MangoHud isn't installed on this system.",
++        "mg-desc": "Pick how the overlay looks by default. Each game can use another profile through its launch options.",
++        "mg-state": "In use:", "mg-none": "MangoHud's own look (no AvalOS profile yet)", "mg-custom": "Your own configuration",
++        "mp-minimal": "Minimal", "mpd-minimal": "FPS and frametime only.",
++        "mp-standard": "Standard", "mpd-standard": "AvalOS style: FPS, CPU, GPU, memory and frame graph.",
++        "mp-full": "Full", "mpd-full": "Everything in Standard plus clocks, swap, GameMode, driver and time.",
++        "mp-hidden": "Hidden", "mpd-hidden": "Starts hidden; show it with Right Shift + F12.",
++        "mg-use": "Use as default", "mg-current": "In use",
++        "mg-applied": "“{name}” is now the default profile.",
++        "mg-restore": "Restore my previous config", "mg-restored": "Your previous MangoHud config is back.",
++        "mg-err": "Couldn't change the MangoHud configuration.",
++        "mg-backup": "Your earlier configuration is kept as MangoHud.conf.avalos-backup.",
++        "lo-desc": "Paste one into Steam (game, Properties, Launch options) or Lutris (Command prefix).",
++        "lo-gamemode": "GameMode", "lo-mangohud": "MangoHud", "lo-both": "GameMode + MangoHud",
++        "lo-profile": "With the profile chosen above",
++        "lo-profile-label": "Profile for this game:", "lo-copy": "Copy", "lo-copied": "Copied to the clipboard.",
++        "lo-copy-failed": "Couldn't copy: select the text and copy it.",
++        "pt-none": "No extra Proton versions found.", "pt-hint": "Add more from the Store or with ProtonUp-Qt.",
++        "pt-count": "{n} found",
++        "sy-gpu": "Graphics", "sy-displays": "Displays", "sy-vrr-on": "VRR on", "sy-vrr-off": "VRR off",
++        "sy-none": "Not available here.",
++        "b-close": "Close", "note": "Shortcut: Super + Alt + G",
++    },
++    "es": {
++        "title": "Game Center de AvalOS",
++        "subtitle": "Lanzadores, GameMode, MangoHud y opciones de lanzamiento, listos para jugar.",
++        "loading": "Leyendo tu sistema…",
++        "h-launchers": "Lanzadores", "h-gamemode": "GameMode", "h-mango": "Overlay de MangoHud",
++        "h-options": "Opciones de lanzamiento", "h-tools": "Proton y herramientas de compatibilidad", "h-system": "Gráficos y pantallas",
++        "d-steam": "Tu biblioteca de Steam y juegos con Proton.", "d-lutris": "Juegos de Wine y otras plataformas.",
++        "d-heroic": "Juegos de Epic, GOG y Amazon.", "d-prism": "Instancias y mods de Minecraft.",
++        "d-bottles": "Apps de Windows en botellas limpias.",
++        "l-missing": "Todavía no está instalado", "l-store": "Ver juegos en la Tienda",
++        "gm-missing": "GameMode no está instalado en este sistema.",
++        "gm-active": "Activo: un juego lo está usando ahora mismo.",
++        "gm-idle": "Listo: se activa cuando un juego arranca con gamemoderun.",
++        "gm-unknown": "Instalado, pero no se pudo leer su estado.",
++        "gm-governor": "Gobernador de CPU ahora", "gm-target": "Gobernador de CPU al jugar", "gm-driver": "Driver de CPU",
++        "gm-epp": "Preferencia de energía", "gm-works": "Funciona con",
++        "gm-group-ok": "Estás en el grupo gamemode.",
++        "gm-group-no": "Todavía no estás en el grupo gamemode: cierra sesión y vuelve a entrar.",
++        "gm-group-na": "El grupo gamemode no existe en este sistema.",
++        "gm-test": "Probar GameMode", "gm-testing": "Probando…",
++        "gm-test-ok": "La prueba de GameMode pasó ({n} comprobaciones).",
++        "gm-test-fail": "La prueba de GameMode encontró problemas ({n} fallaron).",
++        "gm-test-err": "La prueba no pudo terminar.",
++        "gm-test-note": "Tarda unos segundos y cambia el gobernador de CPU por un momento.",
++        "mg-missing": "MangoHud no está instalado en este sistema.",
++        "mg-desc": "Elige cómo se ve el overlay por defecto. Cada juego puede usar otro perfil con sus opciones de lanzamiento.",
++        "mg-state": "En uso:", "mg-none": "El aspecto propio de MangoHud (todavía sin perfil de AvalOS)", "mg-custom": "Tu propia configuración",
++        "mp-minimal": "Mínimo", "mpd-minimal": "Solo FPS y tiempo de fotograma.",
++        "mp-standard": "Estándar", "mpd-standard": "Estilo AvalOS: FPS, CPU, GPU, memoria y gráfica de fotogramas.",
++        "mp-full": "Completo", "mpd-full": "Todo lo del Estándar más frecuencias, swap, GameMode, driver y hora.",
++        "mp-hidden": "Oculto", "mpd-hidden": "Arranca oculto; se muestra con Shift derecho + F12.",
++        "mg-use": "Usar por defecto", "mg-current": "En uso",
++        "mg-applied": "«{name}» es ahora el perfil por defecto.",
++        "mg-restore": "Restaurar mi config anterior", "mg-restored": "Tu config anterior de MangoHud está de vuelta.",
++        "mg-err": "No se pudo cambiar la configuración de MangoHud.",
++        "mg-backup": "Tu configuración anterior queda guardada como MangoHud.conf.avalos-backup.",
++        "lo-desc": "Pega una en Steam (juego, Propiedades, Opciones de lanzamiento) o en Lutris (Prefijo de comando).",
++        "lo-gamemode": "GameMode", "lo-mangohud": "MangoHud", "lo-both": "GameMode + MangoHud",
++        "lo-profile": "Con el perfil elegido arriba",
++        "lo-profile-label": "Perfil para este juego:", "lo-copy": "Copiar", "lo-copied": "Copiado al portapapeles.",
++        "lo-copy-failed": "No se pudo copiar: selecciona el texto y cópialo.",
++        "pt-none": "No se encontraron versiones extra de Proton.", "pt-hint": "Agrega más desde la Tienda o con ProtonUp-Qt.",
++        "pt-count": "{n} encontradas",
++        "sy-gpu": "Gráficos", "sy-displays": "Pantallas", "sy-vrr-on": "VRR activo", "sy-vrr-off": "VRR apagado",
++        "sy-none": "No disponible aquí.",
++        "b-close": "Cerrar", "note": "Atajo: Super + Alt + G",
++    },
++    "zh": {
++        "title": "AvalOS 游戏中心",
++        "subtitle": "启动器、GameMode、MangoHud 和启动选项，为游戏准备就绪。",
++        "loading": "正在读取系统信息…",
++        "h-launchers": "启动器", "h-gamemode": "GameMode", "h-mango": "MangoHud 悬浮显示",
++        "h-options": "启动选项", "h-tools": "Proton 与兼容工具", "h-system": "显卡与显示器",
++        "d-steam": "你的 Steam 游戏库和 Proton 游戏。", "d-lutris": "Wine 游戏和其他平台。",
++        "d-heroic": "Epic、GOG 和 Amazon 游戏。", "d-prism": "Minecraft 实例与模组。",
++        "d-bottles": "在独立环境中运行 Windows 应用。",
++        "l-missing": "尚未安装", "l-store": "在商店中浏览游戏",
++        "gm-missing": "此系统尚未安装 GameMode。",
++        "gm-active": "已启用：有游戏正在使用它。",
++        "gm-idle": "就绪：用 gamemoderun 启动游戏时自动开启。",
++        "gm-unknown": "已安装，但无法读取其状态。",
++        "gm-governor": "当前 CPU 调度器", "gm-target": "游戏时的 CPU 调度器", "gm-driver": "CPU 驱动",
++        "gm-epp": "能耗偏好", "gm-works": "适用于",
++        "gm-group-ok": "你已在 gamemode 用户组中。",
++        "gm-group-no": "你还不在 gamemode 用户组中：请注销后重新登录。",
++        "gm-group-na": "此系统上不存在 gamemode 用户组。",
++        "gm-test": "运行 GameMode 测试", "gm-testing": "正在测试…",
++        "gm-test-ok": "GameMode 测试通过（{n} 项检查）。",
++        "gm-test-fail": "GameMode 测试发现问题（{n} 项失败）。",
++        "gm-test-err": "测试未能完成。",
++        "gm-test-note": "需要几秒钟，并会短暂切换 CPU 调度器。",
++        "mg-missing": "此系统尚未安装 MangoHud。",
++        "mg-desc": "选择悬浮显示的默认外观。每个游戏也可以通过启动选项使用其他配置。",
++        "mg-state": "当前使用：", "mg-none": "MangoHud 自带外观（尚无 AvalOS 配置）", "mg-custom": "你自己的配置",
++        "mp-minimal": "精简", "mpd-minimal": "仅显示 FPS 和帧时间。",
++        "mp-standard": "标准", "mpd-standard": "AvalOS 风格：FPS、CPU、GPU、内存和帧时间图。",
++        "mp-full": "完整", "mpd-full": "标准内容外加频率、交换分区、GameMode、驱动和时间。",
++        "mp-hidden": "隐藏", "mpd-hidden": "启动时隐藏；按右 Shift + F12 显示。",
++        "mg-use": "设为默认", "mg-current": "使用中",
++        "mg-applied": "“{name}”已设为默认配置。",
++        "mg-restore": "恢复我之前的配置", "mg-restored": "已恢复你之前的 MangoHud 配置。",
++        "mg-err": "无法修改 MangoHud 配置。",
++        "mg-backup": "你之前的配置已保存为 MangoHud.conf.avalos-backup。",
++        "lo-desc": "粘贴到 Steam（游戏、属性、启动选项）或 Lutris（命令前缀）。",
++        "lo-gamemode": "GameMode", "lo-mangohud": "MangoHud", "lo-both": "GameMode + MangoHud",
++        "lo-profile": "使用上方选择的配置",
++        "lo-profile-label": "此游戏使用的配置：", "lo-copy": "复制", "lo-copied": "已复制到剪贴板。",
++        "lo-copy-failed": "复制失败：请选中文字后手动复制。",
++        "pt-none": "未找到额外的 Proton 版本。", "pt-hint": "可从商店或 ProtonUp-Qt 添加更多。",
++        "pt-count": "找到 {n} 个",
++        "sy-gpu": "显卡", "sy-displays": "显示器", "sy-vrr-on": "VRR 已开启", "sy-vrr-off": "VRR 已关闭",
++        "sy-none": "此处不可用。",
++        "b-close": "关闭", "note": "快捷键：Super + Alt + G",
++    },
++    "ja": {
++        "title": "AvalOS ゲームセンター",
++        "subtitle": "ランチャー、GameMode、MangoHud、起動オプションをゲーム向けにまとめて。",
++        "loading": "システムを読み取っています…",
++        "h-launchers": "ランチャー", "h-gamemode": "GameMode", "h-mango": "MangoHud オーバーレイ",
++        "h-options": "起動オプション", "h-tools": "Proton と互換ツール", "h-system": "グラフィックとディスプレイ",
++        "d-steam": "Steam ライブラリと Proton のゲーム。", "d-lutris": "Wine のゲームやほかのプラットフォーム。",
++        "d-heroic": "Epic、GOG、Amazon のゲーム。", "d-prism": "Minecraft のインスタンスと Mod。",
++        "d-bottles": "Windows アプリを独立した環境で実行。",
++        "l-missing": "まだインストールされていません", "l-store": "ストアでゲームを探す",
++        "gm-missing": "このシステムには GameMode がインストールされていません。",
++        "gm-active": "有効：いまゲームが使用中です。",
++        "gm-idle": "待機中：gamemoderun でゲームを起動すると有効になります。",
++        "gm-unknown": "インストール済みですが、状態を読み取れませんでした。",
++        "gm-governor": "現在の CPU ガバナー", "gm-target": "ゲーム中の CPU ガバナー", "gm-driver": "CPU ドライバー",
++        "gm-epp": "電力設定", "gm-works": "対象",
++        "gm-group-ok": "gamemode グループに参加しています。",
++        "gm-group-no": "まだ gamemode グループに参加していません：ログアウトして再ログインしてください。",
++        "gm-group-na": "このシステムには gamemode グループがありません。",
++        "gm-test": "GameMode をテスト", "gm-testing": "テスト中…",
++        "gm-test-ok": "GameMode のテストに合格しました（{n} 項目）。",
++        "gm-test-fail": "GameMode のテストで問題が見つかりました（{n} 件失敗）。",
++        "gm-test-err": "テストを完了できませんでした。",
++        "gm-test-note": "数秒かかり、CPU ガバナーが一時的に切り替わります。",
++        "mg-missing": "このシステムには MangoHud がインストールされていません。",
++        "mg-desc": "オーバーレイの標準の見た目を選びます。ゲームごとに起動オプションで別のプロファイルも使えます。",
++        "mg-state": "使用中：", "mg-none": "MangoHud 標準の見た目（AvalOS プロファイル未設定）", "mg-custom": "独自の設定",
++        "mp-minimal": "最小", "mpd-minimal": "FPS とフレームタイムのみ。",
++        "mp-standard": "標準", "mpd-standard": "AvalOS スタイル：FPS、CPU、GPU、メモリ、フレームグラフ。",
++        "mp-full": "フル", "mpd-full": "標準に加えてクロック、スワップ、GameMode、ドライバー、時刻。",
++        "mp-hidden": "非表示", "mpd-hidden": "非表示で起動。右 Shift + F12 で表示します。",
++        "mg-use": "標準にする", "mg-current": "使用中",
++        "mg-applied": "「{name}」を標準のプロファイルにしました。",
++        "mg-restore": "以前の設定に戻す", "mg-restored": "以前の MangoHud 設定に戻しました。",
++        "mg-err": "MangoHud の設定を変更できませんでした。",
++        "mg-backup": "以前の設定は MangoHud.conf.avalos-backup として保存されています。",
++        "lo-desc": "Steam（ゲーム、プロパティ、起動オプション）または Lutris（コマンドプレフィックス）に貼り付けます。",
++        "lo-gamemode": "GameMode", "lo-mangohud": "MangoHud", "lo-both": "GameMode + MangoHud",
++        "lo-profile": "上で選んだプロファイルで",
++        "lo-profile-label": "このゲームのプロファイル：", "lo-copy": "コピー", "lo-copied": "クリップボードにコピーしました。",
++        "lo-copy-failed": "コピーできませんでした：テキストを選択してコピーしてください。",
++        "pt-none": "追加の Proton は見つかりませんでした。", "pt-hint": "ストアまたは ProtonUp-Qt から追加できます。",
++        "pt-count": "{n} 件",
++        "sy-gpu": "グラフィック", "sy-displays": "ディスプレイ", "sy-vrr-on": "VRR オン", "sy-vrr-off": "VRR オフ",
++        "sy-none": "ここでは利用できません。",
++        "b-close": "閉じる", "note": "ショートカット: Super + Alt + G",
++    },
++}
++NA = "—"
++
++
++# ── Utilidades ─────────────────────────────────────────────────────────────
++def _read(path: Path) -> str:
++    try:
++        return path.read_text(encoding="utf-8", errors="replace").strip()
++    except OSError:
++        return ""
++
++
++def _config_home() -> Path:
++    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
++
++
++def _data_home() -> Path:
++    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
++
++
++def _run(cmd, timeout):
++    """(código, salida) o None si no se pudo ni lanzar. Nunca lanza."""
++    try:
++        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
++    except (OSError, subprocess.SubprocessError):
++        return None
++    return res.returncode, (res.stdout or "") + (res.stderr or "")
++
++
++def _spawn(cmd) -> bool:
++    try:
++        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
++                         stderr=subprocess.DEVNULL, start_new_session=True)
++        return True
++    except OSError:
++        return False
++
++
++def _has_display() -> bool:
++    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
++
++
++# ── Lanzadores ─────────────────────────────────────────────────────────────
++def _flatpak_installed(app_id: str) -> bool:
++    if not shutil.which("flatpak"):
++        return False
++    return any((root / app_id).is_dir() for root in (_data_home() / "flatpak" / "app", FLATPAK_SYSTEM_APPS))
++
++
++def resolve_launcher(launcher_id):
++    """El comando con el que se abre ese lanzador en este sistema, o None si no está instalado."""
++    for argv in LAUNCHER_CANDIDATES.get(launcher_id, ()):
++        if argv[0] == "flatpak":
++            if _flatpak_installed(argv[2]):
++                return list(argv)
++        elif shutil.which(argv[0]):
++            return list(argv)
++    return None
++
++
++def launchers_available() -> dict:
++    return {lid: resolve_launcher(lid) is not None for lid, _n, _c, _i in LAUNCHERS}
++
++
++# ── GameMode ───────────────────────────────────────────────────────────────
++def parse_gamemode_status(output: str) -> str:
++    """«gamemode is active» -> active; «gamemode is inactive» -> idle; otra cosa -> unknown.
++    («inactive» contiene «active»: se mira primero.)"""
++    low = output.lower()
++    if re.search(r"\binactive\b", low):
++        return "idle"
++    if re.search(r"\bactive\b", low):
++        return "active"
++    return "unknown"
++
++
++def parse_gamemode_ini(text: str) -> dict:
++    """Lo que interesa de un gamemode.ini. «whitelist=» puede repetirse (una línea por programa),
++    por eso se lee línea a línea y no con configparser, que se quedaría con la última."""
++    out = {"desiredgov": None, "whitelist": [], "blacklist": []}
++    section = ""
++    for raw in text.splitlines():
++        line = raw.strip()
++        if not line or line[0] in "#;":
++            continue
++        if line.startswith("[") and line.endswith("]"):
++            section = line[1:-1].strip().lower()
++            continue
++        key, sep, value = line.partition("=")
++        key, value = key.strip().lower(), value.strip()
++        if not sep or not value:
++            continue
++        if section == "general" and key == "desiredgov":
++            out["desiredgov"] = value
++        elif section == "filter" and key in ("whitelist", "blacklist"):
++            out[key].append(value)
++    return out
++
++
++def gamemode_config() -> dict:
++    """La config efectiva: se fusionan /usr/share, /etc y la del usuario (lo mismo que gamemoded)."""
++    merged = {"desiredgov": None, "whitelist": [], "blacklist": []}
++    for path in (*GAMEMODE_INI_SYSTEM, _config_home() / "gamemode.ini"):
++        part = parse_gamemode_ini(_read(path))
++        if part["desiredgov"]:
++            merged["desiredgov"] = part["desiredgov"]
++        for key in ("whitelist", "blacklist"):
++            merged[key] += [v for v in part[key] if v not in merged[key]]
++    return merged
++
++
++def _in_gamemode_group():
++    """True/False si el grupo existe y el usuario está (o no) en él; None si el grupo no existe."""
++    if grp is None:
++        return None
++    try:
++        gid = grp.getgrnam("gamemode").gr_gid
++    except KeyError:
++        return None
++    return gid in os.getgroups() or os.getgid() == gid
++
++
++def gamemode_status() -> dict:
++    exe = shutil.which("gamemoded")
++    cfg = gamemode_config()
++    info = {
++        "installed": bool(exe),
++        "state": "missing",
++        "in_group": _in_gamemode_group() if exe else None,
++        "governor": _read(SYSFS_CPUFREQ / "scaling_governor") or NA,
++        "driver": _read(SYSFS_CPUFREQ / "scaling_driver") or NA,
++        "epp": _read(SYSFS_CPUFREQ / "energy_performance_preference") or NA,
++        "target": cfg["desiredgov"] or "performance",
++        "whitelist": cfg["whitelist"],
++    }
++    if exe:
++        res = _run([exe, "-s"], 8)
++        info["state"] = parse_gamemode_status(res[1]) if res else "unknown"
++    return info
++
++
++def gamemode_test() -> dict:
++    """`gamemoded -t` (diagnóstico oficial): {"state": "missing"|"error"|"done", "passed", "failed", "output"}."""
++    exe = shutil.which("gamemoded")
++    if not exe:
++        return {"state": "missing"}
++    res = _run([exe, "-t"], GAMEMODE_TEST_TIMEOUT)
++    if res is None:
++        return {"state": "error"}
++    code, output = res
++    passed = len(re.findall(r":: Passed", output))
++    failed = len(re.findall(r":: Failed", output))
++    tail = "\n".join(output.strip().splitlines()[-12:])
++    if not passed and not failed:
++        return {"state": "error", "output": tail}
++    return {"state": "done", "passed": passed, "failed": failed + (1 if code and not failed else 0), "output": tail}
++
++
++# ── MangoHud ───────────────────────────────────────────────────────────────
++def _line_key(line: str) -> str:
++    return line.partition("=")[0].strip()
++
++
++def profile_text(profile_id: str) -> str:
++    lines = [f"# AvalOS — MangoHud, perfil: {profile_id}",
++             "# Lo genera avalos-gamecenter; si lo editas, el perfil pasa a ser «tu configuración».",
++             *[f"{k}={v}" for k, v in MANGO_STYLE.items()], *MANGO_PROFILES[profile_id]]
++    return "\n".join(lines) + "\n"
++
++
++def _effective_lines(text: str) -> frozenset:
++    return frozenset(ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#"))
++
++
++def mangohud_dir() -> Path:
++    return _config_home() / "MangoHud"
++
++
++def active_profile() -> str:
++    """minimal/standard/full/hidden si MangoHud.conf es uno de los perfiles, custom si es otra cosa
++    y none si todavía no hay archivo (MangoHud usa su aspecto de fábrica)."""
++    conf = mangohud_dir() / MANGO_CONF
++    if not conf.is_file():
++        return "none"
++    current = _effective_lines(_read(conf))
++    for pid in MANGO_ORDER:
++        if current == _effective_lines(profile_text(pid)):
++            return pid
++    return "custom"
++
++
++def mangohud_status() -> dict:
++    return {"installed": bool(shutil.which("mangohud")), "active": active_profile(),
++            "has_backup": (mangohud_dir() / MANGO_BACKUP).is_file(), "profiles": list(MANGO_ORDER)}
++
++
++def _write_atomic(path: Path, text: str) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
++    try:
++        with os.fdopen(fd, "w", encoding="utf-8") as f:
++            f.write(text)
++        os.replace(tmp, path)
++    except BaseException:
++        try:
++            os.unlink(tmp)
++        except OSError:
++            pass
++        raise
++
++
++def apply_profile(profile_id) -> dict:
++    """Escribe los 4 perfiles en profiles/ (para MANGOHUD_CONFIGFILE) y deja el elegido como
++    MangoHud.conf. Si el usuario tenía una config propia, se guarda UNA vez como respaldo (no se
++    pisa un respaldo anterior: es la original). Devuelve el estado nuevo o {"error": ...}."""
++    if profile_id not in MANGO_PROFILES:
++        return {"error": "profile"}
++    try:
++        folder = mangohud_dir()
++        for pid in MANGO_ORDER:
++            _write_atomic(folder / "profiles" / f"{pid}.conf", profile_text(pid))
++        conf, backup = folder / MANGO_CONF, folder / MANGO_BACKUP
++        if conf.is_file() and active_profile() == "custom" and not backup.exists():
++            shutil.copy2(conf, backup)
++        _write_atomic(conf, profile_text(profile_id))
++    except OSError:
++        return {"error": "write"}
++    return mangohud_status()
++
++
++def restore_backup() -> dict:
++    backup, conf = mangohud_dir() / MANGO_BACKUP, mangohud_dir() / MANGO_CONF
++    try:
++        _write_atomic(conf, backup.read_text(encoding="utf-8"))
++    except OSError:
++        return {"error": "restore"}
++    return mangohud_status()
++
++
++# ── Opciones de lanzamiento ────────────────────────────────────────────────
++def launch_options(profile_id="standard") -> dict:
++    """Las cadenas para pegar en Steam/Lutris. El perfil va por MANGOHUD_CONFIGFILE (así cada juego
++    elige el suyo sin tocar el global). ${XDG_CONFIG_HOME:-$HOME/.config} lo expande el shell de Steam."""
++    if profile_id not in MANGO_PROFILES:
++        profile_id = "standard"
++    cfg = f"${{XDG_CONFIG_HOME:-$HOME/.config}}/MangoHud/profiles/{profile_id}.conf"
++    return {
++        "gamemode": "gamemoderun %command%",
++        "mangohud": "mangohud %command%",
++        "both": "mangohud gamemoderun %command%",
++        "profile": f"MANGOHUD_CONFIGFILE={cfg} mangohud gamemoderun %command%",
++    }
++
++
++def copy_to_clipboard(text: str) -> bool:
++    exe = shutil.which("wl-copy")
++    if not exe:
++        return False
++    try:
++        subprocess.run([exe], input=text, text=True, timeout=5, check=True,
++                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++    except (OSError, subprocess.SubprocessError):
++        return False
++    return True
++
++
++# ── Proton y herramientas de compatibilidad ────────────────────────────────
++def _natural_key(name: str):
++    return [int(p) if p.isdigit() else p.lower() for p in re.split(r"(\d+)", name)]
++
++
++def proton_tools() -> list:
++    """Nombres de las herramientas de compatibilidad de Steam (GE-Proton...) y de los Proton oficiales
++    que Steam descargó, los más nuevos primero. Solo lectura."""
++    found = set()
++    for folder in (_data_home() / "Steam" / "compatibilitytools.d", Path.home() / ".steam" / "root" / "compatibilitytools.d",
++                   STEAM_SYSTEM_TOOLS):
++        try:
++            found.update(p.name for p in folder.iterdir() if p.is_dir())
++        except OSError:
++            pass
++    try:
++        found.update(p.name for p in (_data_home() / "Steam" / "steamapps" / "common").iterdir()
++                     if p.is_dir() and p.name.startswith("Proton"))
++    except OSError:
++        pass
++    return sorted(found, key=_natural_key, reverse=True)[:MAX_TOOLS]
++
++
++# ── Gráficos y pantallas ───────────────────────────────────────────────────
++_GPU_VENDORS = {"0x1002": "AMD", "0x8086": "Intel", "0x10de": "NVIDIA"}
++
++
++def gpus() -> list:
++    out = []
++    try:
++        cards = sorted(p for p in SYSFS_DRM.iterdir() if re.fullmatch(r"card\d+", p.name))
++    except OSError:
++        return out
++    for card in cards:
++        vendor = _GPU_VENDORS.get(_read(card / "device" / "vendor").lower())
++        driver = next((ln.partition("=")[2] for ln in _read(card / "device" / "uevent").splitlines()
++                       if ln.startswith("DRIVER=")), "")
++        label = " · ".join(x for x in (vendor, driver) if x)
++        if label and label not in out:
++            out.append(label)
++    return out
++
++
++def parse_monitors(raw: str) -> list:
++    """`hyprctl -j monitors` -> [{"name", "mode", "vrr"}]. Lo que falte se omite, nunca se inventa."""
++    try:
++        data = json.loads(raw)
++    except ValueError:
++        return []
++    out = []
++    for m in data if isinstance(data, list) else []:
++        if not isinstance(m, dict) or not m.get("name"):
++            continue
++        mode = ""
++        if isinstance(m.get("width"), int) and isinstance(m.get("height"), int):
++            mode = f"{m['width']}×{m['height']}"
++            if isinstance(m.get("refreshRate"), (int, float)):
++                mode += f" @ {m['refreshRate']:.0f} Hz"
++        vrr = m.get("vrr") if isinstance(m.get("vrr"), bool) else None
++        out.append({"name": str(m["name"]), "mode": mode, "vrr": vrr})
++    return out
++
++
++def monitors() -> list:
++    exe = shutil.which("hyprctl")
++    if not exe or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
++        return []
++    res = _run([exe, "-j", "monitors"], 4)
++    return parse_monitors(res[1]) if res and res[0] == 0 else []
++
++
++# ── Todo junto ─────────────────────────────────────────────────────────────
++def snapshot() -> dict:
++    return {
++        "launchers": launchers_available(),
++        "gamemode": gamemode_status(),
++        "mango": mangohud_status(),
++        "tools": proton_tools(),
++        "system": {"gpus": gpus(), "monitors": monitors()},
++    }
++
++
++class GameAPI:
++    window = None
++
++    def snapshot(self):
++        return snapshot()
++
++    def open_launcher(self, launcher_id):
++        argv = resolve_launcher(launcher_id) if isinstance(launcher_id, str) else None
++        return bool(argv) and _spawn(argv)
++
++    def open_store(self):
++        return bool(shutil.which("avalos-store")) and _spawn(["avalos-store"])
++
++    def gamemode_test(self):
++        return gamemode_test()
++
++    def mango_apply(self, profile_id):
++        return apply_profile(profile_id) if isinstance(profile_id, str) else {"error": "profile"}
++
++    def mango_restore(self):
++        return restore_backup()
++
++    def launch_options(self, profile_id="standard"):
++        return launch_options(profile_id if isinstance(profile_id, str) else "standard")
++
++    def copy_options(self, variant, profile_id="standard"):
++        text = launch_options(profile_id if isinstance(profile_id, str) else "standard").get(variant) \
++            if isinstance(variant, str) else None
++        return {"ok": bool(text) and copy_to_clipboard(text), "text": text or ""}
++
++    def close(self):
++        if self.window:
++            self.window.destroy()
++
++
++def _build_html():
++    return r"""<!DOCTYPE html>
++<html lang="LANG_PLACEHOLDER">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>AvalOS</title>
++<style>
++  :root {
++    --bg: #1a1b26; --bg-alt: #16161e; --surface: #1f2335; --surface-hi: #292e42;
++    --border: #414868; --text: #c0caf5; --text-mid: #9aa5ce; --text-dim: #565f89;
++    --blue: #7aa2f7; --purple: #bb9af7; --yellow: #e0af68; --red: #f7768e; --green: #9ece6a;
++  }
++  * { box-sizing: border-box; }
++  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
++    font-family: "JetBrainsMono Nerd Font", ui-monospace, "Cascadia Code", monospace;
++    overflow: hidden; height: 100%; font-size: 13px; }
++  .app { display: flex; flex-direction: column; height: 100vh; }
++  .hidden { display: none !important; }
++  header { padding: 20px 26px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
++  header h1 { font-size: 20px; margin: 0 0 5px; font-weight: 600; letter-spacing: .2px; }
++  .accent { background: linear-gradient(135deg, var(--blue), var(--purple));
++    -webkit-background-clip: text; background-clip: text; color: transparent; }
++  header .sub { font-size: 12.5px; color: var(--text-mid); line-height: 1.5; }
++  .body { flex: 1; overflow-y: auto; padding: 4px 26px 14px; }
++  h2 { font-size: 13px; font-weight: 600; margin: 18px 0 9px; }
++  .loading { color: var(--text-dim); padding: 30px 0; text-align: center; }
++  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
++  .card + .card { margin-top: 8px; }
++  .dim { color: var(--text-mid); font-size: 12px; line-height: 1.5; }
++  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
++  .tile { font: inherit; text-align: left; color: var(--text); background: var(--surface);
++    border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; cursor: pointer;
++    display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
++  .tile:hover:not(:disabled), .tile:focus-visible { border-color: var(--blue); outline: none; background: var(--surface-hi); }
++  .tile:disabled { cursor: default; opacity: .55; }
++  .tile .ic { font-size: 20px; line-height: 1.2; flex-shrink: 0; }
++  .tile .t { font-weight: 600; font-size: 13px; }
++  .tile .d { color: var(--text-mid); font-size: 11.5px; margin-top: 3px; line-height: 1.4; }
++  .btn { font: inherit; font-size: 12px; color: var(--text); background: var(--surface-hi);
++    border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; cursor: pointer; flex-shrink: 0; }
++  .btn:hover:not(:disabled) { border-color: var(--blue); }
++  .btn:disabled { cursor: default; opacity: .7; }
++  .btn.primary { background: linear-gradient(135deg, var(--blue), var(--purple)); color: #1a1b26;
++    border-color: transparent; font-weight: 600; }
++  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
++  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
++  .row.top { align-items: flex-start; }
++  .status { font-weight: 600; }
++  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: var(--text-dim); }
++  .dot.active { background: var(--green); } .dot.idle { background: var(--blue); }
++  .dot.unknown, .dot.missing { background: var(--yellow); }
++  .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-top: 10px; }
++  .fact .k { color: var(--text-dim); font-size: 11px; } .fact .v { margin-top: 2px; font-size: 12.5px; word-break: break-word; }
++  .note { margin-top: 8px; font-size: 12px; color: var(--text-mid); line-height: 1.5; }
++  .note.ok { color: var(--green); } .note.warn { color: var(--yellow); } .note.bad { color: var(--red); }
++  pre.out { margin: 8px 0 0; padding: 8px 10px; background: var(--bg-alt); border: 1px solid var(--border);
++    border-radius: 8px; font-size: 11px; line-height: 1.4; white-space: pre-wrap; color: var(--text-mid); }
++  .profiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; margin-top: 10px; }
++  .profile { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
++    display: flex; flex-direction: column; gap: 6px; }
++  .profile.on { border-color: var(--blue); }
++  .profile .t { font-weight: 600; }
++  select { font: inherit; font-size: 12px; color: var(--text); background: var(--bg-alt); border: 1px solid var(--border);
++    border-radius: 8px; padding: 5px 8px; }
++  .opts { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
++  .opt { display: flex; align-items: center; gap: 10px; }
++  .opt .lbl { flex: 0 0 150px; color: var(--text-mid); font-size: 12px; }
++  .opt code { flex: 1; min-width: 0; padding: 6px 9px; background: var(--bg-alt); border: 1px solid var(--border);
++    border-radius: 8px; font-size: 11.5px; word-break: break-all; user-select: all; }
++  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
++  .chip { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 11.5px; }
++  footer { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 14px;
++    padding: 12px 26px; border-top: 1px solid var(--border); }
++  footer .hint { color: var(--text-dim); font-size: 11.5px; }
++  .toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: 86%;
++    background: var(--surface-hi); border: 1px solid var(--yellow); color: var(--yellow);
++    border-radius: 8px; padding: 8px 14px; font-size: 12px; }
++  @media (max-width: 660px) { .opt { flex-wrap: wrap; } .opt .lbl { flex-basis: 100%; } }
++</style>
++</head>
++<body>
++<div class="app">
++  <header>
++    <h1 id="title"></h1>
++    <div class="sub" id="subtitle"></div>
++  </header>
++  <main class="body" id="main">
++    <div class="loading" id="loading"></div>
++    <div id="content" class="hidden"></div>
++  </main>
++  <footer>
++    <div class="hint" id="note"></div>
++    <button type="button" class="btn primary" id="b-close"></button>
++  </footer>
++  <div id="toast" class="toast hidden" role="status"></div>
++</div>
++<script>
++const S = STRINGS_PLACEHOLDER;
++const LAUNCHERS = LAUNCHERS_PLACEHOLDER;
++const PROFILES = PROFILES_PLACEHOLDER;
++const VARIANTS = VARIANTS_PLACEHOLDER;
++const $ = (id) => document.getElementById(id);
++
++let snap = null;
++let optionsProfile = 'standard';
++let optionTexts = {};
++
++function mk(tag, cls, text) {
++  const e = document.createElement(tag);
++  if (cls) e.className = cls;
++  if (text !== undefined) e.textContent = text;
++  return e;
++}
++function api() { return (window.pywebview && window.pywebview.api) || null; }
++function fmt(s, vars) { let o = s; Object.keys(vars).forEach((k) => { o = o.split('{' + k + '}').join(vars[k]); }); return o; }
++
++function toast(msg) {
++  const t = $('toast');
++  t.textContent = msg;
++  t.classList.remove('hidden');
++  clearTimeout(toast._t);
++  toast._t = setTimeout(() => t.classList.add('hidden'), 4500);
++}
++
++function setTitle(text) {
++  const h = $('title');
++  h.textContent = '';
++  const i = text.indexOf('AvalOS');
++  if (i < 0) { h.textContent = text; return; }
++  h.appendChild(document.createTextNode(text.slice(0, i)));
++  h.appendChild(mk('span', 'accent', 'AvalOS'));
++  h.appendChild(document.createTextNode(text.slice(i + 'AvalOS'.length)));
++}
++
++function section(parent, key) { parent.appendChild(mk('h2', '', S[key])); }
++function fact(k, v) {
++  const f = mk('div', 'fact');
++  f.appendChild(mk('div', 'k', k));
++  f.appendChild(mk('div', 'v', v || '—'));
++  return f;
++}
++
++async function call(name, ...args) {
++  const a = api();
++  if (!a) return null;
++  try { return await a[name](...args); } catch (e) { return null; }
++}
++
++/* ── Lanzadores ─────────────────────────────────────────── */
++function renderLaunchers(box) {
++  section(box, 'h-launchers');
++  const grid = mk('div', 'grid');
++  LAUNCHERS.forEach(([id, name, icon]) => {
++    const on = snap.launchers[id] === true;
++    const b = mk('button', 'tile');
++    b.type = 'button';
++    b.disabled = !on;
++    b.dataset.launcher = id;
++    b.appendChild(mk('span', 'ic', icon));
++    const info = mk('span', 'info');
++    info.appendChild(mk('div', 't', name));
++    info.appendChild(mk('div', 'd', on ? S['d-' + id] : S['l-missing']));
++    b.appendChild(info);
++    b.addEventListener('click', async () => {
++      const ok = await call('open_launcher', id);
++      if (!ok) toast(S['l-missing']);
++    });
++    grid.appendChild(b);
++  });
++  box.appendChild(grid);
++  const store = mk('button', 'btn', S['l-store']);
++  store.type = 'button';
++  store.id = 'store-btn';
++  store.style.marginTop = '8px';
++  store.addEventListener('click', () => call('open_store'));
++  box.appendChild(store);
++}
++
++/* ── GameMode ───────────────────────────────────────────── */
++function renderGamemode(box) {
++  section(box, 'h-gamemode');
++  const g = snap.gamemode;
++  const card = mk('div', 'card');
++  const top = mk('div', 'row');
++  const st = mk('div', 'status');
++  st.appendChild(mk('span', 'dot ' + g.state));
++  st.appendChild(document.createTextNode(S['gm-' + (g.state === 'missing' ? 'missing' : g.state === 'active' ? 'active' : g.state === 'idle' ? 'idle' : 'unknown')]));
++  top.appendChild(st);
++  if (g.installed) {
++    const btn = mk('button', 'btn', S['gm-test']);
++    btn.type = 'button';
++    btn.id = 'gm-test-btn';
++    btn.addEventListener('click', runGamemodeTest);
++    top.appendChild(btn);
++  }
++  card.appendChild(top);
++  if (g.installed) {
++    const facts = mk('div', 'facts');
++    facts.appendChild(fact(S['gm-governor'], g.governor));
++    facts.appendChild(fact(S['gm-target'], g.target));
++    facts.appendChild(fact(S['gm-driver'], g.driver));
++    facts.appendChild(fact(S['gm-epp'], g.epp));
++    if (g.whitelist.length) facts.appendChild(fact(S['gm-works'], g.whitelist.join(', ')));
++    card.appendChild(facts);
++    const grp = g.in_group === true ? ['gm-group-ok', 'ok'] : g.in_group === false ? ['gm-group-no', 'warn'] : ['gm-group-na', 'warn'];
++    card.appendChild(mk('div', 'note ' + grp[1], S[grp[0]]));
++    card.appendChild(mk('div', 'note', S['gm-test-note']));
++    const res = mk('div', 'hidden');
++    res.id = 'gm-test-res';
++    card.appendChild(res);
++  }
++  box.appendChild(card);
++}
++
++async function runGamemodeTest() {
++  const btn = $('gm-test-btn');
++  const res = $('gm-test-res');
++  btn.disabled = true;
++  btn.textContent = S['gm-testing'];
++  const r = (await call('gamemode_test')) || { state: 'error' };
++  btn.disabled = false;
++  btn.textContent = S['gm-test'];
++  res.textContent = '';
++  res.className = '';
++  let cls = 'bad';
++  let msg = S['gm-test-err'];
++  if (r.state === 'done') {
++    if (r.failed === 0) { cls = 'ok'; msg = fmt(S['gm-test-ok'], { n: r.passed }); }
++    else { msg = fmt(S['gm-test-fail'], { n: r.failed }); }
++  }
++  res.appendChild(mk('div', 'note ' + cls, msg));
++  if (r.output && cls === 'bad') res.appendChild(mk('pre', 'out', r.output));
++}
++
++/* ── MangoHud ───────────────────────────────────────────── */
++function renderMango(box) {
++  section(box, 'h-mango');
++  const m = snap.mango;
++  const card = mk('div', 'card');
++  if (!m.installed) {
++    card.appendChild(mk('div', 'dim', S['mg-missing']));
++    box.appendChild(card);
++    return;
++  }
++  card.appendChild(mk('div', 'dim', S['mg-desc']));
++  const stateName = m.active === 'none' ? S['mg-none'] : m.active === 'custom' ? S['mg-custom'] : S['mp-' + m.active];
++  const state = mk('div', 'note');
++  state.id = 'mg-state';
++  state.textContent = S['mg-state'] + ' ' + stateName;
++  card.appendChild(state);
++  const grid = mk('div', 'profiles');
++  PROFILES.forEach((id) => {
++    const p = mk('div', 'profile' + (m.active === id ? ' on' : ''));
++    p.dataset.profile = id;
++    p.appendChild(mk('div', 't', S['mp-' + id]));
++    p.appendChild(mk('div', 'dim', S['mpd-' + id]));
++    const b = mk('button', 'btn', m.active === id ? S['mg-current'] : S['mg-use']);
++    b.type = 'button';
++    b.disabled = m.active === id;
++    b.addEventListener('click', () => applyProfile(id));
++    p.appendChild(b);
++    grid.appendChild(p);
++  });
++  card.appendChild(grid);
++  if (m.has_backup) {
++    const row = mk('div', 'row top');
++    row.style.marginTop = '10px';
++    row.appendChild(mk('div', 'note', S['mg-backup']));
++    const rb = mk('button', 'btn', S['mg-restore']);
++    rb.type = 'button';
++    rb.id = 'mg-restore-btn';
++    rb.addEventListener('click', restoreBackup);
++    row.appendChild(rb);
++    card.appendChild(row);
++  }
++  box.appendChild(card);
++}
++
++async function applyProfile(id) {
++  const r = await call('mango_apply', id);
++  if (!r || r.error) { toast(S['mg-err']); return; }
++  snap.mango = r;
++  toast(fmt(S['mg-applied'], { name: S['mp-' + id] }));
++  if (optionsProfile !== id) { optionsProfile = id; await loadOptions(); }
++  render();
++}
++
++async function restoreBackup() {
++  const r = await call('mango_restore');
++  if (!r || r.error) { toast(S['mg-err']); return; }
++  snap.mango = r;
++  toast(S['mg-restored']);
++  render();
++}
++
++/* ── Opciones de lanzamiento ────────────────────────────── */
++async function loadOptions() {
++  optionTexts = (await call('launch_options', optionsProfile)) || {};
++}
++
++function renderOptions(box) {
++  section(box, 'h-options');
++  const card = mk('div', 'card');
++  card.appendChild(mk('div', 'dim', S['lo-desc']));
++  const pick = mk('div', 'opt');
++  pick.style.marginTop = '10px';
++  pick.appendChild(mk('span', 'lbl', S['lo-profile-label']));
++  const sel = mk('select');
++  sel.id = 'lo-profile';
++  PROFILES.forEach((id) => {
++    const o = mk('option', '', S['mp-' + id]);
++    o.value = id;
++    if (id === optionsProfile) o.selected = true;
++    sel.appendChild(o);
++  });
++  sel.addEventListener('change', async () => { optionsProfile = sel.value; await loadOptions(); render(); });
++  pick.appendChild(sel);
++  card.appendChild(pick);
++  const list = mk('div', 'opts');
++  VARIANTS.forEach((v) => {
++    const row = mk('div', 'opt');
++    row.dataset.variant = v;
++    row.appendChild(mk('span', 'lbl', S['lo-' + v]));
++    row.appendChild(mk('code', '', optionTexts[v] || '—'));
++    const b = mk('button', 'btn', S['lo-copy']);
++    b.type = 'button';
++    b.addEventListener('click', async () => {
++      const r = await call('copy_options', v, optionsProfile);
++      toast(r && r.ok ? S['lo-copied'] : S['lo-copy-failed']);
++    });
++    row.appendChild(b);
++    list.appendChild(row);
++  });
++  card.appendChild(list);
++  box.appendChild(card);
++}
++
++/* ── Proton ─────────────────────────────────────────────── */
++function renderTools(box) {
++  section(box, 'h-tools');
++  const card = mk('div', 'card');
++  if (!snap.tools.length) {
++    card.appendChild(mk('div', 'dim', S['pt-none']));
++  } else {
++    card.appendChild(mk('div', 'dim', fmt(S['pt-count'], { n: snap.tools.length })));
++    const chips = mk('div', 'chips');
++    snap.tools.forEach((t) => chips.appendChild(mk('span', 'chip', t)));
++    card.appendChild(chips);
++  }
++  card.appendChild(mk('div', 'note', S['pt-hint']));
++  box.appendChild(card);
++}
++
++/* ── Gráficos y pantallas ───────────────────────────────── */
++function renderSystem(box) {
++  section(box, 'h-system');
++  const card = mk('div', 'card');
++  const facts = mk('div', 'facts');
++  facts.appendChild(fact(S['sy-gpu'], snap.system.gpus.length ? snap.system.gpus.join(', ') : S['sy-none']));
++  if (snap.system.monitors.length) {
++    snap.system.monitors.forEach((m) => {
++      const vrr = m.vrr === true ? ' · ' + S['sy-vrr-on'] : m.vrr === false ? ' · ' + S['sy-vrr-off'] : '';
++      facts.appendChild(fact(m.name, (m.mode || '—') + vrr));
++    });
++  } else {
++    facts.appendChild(fact(S['sy-displays'], S['sy-none']));
++  }
++  card.appendChild(facts);
++  box.appendChild(card);
++}
++
++function render() {
++  const box = $('content');
++  box.textContent = '';
++  renderLaunchers(box);
++  renderGamemode(box);
++  renderMango(box);
++  renderOptions(box);
++  renderTools(box);
++  renderSystem(box);
++  $('loading').classList.add('hidden');
++  box.classList.remove('hidden');
++}
++
++function closeWin() { const a = api(); if (a) a.close(); }
++
++setTitle(S.title);
++$('subtitle').textContent = S.subtitle;
++$('loading').textContent = S.loading;
++$('note').textContent = S.note;
++$('b-close').textContent = S['b-close'];
++$('b-close').addEventListener('click', closeWin);
++document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeWin(); });
++
++async function ready() {
++  const s = await call('snapshot');
++  if (!s) return;
++  snap = s;
++  if (PROFILES.indexOf(snap.mango.active) !== -1) optionsProfile = snap.mango.active;
++  await loadOptions();
++  render();
++}
++window.addEventListener('pywebviewready', ready);
++</script>
++</body>
++</html>"""
++
++
++def _js(obj) -> str:
++    # Va dentro de un <script>: que un "</" nunca cierre la etiqueta antes de tiempo.
++    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
++
++
++def _render_html(lang: str) -> str:
++    return (_build_html()
++            .replace("LANG_PLACEHOLDER", _HTML_LANG.get(lang, lang))
++            .replace("STRINGS_PLACEHOLDER", _js(STRINGS[lang]))
++            .replace("LAUNCHERS_PLACEHOLDER", _js([[lid, name, icon] for lid, name, _c, icon in LAUNCHERS]))
++            .replace("PROFILES_PLACEHOLDER", _js(list(MANGO_ORDER)))
++            .replace("VARIANTS_PLACEHOLDER", _js(list(LAUNCH_VARIANTS))))
++
++
++def _gui():
++    import webview  # solo la ventana lo necesita
++    T = STRINGS[LANG]
++    html = _render_html(LANG)
++
++    # Mismo fix que las demás apps: sin esto GTK usa "python3" como app_id en Wayland y
++    # la window rule (class = "avalos-gamecenter") nunca matchea.
++    try:
++        from gi.repository import GLib
++        GLib.set_prgname("avalos-gamecenter")
++    except Exception:
++        pass
++
++    api = GameAPI()
++    win = webview.create_window(
++        title            = T["title"],
++        html             = html,
++        js_api           = api,
++        width            = 940,
++        height           = 700,
++        min_size         = (640, 480),
++        resizable        = True,
++        background_color = "#1a1b26",
++    )
++    api.window = win
++    try:
++        webview.start(debug=False)
++    except Exception as e:  # noqa: BLE001
++        print(f"ERROR al iniciar pywebview: {e}", file=sys.stderr)
++        return 1
++    return 0
++
++
++def main(argv=None):
++    global LANG
++    ap = argparse.ArgumentParser(prog="avalos-gamecenter", description="AvalOS Game Center: launchers, GameMode, MangoHud and launch options in one window.")
++    ap.add_argument("--json", action="store_true", help="print what the Game Center sees, then exit")
++    ap.add_argument("--lang", choices=_SUPPORTED, help="language of the window")
++    a = ap.parse_args(argv)
++    if a.lang:
++        LANG = a.lang
++    if a.json:
++        print(json.dumps(snapshot(), ensure_ascii=False, indent=2))
++        return 0
++    if not _has_display():
++        print("avalos-gamecenter: no graphical session found (WAYLAND_DISPLAY/DISPLAY)", file=sys.stderr)
++        return 1
++    return _gui()
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/avalos-update-helper b/scripts/avalos-update-helper
+index 972e5a9..515c76c 100644
+--- a/scripts/avalos-update-helper
++++ b/scripts/avalos-update-helper
+@@ -641,6 +641,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+         ("scripts/avalos-doctor", "/usr/local/bin/avalos-doctor", 0o755),
+         ("scripts/avalos-welcome", "/usr/local/bin/avalos-welcome", 0o755),
+         ("scripts/avalos-control", "/usr/local/bin/avalos-control", 0o755),
++        ("scripts/avalos-gamecenter", "/usr/local/bin/avalos-gamecenter", 0o755),
+         ("configs/avalos-store-catalog.json", "/usr/local/bin/avalos-store-catalog.json", 0o644),
+         ("configs/avalos-settings.desktop", "/usr/share/applications/avalos-settings.desktop", 0o644),
+         ("configs/avalos-store.desktop", "/usr/share/applications/avalos-store.desktop", 0o644),
+@@ -657,6 +658,8 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
+         ("configs/avalos-welcome.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-welcome.svg", 0o644),
+         ("configs/avalos-control.desktop", "/usr/share/applications/avalos-control.desktop", 0o644),
+         ("configs/avalos-control.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-control.svg", 0o644),
++        ("configs/avalos-gamecenter.desktop", "/usr/share/applications/avalos-gamecenter.desktop", 0o644),
++        ("configs/avalos-gamecenter.svg", "/usr/share/icons/hicolor/scalable/apps/avalos-gamecenter.svg", 0o644),
+         ("configs/hyprland/hyprland_conf_lua.template", "/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template", 0o644),
+         ("configs/hyprland/hyprpaper.conf", "/usr/share/avalos/configs/hyprland/hyprpaper.conf", 0o644),
+         ("configs/hyprland/hypridle.conf", "/usr/share/avalos/configs/hyprland/hypridle.conf", 0o644),
+diff --git a/scripts/avalos-welcome b/scripts/avalos-welcome
+index 5f543fa..ad1d740 100755
+--- a/scripts/avalos-welcome
++++ b/scripts/avalos-welcome
+@@ -82,6 +82,7 @@ SHORTCUTS = [
+     (("Super", "Alt", "S"), "k-store"),
+     (("Super", "Alt", "U"), "k-update"),
+     (("Super", "Alt", "C"), "k-control"),
++    (("Super", "Alt", "G"), "k-gamecenter"),
+     (("Super", "Ctrl", "S"), "k-settings"),
+     (("Super", "Ctrl", "W"), "k-wall"),
+     (("Super", "Shift", "E"), "k-power"),
+@@ -117,6 +118,7 @@ STRINGS = {
+         "k-store": "AvalOS store",
+         "k-update": "Updates",
+         "k-control": "Control center",
++        "k-gamecenter": "Game center",
+         "k-settings": "AvalOS settings",
+         "k-wall": "Wallpaper",
+         "k-power": "Power menu",
+@@ -155,6 +157,7 @@ STRINGS = {
+         "k-store": "Tienda de AvalOS",
+         "k-update": "Actualizaciones",
+         "k-control": "Centro de control",
++        "k-gamecenter": "Game Center",
+         "k-settings": "Configuración de AvalOS",
+         "k-wall": "Fondo de pantalla",
+         "k-power": "Menú de energía",
+@@ -193,6 +196,7 @@ STRINGS = {
+         "k-store": "AvalOS 商店",
+         "k-update": "系统更新",
+         "k-control": "控制中心",
++        "k-gamecenter": "游戏中心",
+         "k-settings": "AvalOS 设置",
+         "k-wall": "壁纸",
+         "k-power": "电源菜单",
+@@ -231,6 +235,7 @@ STRINGS = {
+         "k-store": "AvalOS ストア",
+         "k-update": "アップデート",
+         "k-control": "コントロールセンター",
++        "k-gamecenter": "ゲームセンター",
+         "k-settings": "AvalOS 設定",
+         "k-wall": "壁紙",
+         "k-power": "電源メニュー",
+diff --git a/scripts/avalos_installer/system/optimize.py b/scripts/avalos_installer/system/optimize.py
+index f852729..3924469 100644
+--- a/scripts/avalos_installer/system/optimize.py
++++ b/scripts/avalos_installer/system/optimize.py
+@@ -103,7 +103,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
+ 
+     session.log(session.t("log-installing-scripts"), "info")
+     _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
+-                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control")
++                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter")
+     for _script_name in _avalos_scripts:
+         _content = read_config(f"scripts/{_script_name}")
+         if _content:
+@@ -247,6 +247,14 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
+     else:
+         session.log(session.t("log-control-desktop-missing"), "warn")
+ 
++    # avalos-gamecenter: lanzadores, GameMode, perfiles de MangoHud (todo como usuario, sin polkit).
++    _content = read_config("avalos-gamecenter.desktop")
++    if _content:
++        (_apps_dir / "avalos-gamecenter.desktop").write_text(_content, encoding="utf-8")
++        session.log(session.t("log-gamecenter-desktop-installed"), "ok")
++    else:
++        session.log(session.t("log-gamecenter-desktop-missing"), "warn")
++
+     _content = read_config("avalos-restore.svg")
+     if _content:
+         (_icon_dir / "avalos-restore.svg").write_text(_content, encoding="utf-8")
+@@ -275,6 +283,13 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
+     else:
+         session.log(session.t("log-control-icon-missing"), "warn")
+ 
++    _content = read_config("avalos-gamecenter.svg")
++    if _content:
++        (_icon_dir / "avalos-gamecenter.svg").write_text(_content, encoding="utf-8")
++        session.log(session.t("log-gamecenter-icon-installed"), "ok")
++    else:
++        session.log(session.t("log-gamecenter-icon-missing"), "warn")
++
+     (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
+         datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+         encoding="utf-8"
+diff --git a/scripts/gen-sync-manifest.py b/scripts/gen-sync-manifest.py
+index 83b7173..d204d68 100755
+--- a/scripts/gen-sync-manifest.py
++++ b/scripts/gen-sync-manifest.py
+@@ -61,6 +61,7 @@ RUTAS = [
+     "scripts/avalos-doctor",
+     "scripts/avalos-welcome",
+     "scripts/avalos-control",
++    "scripts/avalos-gamecenter",
+     "configs/avalos-store-catalog.json",
+     "configs/avalos-settings.desktop",
+     "configs/avalos-store.desktop",
+@@ -77,6 +78,8 @@ RUTAS = [
+     "configs/avalos-welcome.svg",
+     "configs/avalos-control.desktop",
+     "configs/avalos-control.svg",
++    "configs/avalos-gamecenter.desktop",
++    "configs/avalos-gamecenter.svg",
+     "configs/hyprland/hyprland_conf_lua.template",
+     "configs/hyprland/hyprpaper.conf",
+     "configs/hyprland/hypridle.conf",
+diff --git a/scripts/skill_instalar_usb.py b/scripts/skill_instalar_usb.py
+index 4cdced5..cdb4ce5 100644
+--- a/scripts/skill_instalar_usb.py
++++ b/scripts/skill_instalar_usb.py
+@@ -3088,7 +3088,7 @@ class VentanaInstalador :
+         self ._log (self ._t ("log-gpu-env-installed"),"ok")
+ 
+         self ._log (self ._t ("log-installing-scripts"),"info")
+-        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about","avalos-update","avalos-update-helper","avalos-store","avalos-restore","avalos-doctor","avalos-welcome","avalos-control"):
++        for _script_name in ("avalos-settings","avalos-wallpaper","avalos-about","avalos-update","avalos-update-helper","avalos-store","avalos-restore","avalos-doctor","avalos-welcome","avalos-control","avalos-gamecenter"):
+             _contenido =_leer_config (f"scripts/{_script_name }")
+             if _contenido :
+                 _script_path =_bin_dir /_script_name
+@@ -3165,6 +3165,14 @@ class VentanaInstalador :
+         else :
+             self ._log (self ._t ("log-control-desktop-missing"),"warn")
+ 
++        # avalos-gamecenter: mismo caso, ver optimize.py del instalador modular.
++        _contenido =_leer_config ("avalos-gamecenter.desktop")
++        if _contenido :
++            (_apps_dir /"avalos-gamecenter.desktop").write_text (_contenido ,encoding ="utf-8")
++            self ._log (self ._t ("log-gamecenter-desktop-installed"),"ok")
++        else :
++            self ._log (self ._t ("log-gamecenter-desktop-missing"),"warn")
++
+         # avalos-update necesita pkexec para elevar avalos-update-helper (ver
+         # avalos-update.policy) — polkitd + hyprpolkitagent ya corren en el
+         # sistema instalado (servicios habilitados / exec-once de Hyprland),
+@@ -3250,6 +3258,13 @@ class VentanaInstalador :
+         else :
+             self ._log (self ._t ("log-control-icon-missing"),"warn")
+ 
++        _contenido =_leer_config ("avalos-gamecenter.svg")
++        if _contenido :
++            (_icon_dir /"avalos-gamecenter.svg").write_text (_contenido ,encoding ="utf-8")
++            self ._log (self ._t ("log-gamecenter-icon-installed"),"ok")
++        else :
++            self ._log (self ._t ("log-gamecenter-icon-missing"),"warn")
++
+         (MOUNT_ROOT /"etc"/"avalos-install-date").write_text (
+         datetime .datetime .now ().strftime ("%Y-%m-%d %H:%M"),
+         encoding ="utf-8"
+diff --git a/scripts/translations.py b/scripts/translations.py
+index d283fc4..99895f0 100644
+--- a/scripts/translations.py
++++ b/scripts/translations.py
+@@ -491,6 +491,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-control-desktop-missing": "avalos-control.desktop not found — AvalOS Control Center will not appear in the app launcher",
+         "log-control-icon-installed": "avalos-control icon installed",
+         "log-control-icon-missing": "avalos-control.svg not found — the app will show a generic icon",
++        "log-gamecenter-desktop-installed": "avalos-gamecenter installed to desktop",
++        "log-gamecenter-desktop-missing": "avalos-gamecenter.desktop not found — AvalOS Game Center will not appear in the app launcher",
++        "log-gamecenter-icon-installed": "avalos-gamecenter icon installed",
++        "log-gamecenter-icon-missing": "avalos-gamecenter.svg not found — the app will show a generic icon",
+         "log-snapper-config-created": "Snapper configuration created",
+         "log-snapper-create-config-fail": "Snapper config creation failed (exit {rc}): {out}",
+         "log-snapper-skipped-continuing": "Continuing without snapshot support — the rest of the install is unaffected",
+@@ -1041,6 +1045,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-control-desktop-missing": "avalos-control.desktop no encontrado — el Centro de control de AvalOS no aparecerá en el lanzador de apps",
+         "log-control-icon-installed": "ícono de avalos-control instalado",
+         "log-control-icon-missing": "avalos-control.svg no encontrado — la app mostrará un ícono genérico",
++        "log-gamecenter-desktop-installed": "avalos-gamecenter instalado en el escritorio",
++        "log-gamecenter-desktop-missing": "avalos-gamecenter.desktop no encontrado — el Game Center de AvalOS no aparecerá en el lanzador de apps",
++        "log-gamecenter-icon-installed": "ícono de avalos-gamecenter instalado",
++        "log-gamecenter-icon-missing": "avalos-gamecenter.svg no encontrado — la app mostrará un ícono genérico",
+         "log-snapper-config-created": "Configuración de Snapper creada",
+         "log-snapper-create-config-fail": "Creación de config de Snapper falló (código {rc}): {out}",
+         "log-snapper-skipped-continuing": "Continuando sin soporte de snapshots — el resto de la instalación no se ve afectado",
+@@ -1590,6 +1598,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-control-desktop-missing": "未找到 avalos-control.desktop — AvalOS 控制中心不会出现在应用启动器中",
+         "log-control-icon-installed": "已安装 avalos-control 图标",
+         "log-control-icon-missing": "未找到 avalos-control.svg — 应用将显示通用图标",
++        "log-gamecenter-desktop-installed": "avalos-gamecenter 已安装到桌面",
++        "log-gamecenter-desktop-missing": "未找到 avalos-gamecenter.desktop — AvalOS 游戏中心不会出现在应用启动器中",
++        "log-gamecenter-icon-installed": "已安装 avalos-gamecenter 图标",
++        "log-gamecenter-icon-missing": "未找到 avalos-gamecenter.svg — 应用将显示通用图标",
+         "log-snapper-config-created": "Snapper 配置已创建",
+         "log-snapper-create-config-fail": "Snapper 配置创建失败（退出码 {rc}）：{out}",
+         "log-snapper-skipped-continuing": "跳过快照支持，继续安装 — 其余安装不受影响",
+@@ -2148,6 +2160,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
+         "log-control-desktop-missing": "avalos-control.desktop が見つかりません — AvalOS コントロールセンターはアプリランチャーに表示されません",
+         "log-control-icon-installed": "avalos-control のアイコンをインストールしました",
+         "log-control-icon-missing": "avalos-control.svg が見つかりません — 汎用アイコンで表示されます",
++        "log-gamecenter-desktop-installed": "avalos-gamecenter をデスクトップにインストールしました",
++        "log-gamecenter-desktop-missing": "avalos-gamecenter.desktop が見つかりません — AvalOS ゲームセンターはアプリランチャーに表示されません",
++        "log-gamecenter-icon-installed": "avalos-gamecenter のアイコンをインストールしました",
++        "log-gamecenter-icon-missing": "avalos-gamecenter.svg が見つかりません — 汎用アイコンで表示されます",
+         "log-snapper-config-created": "Snapper の設定を作成しました",
+         "log-snapper-create-config-fail": "Snapper の設定作成に失敗しました（終了コード {rc}）：{out}",
+         "log-snapper-skipped-continuing": "スナップショット機能なしで続行します — 残りのインストールには影響しません",
+diff --git a/scripts/validate_app_consistency.py b/scripts/validate_app_consistency.py
+index cd02728..04b974f 100755
+--- a/scripts/validate_app_consistency.py
++++ b/scripts/validate_app_consistency.py
+@@ -47,7 +47,7 @@ LIVE = ROOT / "configs" / "hyprland" / "hyprland.lua"
+ TEMPLATE = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
+ CATALOG = ROOT / "configs" / "avalos-store-catalog.json"
+ MODS = {"SUPER", "SHIFT", "CTRL", "ALT"}
+-NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control"}
++NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter"}
+ # Herramientas que abre el Centro de control y que NO son de AvalOS: comando -> paquete que las instala.
+ CONTROL_TOOL_PACKAGES = {
+     "nwg-look": "nwg-look", "nwg-displays": "nwg-displays", "pavucontrol": "pavucontrol",
+diff --git a/tests/js/control_center_ui.js b/tests/js/control_center_ui.js
+index 359c8b3..6718fe2 100644
+--- a/tests/js/control_center_ui.js
++++ b/tests/js/control_center_ui.js
+@@ -39,7 +39,7 @@ const type = (text) => { const s = q('#search'); s.value = text; s.dispatchEvent
+   check(doc.documentElement.lang === (lang === 'zh' ? 'zh-CN' : lang), 'lang del documento');
+   check(q('#title').textContent === STR.title, 'título');
+   check(q('.accent') === null || q('.accent').textContent === 'AvalOS', 'AvalOS con degradado en el título');
+-  check(qa('.tile').length === 14, '14 lanzadores dibujados');
++  check(qa('.tile').length === 15, '15 lanzadores dibujados');
+   check(qa('#groups h2').length === 5, '5 grupos');
+   check(qa('.fact').length === 6 && qa('.fact .v').every((v) => v.textContent === '—'), 'resumen con «—» antes de cargar');
+ 
+@@ -69,7 +69,7 @@ const type = (text) => { const s = q('#search'); s.value = text; s.dispatchEvent
+   type('<img src=x onerror=alert(1)>');
+   check(qa('img').length === 0 && q('#empty').textContent.includes('<img'), 'lo buscado se muestra como texto, nunca como HTML');
+   type('');
+-  check(qa('.tile').length === 14 && !q('#overview').classList.contains('hidden'), 'vaciar la búsqueda lo restaura todo');
++  check(qa('.tile').length === 15 && !q('#overview').classList.contains('hidden'), 'vaciar la búsqueda lo restaura todo');
+ 
+   // Enter abre el primer resultado activo (el Doctor está desactivado, así que no cuenta)
+   type('health'); calls.length = 0;
+diff --git a/tests/js/gamecenter_ui.js b/tests/js/gamecenter_ui.js
+new file mode 100644
+index 0000000..dc83e97
+--- /dev/null
++++ b/tests/js/gamecenter_ui.js
+@@ -0,0 +1,154 @@
++// Prueba de humo del front-end de avalos-gamecenter con jsdom (sin navegador).
++//   node gamecenter_ui.js <pagina.html> <idioma>      (jsdom en NODE_PATH)
++// Una línea "ok: ..." por comprobación; sale con 1 en la primera que falle.
++const fs = require('fs');
++const { JSDOM } = require('jsdom');
++
++const [, , file, lang] = process.argv;
++const html = fs.readFileSync(file, 'utf8');
++const STR = JSON.parse(/const S = (\{.*?\});\nconst LAUNCHERS/s.exec(html)[1]);
++const tick = () => new Promise((r) => setTimeout(r, 15));
++let n = 0;
++function check(cond, what) { n++; if (!cond) { console.log('FALLA: ' + what); process.exit(1); } console.log('ok: ' + what); }
++
++const BASE = () => ({
++  launchers: { steam: true, lutris: false, heroic: true, prism: false, bottles: false },
++  gamemode: { installed: true, state: 'idle', in_group: true, governor: 'powersave', driver: 'amd-pstate-epp', epp: 'balance_performance', target: 'performance', whitelist: ['steam', 'lutris'] },
++  mango: { installed: true, active: 'standard', has_backup: false, profiles: ['minimal', 'standard', 'full', 'hidden'] },
++  tools: [], system: { gpus: ['AMD · amdgpu'], monitors: [{ name: 'DP-1', mode: '2560×1440 @ 165 Hz', vrr: true }] },
++});
++const OPTS = (p) => ({ gamemode: 'gamemoderun %command%', mangohud: 'mangohud %command%', both: 'mangohud gamemoderun %command%',
++  profile: 'MANGOHUD_CONFIGFILE=PROFILE-' + p + ' mangohud gamemoderun %command%' });
++
++async function boot(snapshot, over = {}) {
++  const calls = []; const errors = [];
++  const api = {
++    snapshot: async () => snapshot,
++    open_launcher: async (id) => { calls.push(['open_launcher', id]); return true; },
++    open_store: async () => { calls.push(['open_store']); return true; },
++    gamemode_test: async () => { calls.push(['gamemode_test']); return { state: 'done', passed: 6, failed: 0, output: '' }; },
++    mango_apply: async (id) => { calls.push(['mango_apply', id]); return Object.assign({}, snapshot.mango, { active: id }); },
++    mango_restore: async () => { calls.push(['mango_restore']); return Object.assign({}, snapshot.mango, { active: 'custom', has_backup: true }); },
++    launch_options: async (p) => { calls.push(['launch_options', p]); return OPTS(p); },
++    copy_options: async (v, p) => { calls.push(['copy_options', v, p]); return { ok: true, text: '' }; },
++    close: async () => { calls.push(['close']); },
++  };
++  Object.assign(api, over);
++  const dom = new JSDOM(html, { runScripts: 'dangerously', pretendToBeVisual: true, beforeParse(w) {
++    w.addEventListener('error', (e) => errors.push(String(e.error || e.message)));
++    w.pywebview = { api };
++  } });
++  const w = dom.window; const d = w.document;
++  return { w, d, calls, errors, q: (s) => d.querySelector(s), qa: (s) => Array.from(d.querySelectorAll(s)),
++    ready: async () => { w.dispatchEvent(new w.Event('pywebviewready')); await tick(); await tick(); } };
++}
++
++(async () => {
++  // ── carga ───────────────────────────────────────────────────────────────
++  let p = await boot(BASE());
++  check(p.d.documentElement.lang === (lang === 'zh' ? 'zh-CN' : lang), 'lang del documento');
++  check(p.q('#title').textContent === STR.title, 'título');
++  check(p.q('#loading').textContent === STR.loading && p.q('#content').classList.contains('hidden'), 'antes de cargar: mensaje de lectura');
++  await p.ready();
++  check(p.q('#loading').classList.contains('hidden') && !p.q('#content').classList.contains('hidden'), 'tras cargar: contenido visible');
++  check(p.qa('#content h2').length === 6, '6 secciones');
++
++  // ── lanzadores ──────────────────────────────────────────────────────────
++  check(p.qa('[data-launcher]').length === 5, '5 lanzadores');
++  check(p.q('[data-launcher="steam"]').querySelector('.d').textContent === STR['d-steam'] && !p.q('[data-launcher="steam"]').disabled, 'instalado: activo con su descripción');
++  check(p.q('[data-launcher="lutris"]').disabled && p.q('[data-launcher="lutris"]').querySelector('.d').textContent === STR['l-missing'], 'no instalado: desactivado y con aviso');
++  p.q('[data-launcher="heroic"]').click(); await tick();
++  check(JSON.stringify(p.calls.at(-1)) === '["open_launcher","heroic"]', 'clic abre el lanzador correcto');
++  p.q('#store-btn').click(); await tick();
++  check(JSON.stringify(p.calls.at(-1)) === '["open_store"]', 'botón de la Tienda');
++  let q2 = await boot(BASE(), { open_launcher: async () => false }); await q2.ready();
++  q2.q('[data-launcher="steam"]').click(); await tick();
++  check(!q2.q('#toast').classList.contains('hidden') && q2.q('#toast').textContent === STR['l-missing'], 'si no se puede abrir: aviso');
++
++  // ── GameMode ────────────────────────────────────────────────────────────
++  const gmText = () => p.qa('#content .card')[0].querySelector('.status').textContent;
++  check(gmText() === STR['gm-idle'] && p.q('.status .dot.idle'), 'GameMode listo');
++  check(p.qa('#content .card')[0].querySelector('.facts').textContent.includes('powersave') && p.q('.facts').textContent.includes('steam, lutris'), 'datos del gobernador y programas');
++  check(p.qa('#content .card')[0].querySelector('.note.ok').textContent === STR['gm-group-ok'], 'grupo gamemode: ok');
++  const mkGm = async (g) => { const s = BASE(); Object.assign(s.gamemode, g); const x = await boot(s); await x.ready(); return x; };
++  let x = await mkGm({ state: 'active' });
++  check(x.q('.status').textContent === STR['gm-active'] && x.q('.status .dot.active'), 'GameMode activo');
++  x = await mkGm({ state: 'unknown' }); check(x.q('.status').textContent === STR['gm-unknown'], 'GameMode con estado ilegible');
++  x = await mkGm({ in_group: false }); check(x.q('.note.warn').textContent === STR['gm-group-no'], 'grupo gamemode: aviso de volver a entrar');
++  x = await mkGm({ in_group: null }); check(x.q('.note.warn').textContent === STR['gm-group-na'], 'grupo gamemode inexistente');
++  x = await mkGm({ installed: false, state: 'missing' });
++  check(x.q('.status').textContent === STR['gm-missing'] && !x.q('#gm-test-btn') && !x.qa('#content .card')[0].querySelector('.facts'), 'sin GameMode: aviso, sin botón ni datos');
++  p.q('#gm-test-btn').click();
++  check(p.q('#gm-test-btn').disabled && p.q('#gm-test-btn').textContent === STR['gm-testing'], 'prueba: botón en «Probando…»');
++  await tick();
++  check(p.q('#gm-test-res .note.ok').textContent === STR['gm-test-ok'].replace('{n}', '6') && !p.q('#gm-test-btn').disabled, 'prueba aprobada');
++  x = await boot(BASE(), { gamemode_test: async () => ({ state: 'done', passed: 4, failed: 2, output: 'x' }) }); await x.ready();
++  x.q('#gm-test-btn').click(); await tick();
++  check(x.q('#gm-test-res .note').textContent === STR['gm-test-fail'].replace('{n}', '2'), 'prueba con fallos');
++  x = await boot(BASE(), { gamemode_test: async () => ({ state: 'error', output: '<b>traza</b>' }) }); await x.ready();
++  x.q('#gm-test-btn').click(); await tick();
++  check(x.q('#gm-test-res .note.bad').textContent === STR['gm-test-err'] && x.q('#gm-test-res pre').textContent === '<b>traza</b>' && !x.q('#gm-test-res b'), 'prueba que no termina: aviso y salida como texto');
++
++  // ── MangoHud ────────────────────────────────────────────────────────────
++  check(p.q('#mg-state').textContent === STR['mg-state'] + ' ' + STR['mp-standard'], 'perfil en uso');
++  check(p.qa('[data-profile]').length === 4 && p.q('[data-profile="standard"]').classList.contains('on'), '4 perfiles, el activo marcado');
++  check(p.q('[data-profile="standard"] button').disabled && p.q('[data-profile="standard"] button').textContent === STR['mg-current'], 'el perfil en uso no se puede volver a aplicar');
++  p.q('[data-profile="full"] button').click(); await tick(); await tick();
++  check(JSON.stringify(p.calls.filter((c) => c[0] === 'mango_apply').at(-1)) === '["mango_apply","full"]', 'aplicar un perfil llama a la API');
++  check(p.q('#toast').textContent === STR['mg-applied'].replace('{name}', STR['mp-full']) && p.q('[data-profile="full"]').classList.contains('on'), 'aviso y el perfil nuevo queda marcado');
++  check(p.q('#lo-profile').value === 'full' && p.q('[data-variant="profile"] code').textContent.includes('PROFILE-full'), 'las opciones de lanzamiento siguen al perfil aplicado');
++  for (const [active, label] of [['none', STR['mg-none']], ['custom', STR['mg-custom']]]) {
++    const s = BASE(); s.mango.active = active; const y = await boot(s); await y.ready();
++    check(y.q('#mg-state').textContent === STR['mg-state'] + ' ' + label && !y.q('.profile.on'), 'estado «' + active + '»');
++  }
++  let s = BASE(); s.mango.installed = false; x = await boot(s); await x.ready();
++  check(x.qa('#content .card')[1].textContent === STR['mg-missing'] && x.qa('[data-profile]').length === 0, 'sin MangoHud: aviso y sin perfiles');
++  x = await boot(BASE(), { mango_apply: async () => ({ error: 'write' }) }); await x.ready();
++  x.q('[data-profile="minimal"] button').click(); await tick();
++  check(x.q('#toast').textContent === STR['mg-err'] && x.q('[data-profile="standard"]').classList.contains('on'), 'si no se puede escribir: aviso y nada cambia');
++  check(!p.q('#mg-restore-btn'), 'sin respaldo no hay botón de restaurar');
++  s = BASE(); s.mango.has_backup = true; s.mango.active = 'standard'; x = await boot(s); await x.ready();
++  check(!!x.q('#mg-restore-btn') && x.q('.note').textContent.length > 0, 'con respaldo aparece restaurar');
++  x.q('#mg-restore-btn').click(); await tick(); await tick();
++  check(JSON.stringify(x.calls.at(-1)) !== undefined && x.calls.some((c) => c[0] === 'mango_restore') && x.q('#mg-state').textContent.includes(STR['mg-custom']), 'restaurar: llama a la API y muestra tu configuración');
++
++  // ── opciones de lanzamiento ─────────────────────────────────────────────
++  x = await boot(BASE()); await x.ready();
++  check(x.qa('#lo-profile option').length === 4 && x.q('#lo-profile').value === 'standard', 'selector de perfil con el activo');
++  check(x.qa('[data-variant]').length === 4 && x.q('[data-variant="both"] code').textContent === 'mangohud gamemoderun %command%', '4 opciones con su texto');
++  x.q('#lo-profile').value = 'hidden'; x.q('#lo-profile').dispatchEvent(new x.w.Event('change')); await tick(); await tick();
++  check(x.calls.some((c) => c[0] === 'launch_options' && c[1] === 'hidden') && x.q('[data-variant="profile"] code').textContent.includes('PROFILE-hidden') && x.q('#lo-profile').value === 'hidden', 'cambiar el perfil rehace las opciones');
++  x.q('[data-variant="gamemode"] button').click(); await tick();
++  check(JSON.stringify(x.calls.at(-1)) === '["copy_options","gamemode","hidden"]' && x.q('#toast').textContent === STR['lo-copied'], 'copiar: variante y perfil correctos y aviso');
++  y = await boot(BASE(), { copy_options: async () => ({ ok: false, text: 'x' }) }); await y.ready();
++  y.q('[data-variant="both"] button').click(); await tick();
++  check(y.q('#toast').textContent === STR['lo-copy-failed'], 'si no hay portapapeles: aviso para copiar a mano');
++  s = BASE(); s.mango.active = 'custom'; y = await boot(s); await y.ready();
++  check(y.q('#lo-profile').value === 'standard', 'con config propia el selector arranca en Estándar');
++
++  // ── Proton ──────────────────────────────────────────────────────────────
++  check(p.qa('#content .card')[3].textContent.includes(STR['pt-none']), 'sin herramientas: aviso');
++  s = BASE(); s.tools = ['GE-Proton9-20', 'Proton 9.0', '<img src=x onerror=alert(1)>']; y = await boot(s); await y.ready();
++  check(y.qa('.chip').length === 3 && y.qa('img').length === 0 && y.q('.chip:last-child').textContent.startsWith('<img'), 'herramientas como texto, nunca como HTML');
++  check(y.qa('#content .card')[3].textContent.includes(STR['pt-count'].replace('{n}', '3')), 'conteo de herramientas');
++
++  // ── gráficos y pantallas ────────────────────────────────────────────────
++  const sysTxt = () => p.qa('#content .card')[4].textContent;
++  check(sysTxt().includes('AMD · amdgpu') && sysTxt().includes('2560×1440 @ 165 Hz') && sysTxt().includes(STR['sy-vrr-on']), 'GPU y pantalla con VRR');
++  s = BASE(); s.system = { gpus: [], monitors: [{ name: 'eDP-1', mode: '1920×1080 @ 60 Hz', vrr: false }, { name: 'HDMI-A-1', mode: '', vrr: null }] };
++  y = await boot(s); await y.ready();
++  check(y.qa('#content .card')[4].textContent.includes(STR['sy-vrr-off']) && y.qa('#content .card')[4].textContent.includes(STR['sy-none']), 'VRR apagado y GPU sin datos');
++  s = BASE(); s.system = { gpus: [], monitors: [] }; y = await boot(s); await y.ready();
++  check(y.qa('#content .card')[4].textContent.split(STR['sy-none']).length === 3, 'sin pantallas ni GPU: avisos');
++
++  // ── teclado y errores ───────────────────────────────────────────────────
++  p.d.dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await tick();
++  check(JSON.stringify(p.calls.at(-1)) === '["close"]', 'Escape cierra la ventana');
++  p.q('#b-close').click(); await tick();
++  check(JSON.stringify(p.calls.at(-1)) === '["close"]', 'botón Cerrar');
++  x = await boot(BASE(), { snapshot: async () => { throw new Error('boom'); } }); await x.ready();
++  check(!x.q('#loading').classList.contains('hidden'), 'si no se puede leer el sistema: sigue el mensaje, sin romper');
++  for (const pg of [p, q2, x, y]) check(pg.errors.length === 0, 'sin errores de JavaScript');
++  console.log('TODO OK (' + n + ' comprobaciones, ' + lang + ')');
++  process.exit(0);
++})().catch((e) => { console.log('EXCEPCIÓN: ' + (e && e.stack || e)); process.exit(1); });
+diff --git a/tests/test_control_center.py b/tests/test_control_center.py
+index 9638cb1..8ce76e0 100644
+--- a/tests/test_control_center.py
++++ b/tests/test_control_center.py
+@@ -314,8 +314,9 @@ class RegisteredEverywhere(unittest.TestCase):
+     def test_both_installers_copy_the_script_the_desktop_file_and_the_icon(self):
+         modular = self.read("scripts/avalos_installer/system/optimize.py")
+         legacy = self.read("scripts/skill_instalar_usb.py")
+-        self.assertIn('"avalos-control")', modular)
+-        self.assertIn('"avalos-control")', legacy)
++        # en la lista de scripts que se copian (puede no ser el último elemento)
++        self.assertRegex(modular, r'"avalos-control"\s*[,)]')
++        self.assertRegex(legacy, r'"avalos-control"\s*[,)]')
+         for src in (modular, legacy):
+             for key in ("log-control-desktop-installed", "log-control-desktop-missing",
+                         "log-control-icon-installed", "log-control-icon-missing"):
+diff --git a/tests/test_gamecenter.py b/tests/test_gamecenter.py
+new file mode 100644
+index 0000000..4f093a9
+--- /dev/null
++++ b/tests/test_gamecenter.py
+@@ -0,0 +1,706 @@
++"""AvalOS Game Center (scripts/avalos-gamecenter).
++
++Lo que se vigila: que nunca lance nada fuera de su lista cerrada; que lea GameMode (estado, gobernador,
++gamemode.ini con varias líneas whitelist=) sin romper con archivos que faltan; que los perfiles de
++MangoHud se escriban donde MangoHud los lee (~/.config/MangoHud), de forma atómica, sin pisar nunca la
++config propia del usuario (queda un respaldo UNA vez); que las opciones de lanzamiento sean las
++correctas; que la página no interprete HTML ajeno; que los textos existan en los 4 idiomas y que la
++app esté registrada en todos los sitios (ISO, instaladores, sync, atajo, Welcome, Centro de control).
++"""
++import importlib.machinery
++import importlib.util
++import io
++import json
++import os
++import re
++import subprocess
++import sys
++import tempfile
++import unittest
++from contextlib import redirect_stdout
++from pathlib import Path
++from types import SimpleNamespace
++from unittest import mock
++
++ROOT = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(ROOT / "scripts"))
++
++import translations  # noqa: E402
++
++SCRIPT = ROOT / "scripts" / "avalos-gamecenter"
++LANGS = ("en", "es", "zh", "ja")
++
++
++def load():
++    loader = importlib.machinery.SourceFileLoader("avalos_gamecenter_under_test", str(SCRIPT))
++    spec = importlib.util.spec_from_loader(loader.name, loader)
++    module = importlib.util.module_from_spec(spec)
++    loader.exec_module(module)
++    return module
++
++
++gc = load()
++
++
++class Sandbox(unittest.TestCase):
++    """Un HOME y unos XDG falsos: ninguna prueba toca el home de verdad."""
++
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.home = self.root / "home"
++        self.home.mkdir()
++        env = {"HOME": str(self.home), "XDG_CONFIG_HOME": str(self.home / ".config"),
++               "XDG_DATA_HOME": str(self.home / ".local" / "share")}
++        patcher = mock.patch.dict(os.environ, env)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++        self.config = self.home / ".config"
++        self.data = self.home / ".local" / "share"
++
++    def put(self, path: Path, text="x"):
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(text, encoding="utf-8")
++        return path
++
++
++class Texts(unittest.TestCase):
++    def test_every_language_has_exactly_the_same_keys(self):
++        base = set(gc.STRINGS["en"])
++        for lang in LANGS:
++            self.assertEqual(set(gc.STRINGS[lang]), base, f"{lang}: {sorted(set(gc.STRINGS[lang]) ^ base)}")
++
++    def test_no_text_is_empty_and_the_title_keeps_the_brand_word(self):
++        for lang in LANGS:
++            for key, value in gc.STRINGS[lang].items():
++                self.assertTrue(value.strip(), f"{lang}/{key} vacío")
++            self.assertIn("AvalOS", gc.STRINGS[lang]["title"])
++
++    def test_placeholders_survive_in_every_language(self):
++        needs = {"gm-test-ok": ("{n}",), "gm-test-fail": ("{n}",), "mg-applied": ("{name}",), "pt-count": ("{n}",)}
++        for lang in LANGS:
++            for key, marks in needs.items():
++                for mark in marks:
++                    self.assertIn(mark, gc.STRINGS[lang][key], f"{lang}/{key}")
++
++    def test_every_launcher_profile_and_variant_has_its_texts(self):
++        for lang in LANGS:
++            table = gc.STRINGS[lang]
++            for lid, _name, _cands, _icon in gc.LAUNCHERS:
++                self.assertIn(f"d-{lid}", table)
++            for pid in gc.MANGO_ORDER:
++                self.assertIn(f"mp-{pid}", table)
++                self.assertIn(f"mpd-{pid}", table)
++            for variant in gc.LAUNCH_VARIANTS:
++                self.assertIn(f"lo-{variant}", table)
++
++
++class Launchers(Sandbox):
++    def test_the_list_is_closed_and_well_formed(self):
++        ids = [lid for lid, _n, _c, _i in gc.LAUNCHERS]
++        self.assertEqual(len(ids), len(set(ids)))
++        for _lid, name, candidates, icon in gc.LAUNCHERS:
++            self.assertTrue(name and icon and candidates)
++            for argv in candidates:
++                self.assertIsInstance(argv, tuple)
++                self.assertTrue(all(isinstance(a, str) and a for a in argv))
++                if argv[0] == "flatpak":
++                    self.assertEqual(argv[1], "run")
++                    self.assertEqual(len(argv), 3)
++
++    def test_a_native_binary_is_used_when_it_exists(self):
++        with mock.patch.object(gc.shutil, "which", side_effect=lambda c: "/usr/bin/" + c if c == "heroic" else None):
++            self.assertEqual(gc.resolve_launcher("heroic"), ["heroic"])
++
++    def test_heroic_falls_back_to_its_flatpak_only_when_flatpak_and_the_app_exist(self):
++        app = self.data / "flatpak" / "app" / "com.heroicgameslauncher.hgl"
++        which = lambda c: "/usr/bin/flatpak" if c == "flatpak" else None  # noqa: E731
++        with mock.patch.object(gc.shutil, "which", side_effect=which):
++            self.assertIsNone(gc.resolve_launcher("heroic"), "sin la app instalada")
++            app.mkdir(parents=True)
++            self.assertEqual(gc.resolve_launcher("heroic"), ["flatpak", "run", "com.heroicgameslauncher.hgl"])
++        with mock.patch.object(gc.shutil, "which", return_value=None):
++            self.assertIsNone(gc.resolve_launcher("heroic"), "sin el programa flatpak")
++
++    def test_a_system_wide_flatpak_counts_too(self):
++        system = self.root / "flatpak-system"
++        (system / "com.usebottles.bottles").mkdir(parents=True)
++        with mock.patch.object(gc, "FLATPAK_SYSTEM_APPS", system), \
++                mock.patch.object(gc.shutil, "which", side_effect=lambda c: "/usr/bin/flatpak" if c == "flatpak" else None):
++            self.assertEqual(gc.resolve_launcher("bottles"), ["flatpak", "run", "com.usebottles.bottles"])
++
++    def test_unknown_launchers_resolve_to_nothing(self):
++        with mock.patch.object(gc.shutil, "which", return_value="/usr/bin/x"):
++            for bad in ("rm", "", "nope", None, 3):
++                self.assertIsNone(gc.resolve_launcher(bad), repr(bad))
++
++    def test_availability_covers_every_launcher(self):
++        with mock.patch.object(gc.shutil, "which", side_effect=lambda c: "/usr/bin/steam" if c == "steam" else None):
++            avail = gc.launchers_available()
++        self.assertEqual(set(avail), set(gc.LAUNCHER_CANDIDATES))
++        self.assertTrue(avail["steam"])
++        self.assertFalse(avail["lutris"])
++
++
++class GameModeParsing(unittest.TestCase):
++    def test_status_texts(self):
++        for text, state in (("gamemode is active\n", "active"), ("gamemode is inactive", "idle"),
++                            ("GameMode is INACTIVE", "idle"), ("gamemode is active and this client is registered", "active"),
++                            ("", "unknown"), ("error: could not connect to the bus", "unknown")):
++            self.assertEqual(gc.parse_gamemode_status(text), state, text)
++
++    def test_ini_keeps_every_whitelist_line_and_the_desired_governor(self):
++        ini = ("# comentario\n[general]\ndesiredgov=performance\nrenice=0\n\n[filter]\n;whitelist=ignorada\n"
++               "whitelist=steam\nWhiteList = lutris\nblacklist=glxgears\n[gpu]\nwhitelist=otra\n")
++        self.assertEqual(gc.parse_gamemode_ini(ini), {"desiredgov": "performance", "whitelist": ["steam", "lutris"],
++                                                      "blacklist": ["glxgears"]})
++
++    def test_ini_ignores_empty_values_and_garbage(self):
++        self.assertEqual(gc.parse_gamemode_ini("[general]\ndesiredgov=\nsin igual\n[filter]\nwhitelist=\n"),
++                         {"desiredgov": None, "whitelist": [], "blacklist": []})
++        self.assertEqual(gc.parse_gamemode_ini(""), {"desiredgov": None, "whitelist": [], "blacklist": []})
++
++
++class GameModeStatus(Sandbox):
++    def setUp(self):
++        super().setUp()
++        self.cpu = self.root / "cpufreq"
++        self.put(self.cpu / "scaling_governor", "powersave\n")
++        self.put(self.cpu / "scaling_driver", "amd-pstate-epp\n")
++        self.put(self.cpu / "energy_performance_preference", "balance_performance\n")
++        self.system_ini = self.put(self.root / "etc-gamemode.ini", "[general]\ndesiredgov=performance\n[filter]\nwhitelist=steam\nwhitelist=lutris\n")
++        for patcher in (mock.patch.object(gc, "SYSFS_CPUFREQ", self.cpu),
++                        mock.patch.object(gc, "GAMEMODE_INI_SYSTEM", (self.root / "no-existe.ini", self.system_ini))):
++            patcher.start()
++            self.addCleanup(patcher.stop)
++
++    def status(self, exe="/usr/bin/gamemoded", run=(0, "gamemode is inactive\n"), group=77, groups=(77,)):
++        fake_grp = SimpleNamespace(getgrnam=lambda name: SimpleNamespace(gr_gid=group)) if group is not None else \
++            SimpleNamespace(getgrnam=mock.Mock(side_effect=KeyError("gamemode")))
++        with mock.patch.object(gc.shutil, "which", side_effect=lambda c: exe if c == "gamemoded" else None), \
++                mock.patch.object(gc, "_run", return_value=run), mock.patch.object(gc, "grp", fake_grp), \
++                mock.patch.object(gc.os, "getgroups", return_value=list(groups)), \
++                mock.patch.object(gc.os, "getgid", return_value=1000):
++            return gc.gamemode_status()
++
++    def test_a_ready_system(self):
++        info = self.status()
++        self.assertEqual(info, {"installed": True, "state": "idle", "in_group": True, "governor": "powersave",
++                                "driver": "amd-pstate-epp", "epp": "balance_performance", "target": "performance",
++                                "whitelist": ["steam", "lutris"]})
++
++    def test_active_unknown_and_missing(self):
++        self.assertEqual(self.status(run=(0, "gamemode is active"))["state"], "active")
++        self.assertEqual(self.status(run=None)["state"], "unknown")
++        missing = self.status(exe=None)
++        self.assertEqual((missing["installed"], missing["state"], missing["in_group"]), (False, "missing", None))
++
++    def test_group_membership(self):
++        self.assertFalse(self.status(groups=(10, 20))["in_group"])
++        self.assertTrue(self.status(groups=(77,))["in_group"])
++        self.assertTrue(self.status(group=1000, groups=())["in_group"], "también cuenta el grupo primario")
++        self.assertIsNone(self.status(group=None)["in_group"])
++
++    def test_without_cpufreq_files_the_values_are_dashes(self):
++        with mock.patch.object(gc, "SYSFS_CPUFREQ", self.root / "no-hay"):
++            info = self.status()
++        self.assertEqual((info["governor"], info["driver"], info["epp"]), ("—", "—", "—"))
++
++    def test_the_user_ini_is_merged_over_the_system_one(self):
++        self.put(self.config / "gamemode.ini", "[general]\ndesiredgov=schedutil\n[filter]\nwhitelist=heroic\nwhitelist=steam\n")
++        cfg = gc.gamemode_config()
++        self.assertEqual(cfg["desiredgov"], "schedutil")
++        self.assertEqual(cfg["whitelist"], ["steam", "lutris", "heroic"])
++
++    def test_the_default_target_governor_is_performance(self):
++        self.system_ini.write_text("[filter]\nwhitelist=steam\n", encoding="utf-8")
++        self.assertEqual(self.status()["target"], "performance")
++
++
++class GameModeTest(unittest.TestCase):
++    def run_test(self, result, exe="/usr/bin/gamemoded"):
++        with mock.patch.object(gc.shutil, "which", return_value=exe), mock.patch.object(gc, "_run", return_value=result) as run:
++            return gc.gamemode_test(), run
++
++    def test_without_gamemode(self):
++        out, run = self.run_test(None, exe=None)
++        self.assertEqual(out, {"state": "missing"})
++        run.assert_not_called()
++
++    def test_it_runs_the_official_self_test_and_counts_the_checks(self):
++        text = "\n".join([":: Loading config", ":: Passed"] * 3 + [":: Running tests"])
++        out, run = self.run_test((0, text))
++        self.assertEqual(run.call_args.args[0], ["/usr/bin/gamemoded", "-t"])
++        self.assertEqual(run.call_args.args[1], gc.GAMEMODE_TEST_TIMEOUT)
++        self.assertEqual((out["state"], out["passed"], out["failed"]), ("done", 3, 0))
++
++    def test_failed_checks_are_counted(self):
++        out, _ = self.run_test((1, ":: Passed\n:: Failed\n:: Failed\n"))
++        self.assertEqual((out["passed"], out["failed"]), (1, 2))
++
++    def test_a_non_zero_exit_with_no_failed_line_still_counts_as_a_failure(self):
++        out, _ = self.run_test((1, ":: Passed\n"))
++        self.assertEqual(out["failed"], 1)
++
++    def test_output_without_any_marker_is_an_error_with_the_tail(self):
++        out, _ = self.run_test((1, "\n".join(f"linea {i}" for i in range(30))))
++        self.assertEqual(out["state"], "error")
++        self.assertEqual(out["output"].splitlines()[-1], "linea 29")
++        self.assertEqual(len(out["output"].splitlines()), 12)
++
++    def test_a_test_that_cannot_run_is_an_error(self):
++        self.assertEqual(self.run_test(None)[0], {"state": "error"})
++
++
++class MangoHudFiles(Sandbox):
++    def test_the_embedded_style_is_the_shipped_style(self):
++        shipped = (ROOT / "configs/mangohud/MangoHud.conf").read_text(encoding="utf-8")
++        style, metrics = {}, set()
++        for line in shipped.splitlines():
++            line = line.strip()
++            if not line or line.startswith("#"):
++                continue
++            key, _, value = line.partition("=")
++            if key.strip() in gc.MANGO_METRIC_KEYS:
++                metrics.add(line)
++            else:
++                style[key.strip()] = value.strip()
++        self.assertEqual(style, gc.MANGO_STYLE)
++        self.assertEqual(metrics, set(gc.MANGO_PROFILES["standard"]), "el perfil Estándar es el que trae el instalador")
++
++    def test_every_profile_only_uses_known_metric_keys_and_no_style_keys(self):
++        for pid, lines in gc.MANGO_PROFILES.items():
++            for line in lines:
++                self.assertIn(gc._line_key(line), gc.MANGO_METRIC_KEYS, f"{pid}: {line}")
++        self.assertEqual(tuple(gc.MANGO_PROFILES), gc.MANGO_ORDER)
++
++    def test_profiles_differ_in_the_expected_way(self):
++        minimal, standard, full, hidden = (gc._effective_lines(gc.profile_text(p)) for p in gc.MANGO_ORDER)
++        self.assertLess(minimal, standard | minimal)
++        self.assertTrue(standard - {"no_display=0"} <= full)
++        self.assertIn("no_display=1", hidden)
++        self.assertNotIn("no_display=1", standard)
++        self.assertIn("gamemode", full)
++        self.assertNotIn("gpu_stats", minimal)
++
++    def test_active_profile_detection(self):
++        self.assertEqual(gc.active_profile(), "none")
++        conf = self.config / "MangoHud" / gc.MANGO_CONF
++        for pid in gc.MANGO_ORDER:
++            self.put(conf, gc.profile_text(pid))
++            self.assertEqual(gc.active_profile(), pid)
++        self.put(conf, gc.profile_text("standard") + "fps_sampling_period=500\n")
++        self.assertEqual(gc.active_profile(), "custom")
++
++    def test_a_profile_with_a_line_missing_is_custom_not_that_profile(self):
++        conf = self.config / "MangoHud" / gc.MANGO_CONF
++        lines = gc.profile_text("standard").splitlines()
++        self.put(conf, "\n".join(l for l in lines if l != "gpu_stats") + "\n")
++        self.assertEqual(gc.active_profile(), "custom")
++
++    def test_comments_and_blank_lines_do_not_change_the_detected_profile(self):
++        conf = self.config / "MangoHud" / gc.MANGO_CONF
++        self.put(conf, "# mi nota\n\n" + gc.profile_text("full") + "\n# otra\n")
++        self.assertEqual(gc.active_profile(), "full")
++
++    def test_the_xdg_config_home_is_honoured(self):
++        other = self.root / "otro-config"
++        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(other)}):
++            gc.apply_profile("minimal")
++        self.assertTrue((other / "MangoHud" / gc.MANGO_CONF).is_file())
++        self.assertFalse((self.config / "MangoHud").exists())
++
++
++class ApplyingProfiles(Sandbox):
++    def folder(self):
++        return self.config / "MangoHud"
++
++    def test_it_writes_every_profile_and_the_chosen_default(self):
++        status = gc.apply_profile("full")
++        for pid in gc.MANGO_ORDER:
++            self.assertEqual((self.folder() / "profiles" / f"{pid}.conf").read_text(encoding="utf-8"), gc.profile_text(pid))
++        self.assertEqual((self.folder() / gc.MANGO_CONF).read_text(encoding="utf-8"), gc.profile_text("full"))
++        self.assertEqual(status["active"], "full")
++        self.assertFalse(status["has_backup"])
++
++    def test_a_custom_config_is_saved_once_and_never_overwritten(self):
++        mine = "fps\nmi_opcion=1\n"
++        self.put(self.folder() / gc.MANGO_CONF, mine)
++        self.assertTrue(gc.apply_profile("standard")["has_backup"])
++        self.assertEqual((self.folder() / gc.MANGO_BACKUP).read_text(encoding="utf-8"), mine)
++        self.put(self.folder() / gc.MANGO_CONF, "otra_cosa=2\n")           # el usuario vuelve a personalizar
++        gc.apply_profile("minimal")
++        self.assertEqual((self.folder() / gc.MANGO_BACKUP).read_text(encoding="utf-8"), mine, "el respaldo original sigue")
++
++    def test_an_avalos_profile_is_not_backed_up_as_if_it_were_the_users(self):
++        self.put(self.folder() / gc.MANGO_CONF, gc.profile_text("hidden"))
++        self.assertFalse(gc.apply_profile("standard")["has_backup"])
++
++    def test_without_a_previous_config_there_is_nothing_to_back_up(self):
++        self.assertFalse(gc.apply_profile("minimal")["has_backup"])
++
++    def test_restoring_brings_the_original_back(self):
++        mine = "fps\nmi_opcion=1\n"
++        self.put(self.folder() / gc.MANGO_CONF, mine)
++        gc.apply_profile("standard")
++        status = gc.restore_backup()
++        self.assertEqual((self.folder() / gc.MANGO_CONF).read_text(encoding="utf-8"), mine)
++        self.assertEqual(status["active"], "custom")
++
++    def test_restoring_without_a_backup_is_an_error(self):
++        self.assertEqual(gc.restore_backup(), {"error": "restore"})
++
++    def test_an_unknown_profile_writes_nothing(self):
++        for bad in ("../../etc/passwd", "", "FULL", None, 3):
++            self.assertEqual(gc.apply_profile(bad), {"error": "profile"}, repr(bad))
++        self.assertFalse(self.folder().exists())
++
++    def test_a_write_failure_is_reported_not_raised(self):
++        with mock.patch.object(gc, "_write_atomic", side_effect=OSError("disco lleno")):
++            self.assertEqual(gc.apply_profile("full"), {"error": "write"})
++
++    def test_writes_leave_no_temporary_files_behind(self):
++        gc.apply_profile("full")
++        gc.apply_profile("minimal")
++        leftovers = [p.name for p in self.folder().rglob("*") if p.is_file() and not p.name.endswith(".conf")
++                     and p.name != gc.MANGO_BACKUP]
++        self.assertEqual(leftovers, [])
++
++    def test_a_failed_atomic_write_keeps_the_old_file_and_cleans_its_temporary(self):
++        target = self.put(self.folder() / gc.MANGO_CONF, "viejo\n")
++        with mock.patch.object(gc.os, "replace", side_effect=OSError("sin permiso")), self.assertRaises(OSError):
++            gc._write_atomic(target, "nuevo\n")
++        self.assertEqual(target.read_text(encoding="utf-8"), "viejo\n")
++        self.assertEqual([p.name for p in self.folder().iterdir()], [gc.MANGO_CONF])
++
++    def test_status_reflects_the_binary_and_the_backup(self):
++        with mock.patch.object(gc.shutil, "which", return_value="/usr/bin/mangohud"):
++            self.assertTrue(gc.mangohud_status()["installed"])
++        with mock.patch.object(gc.shutil, "which", return_value=None):
++            self.assertFalse(gc.mangohud_status()["installed"])
++        self.assertEqual(gc.mangohud_status()["profiles"], list(gc.MANGO_ORDER))
++
++
++class LaunchOptions(unittest.TestCase):
++    def test_the_four_variants(self):
++        opts = gc.launch_options("full")
++        self.assertEqual(opts["gamemode"], "gamemoderun %command%")
++        self.assertEqual(opts["mangohud"], "mangohud %command%")
++        self.assertEqual(opts["both"], "mangohud gamemoderun %command%")
++        self.assertEqual(opts["profile"], "MANGOHUD_CONFIGFILE=${XDG_CONFIG_HOME:-$HOME/.config}/MangoHud/profiles/full.conf "
++                                          "mangohud gamemoderun %command%")
++        self.assertEqual(tuple(opts), gc.LAUNCH_VARIANTS)
++
++    def test_every_variant_ends_with_steams_command_placeholder(self):
++        for pid in gc.MANGO_ORDER:
++            for text in gc.launch_options(pid).values():
++                self.assertTrue(text.endswith("%command%"), text)
++
++    def test_an_unknown_profile_cannot_inject_anything(self):
++        for bad in ("x; rm -rf ~", "../../x", "", None, 5):
++            self.assertIn("/profiles/standard.conf ", gc.launch_options(bad)["profile"])
++
++    def test_the_profile_path_is_one_that_apply_profile_really_writes(self):
++        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "HOME": tmp}):
++            gc.apply_profile("hidden")
++            path = gc.launch_options("hidden")["profile"].split()[0].split("=", 1)[1].replace("${XDG_CONFIG_HOME:-$HOME/.config}", tmp)
++            self.assertTrue(Path(path).is_file(), path)
++
++
++class Clipboard(unittest.TestCase):
++    def test_without_wl_copy_it_says_no(self):
++        with mock.patch.object(gc.shutil, "which", return_value=None):
++            self.assertFalse(gc.copy_to_clipboard("x"))
++
++    def test_with_wl_copy_the_text_is_piped_in(self):
++        with mock.patch.object(gc.shutil, "which", return_value="/usr/bin/wl-copy"), \
++                mock.patch.object(gc.subprocess, "run") as run:
++            self.assertTrue(gc.copy_to_clipboard("gamemoderun %command%"))
++        self.assertEqual(run.call_args.args[0], ["/usr/bin/wl-copy"])
++        self.assertEqual(run.call_args.kwargs["input"], "gamemoderun %command%")
++
++    def test_a_failing_wl_copy_is_not_an_exception(self):
++        for err in (OSError("no"), subprocess.CalledProcessError(1, "wl-copy"), subprocess.TimeoutExpired("wl-copy", 5)):
++            with mock.patch.object(gc.shutil, "which", return_value="/usr/bin/wl-copy"), \
++                    mock.patch.object(gc.subprocess, "run", side_effect=err):
++                self.assertFalse(gc.copy_to_clipboard("x"))
++
++
++class ProtonTools(Sandbox):
++    def setUp(self):
++        super().setUp()
++        self.system = self.root / "system-tools"
++        patcher = mock.patch.object(gc, "STEAM_SYSTEM_TOOLS", self.system)
++        patcher.start()
++        self.addCleanup(patcher.stop)
++
++    def test_it_finds_user_system_and_official_proton_newest_first(self):
++        for name in ("GE-Proton9-2", "GE-Proton9-20", "GE-Proton10-1"):
++            (self.data / "Steam" / "compatibilitytools.d" / name).mkdir(parents=True)
++        (self.system / "proton-ge-custom").mkdir(parents=True)
++        (self.data / "Steam" / "steamapps" / "common" / "Proton 9.0").mkdir(parents=True)
++        (self.data / "Steam" / "steamapps" / "common" / "Half-Life").mkdir(parents=True)
++        self.assertEqual(gc.proton_tools(), ["proton-ge-custom", "Proton 9.0", "GE-Proton10-1", "GE-Proton9-20", "GE-Proton9-2"])
++
++    def test_files_and_duplicates_are_ignored(self):
++        self.put(self.data / "Steam" / "compatibilitytools.d" / "suelto.txt")
++        (self.data / "Steam" / "compatibilitytools.d" / "GE-Proton9-1").mkdir(parents=True)
++        (self.home / ".steam" / "root" / "compatibilitytools.d" / "GE-Proton9-1").mkdir(parents=True)
++        self.assertEqual(gc.proton_tools(), ["GE-Proton9-1"])
++
++    def test_nothing_installed_is_an_empty_list(self):
++        self.assertEqual(gc.proton_tools(), [])
++
++    def test_the_list_is_capped(self):
++        for i in range(gc.MAX_TOOLS + 7):
++            (self.data / "Steam" / "compatibilitytools.d" / f"GE-Proton{i}").mkdir(parents=True)
++        tools = gc.proton_tools()
++        self.assertEqual(len(tools), gc.MAX_TOOLS)
++        self.assertEqual(tools[0], f"GE-Proton{gc.MAX_TOOLS + 6}")
++
++
++class Graphics(Sandbox):
++    def card(self, name, vendor, uevent):
++        base = self.root / "drm" / name / "device"
++        self.put(base / "vendor", vendor + "\n")
++        self.put(base / "uevent", uevent)
++
++    def test_gpus_are_labelled_by_vendor_and_driver(self):
++        self.card("card0", "0x1002", "DRIVER=amdgpu\nPCI_ID=1002:73FF\n")
++        self.card("card1", "0x8086", "DRIVER=i915\n")
++        self.card("card2", "0x10DE", "DRIVER=nouveau\n")
++        self.card("card3", "0x9999", "DRIVER=raro\n")
++        self.card("card4", "0x1002", "DRIVER=amdgpu\n")                       # repetida
++        self.card("card0-HDMI-A-1", "0x1002", "DRIVER=conector\n")            # un conector, no una GPU
++        with mock.patch.object(gc, "SYSFS_DRM", self.root / "drm"):
++            self.assertEqual(gc.gpus(), ["AMD · amdgpu", "Intel · i915", "NVIDIA · nouveau", "raro"])
++
++    def test_no_drm_directory_means_no_gpus(self):
++        with mock.patch.object(gc, "SYSFS_DRM", self.root / "no-hay"):
++            self.assertEqual(gc.gpus(), [])
++
++    HYPR = json.dumps([
++        {"name": "DP-1", "width": 2560, "height": 1440, "refreshRate": 164.9985, "vrr": True},
++        {"name": "eDP-1", "width": 1920, "height": 1080, "refreshRate": 60.0, "vrr": False},
++        {"name": "HDMI-A-1", "width": "x", "vrr": "quizá"},
++        {"width": 1, "height": 1},
++        "basura",
++    ])
++
++    def test_monitors_are_parsed_without_inventing_data(self):
++        self.assertEqual(gc.parse_monitors(self.HYPR), [
++            {"name": "DP-1", "mode": "2560×1440 @ 165 Hz", "vrr": True},
++            {"name": "eDP-1", "mode": "1920×1080 @ 60 Hz", "vrr": False},
++            {"name": "HDMI-A-1", "mode": "", "vrr": None}])
++        for bad in ("", "no es json", "{}", "null", "[1, 2]"):
++            self.assertEqual(gc.parse_monitors(bad), [], repr(bad))
++
++    def run_monitors(self, signature="abc", exe="/usr/bin/hyprctl", result=(0, "[]")):
++        env = {"HYPRLAND_INSTANCE_SIGNATURE": signature} if signature else {}
++        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(gc.shutil, "which", return_value=exe), \
++                mock.patch.object(gc, "_run", return_value=result) as run:
++            if not signature:
++                os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
++            return gc.monitors(), run
++
++    def test_monitors_need_hyprland_running_and_hyprctl(self):
++        for kwargs in ({"signature": "", "result": (0, self.HYPR)}, {"exe": None, "result": (0, self.HYPR)},
++                       {"result": None}, {"result": (1, self.HYPR)}):
++            out, _ = self.run_monitors(**kwargs)
++            self.assertEqual(out, [], kwargs)
++        out, run = self.run_monitors(result=(0, self.HYPR))
++        self.assertEqual(len(out), 3)
++        self.assertEqual(run.call_args.args[0], ["/usr/bin/hyprctl", "-j", "monitors"])
++
++
++class RunningCommands(unittest.TestCase):
++    def test_run_never_raises(self):
++        with mock.patch.object(gc.subprocess, "run", side_effect=subprocess.TimeoutExpired("x", 1)):
++            self.assertIsNone(gc._run(["x"], 1))
++        with mock.patch.object(gc.subprocess, "run", side_effect=OSError("no existe")):
++            self.assertIsNone(gc._run(["x"], 1))
++        with mock.patch.object(gc.subprocess, "run", return_value=SimpleNamespace(returncode=3, stdout="a", stderr="b")):
++            self.assertEqual(gc._run(["x"], 1), (3, "ab"))
++
++    def test_spawn_survives_a_missing_binary_and_detaches_the_child(self):
++        with mock.patch.object(gc.subprocess, "Popen", side_effect=OSError("no")):
++            self.assertFalse(gc._spawn(["nada"]))
++        with mock.patch.object(gc.subprocess, "Popen") as popen:
++            self.assertTrue(gc._spawn(["steam"]))
++        self.assertTrue(popen.call_args.kwargs["start_new_session"])
++
++
++class TheAPI(unittest.TestCase):
++    def setUp(self):
++        self.api = gc.GameAPI()
++
++    def test_an_unknown_launcher_never_launches_anything(self):
++        with mock.patch.object(gc, "_spawn") as spawn, mock.patch.object(gc.shutil, "which", return_value="/usr/bin/x"):
++            for bad in ("rm", "../x", "", None, 7, ["steam"], {"id": "steam"}):
++                self.assertFalse(self.api.open_launcher(bad), repr(bad))
++        spawn.assert_not_called()
++
++    def test_a_known_launcher_runs_exactly_the_resolved_command(self):
++        with mock.patch.object(gc, "resolve_launcher", return_value=["flatpak", "run", "com.usebottles.bottles"]), \
++                mock.patch.object(gc, "_spawn", return_value=True) as spawn:
++            self.assertTrue(self.api.open_launcher("bottles"))
++        spawn.assert_called_once_with(["flatpak", "run", "com.usebottles.bottles"])
++
++    def test_a_launcher_that_is_not_installed_is_not_run(self):
++        with mock.patch.object(gc, "resolve_launcher", return_value=None), mock.patch.object(gc, "_spawn") as spawn:
++            self.assertFalse(self.api.open_launcher("steam"))
++        spawn.assert_not_called()
++
++    def test_the_store_button(self):
++        with mock.patch.object(gc.shutil, "which", return_value=None), mock.patch.object(gc, "_spawn") as spawn:
++            self.assertFalse(self.api.open_store())
++        spawn.assert_not_called()
++        with mock.patch.object(gc.shutil, "which", return_value="/usr/bin/avalos-store"), \
++                mock.patch.object(gc, "_spawn", return_value=True) as spawn:
++            self.assertTrue(self.api.open_store())
++        spawn.assert_called_once_with(["avalos-store"])
++
++    def test_profile_arguments_are_validated(self):
++        with mock.patch.object(gc, "apply_profile", return_value={"ok": 1}) as apply:
++            self.assertEqual(self.api.mango_apply("full"), {"ok": 1})
++            for bad in (None, 3, ["full"], {"p": 1}):
++                self.assertEqual(self.api.mango_apply(bad), {"error": "profile"})
++        apply.assert_called_once_with("full")
++
++    def test_copy_only_copies_the_known_variants(self):
++        with mock.patch.object(gc, "copy_to_clipboard", return_value=True) as copy:
++            ok = self.api.copy_options("both", "hidden")
++            self.assertEqual(ok, {"ok": True, "text": "mangohud gamemoderun %command%"})
++            for bad in ("rm -rf", "", None, 3, ["both"]):
++                self.assertEqual(self.api.copy_options(bad, "hidden"), {"ok": False, "text": ""}, repr(bad))
++        copy.assert_called_once_with("mangohud gamemoderun %command%")
++
++    def test_copy_reports_when_there_is_no_clipboard(self):
++        with mock.patch.object(gc, "copy_to_clipboard", return_value=False):
++            result = self.api.copy_options("gamemode", "full")
++        self.assertEqual(result, {"ok": False, "text": "gamemoderun %command%"})
++
++    def test_launch_options_tolerates_a_bad_profile_argument(self):
++        self.assertEqual(self.api.launch_options(None), gc.launch_options("standard"))
++        self.assertEqual(self.api.launch_options("full"), gc.launch_options("full"))
++
++    def test_the_snapshot_has_every_section(self):
++        with mock.patch.object(gc, "launchers_available", return_value={}), mock.patch.object(gc, "gamemode_status", return_value={}), \
++                mock.patch.object(gc, "mangohud_status", return_value={}), mock.patch.object(gc, "proton_tools", return_value=[]), \
++                mock.patch.object(gc, "gpus", return_value=[]), mock.patch.object(gc, "monitors", return_value=[]):
++            self.assertEqual(set(self.api.snapshot()), {"launchers", "gamemode", "mango", "tools", "system"})
++
++
++class Page(unittest.TestCase):
++    def test_every_placeholder_is_filled_in_every_language(self):
++        for lang in LANGS:
++            html = gc._render_html(lang)
++            self.assertNotRegex(html, r"[A-Z]+_PLACEHOLDER", lang)
++            self.assertIn(f'<html lang="{"zh-CN" if lang == "zh" else lang}">', html)
++
++    def test_the_embedded_data_is_the_real_data(self):
++        html = gc._render_html("es")
++        strings = json.loads(re.search(r"const S = (\{.*?\});\nconst LAUNCHERS", html, re.S).group(1))
++        launchers = json.loads(re.search(r"const LAUNCHERS = (\[.*?\]);\nconst PROFILES", html, re.S).group(1))
++        profiles = json.loads(re.search(r"const PROFILES = (\[.*?\]);\nconst VARIANTS", html, re.S).group(1))
++        variants = json.loads(re.search(r"const VARIANTS = (\[.*?\]);\nconst \$", html, re.S).group(1))
++        self.assertEqual(strings, gc.STRINGS["es"])
++        self.assertEqual([l[0] for l in launchers], [l[0] for l in gc.LAUNCHERS])
++        self.assertEqual((profiles, variants), (list(gc.MANGO_ORDER), list(gc.LAUNCH_VARIANTS)))
++
++    def test_a_closing_script_tag_in_the_data_cannot_break_the_page(self):
++        with mock.patch.dict(gc.STRINGS["en"], {"title": "x</script><script>alert(1)</script>"}):
++            html = gc._render_html("en")
++        self.assertNotIn("</script><script>alert(1)", html)
++        self.assertEqual(html.count("</script>"), 1)
++
++    def test_the_window_class_matches_the_hyprland_rule(self):
++        self.assertIn('set_prgname("avalos-gamecenter")', SCRIPT.read_text(encoding="utf-8"))
++        for cfg in ("hyprland.lua", "hyprland_conf_lua.template"):
++            self.assertIn('class = "avalos-gamecenter"', (ROOT / "configs/hyprland" / cfg).read_text(encoding="utf-8"), cfg)
++
++
++class Language(unittest.TestCase):
++    def detect(self, file_text, env_lang):
++        with tempfile.TemporaryDirectory() as tmp:
++            f = Path(tmp) / "avalos-lang"
++            if file_text is not None:
++                f.write_text(file_text, encoding="utf-8")
++            with mock.patch.object(gc, "_AVALOS_LANG_FILE", f), mock.patch.dict(gc.os.environ, {"LANG": env_lang}):
++                return gc._detectar_idioma()
++
++    def test_the_installer_choice_wins_then_the_locale_then_english(self):
++        self.assertEqual(self.detect("ja\n", "es_MX.UTF-8"), "ja")
++        self.assertEqual(self.detect(None, "es_SV.UTF-8"), "es")
++        self.assertEqual(self.detect("klingon", "pt_BR.UTF-8"), "en")
++
++
++class CommandLine(unittest.TestCase):
++    def test_json_prints_the_snapshot(self):
++        out = io.StringIO()
++        with mock.patch.object(gc, "snapshot", return_value={"launchers": {"steam": True}}), redirect_stdout(out):
++            self.assertEqual(gc.main(["--json"]), 0)
++        self.assertEqual(json.loads(out.getvalue()), {"launchers": {"steam": True}})
++
++    def test_without_a_graphical_session_it_exits_with_a_message(self):
++        with mock.patch.object(gc, "_has_display", return_value=False), mock.patch.object(gc, "_gui") as gui, \
++                mock.patch("sys.stderr", new=io.StringIO()) as err:
++            self.assertEqual(gc.main([]), 1)
++        gui.assert_not_called()
++        self.assertIn("no graphical session", err.getvalue())
++
++
++class RegisteredEverywhere(unittest.TestCase):
++    def read(self, rel):
++        return (ROOT / rel).read_text(encoding="utf-8")
++
++    def test_it_is_in_the_sync_list_the_helper_and_the_iso(self):
++        for rel in ("scripts/gen-sync-manifest.py", "scripts/avalos-update-helper"):
++            text = self.read(rel)
++            for item in ("scripts/avalos-gamecenter", "configs/avalos-gamecenter.desktop", "configs/avalos-gamecenter.svg"):
++                self.assertIn(item, text, f"{rel} no lista {item}")
++        self.assertRegex(self.read(".github/workflows/build-iso.yml"), r"for _s in [a-z\- ]*avalos-gamecenter[a-z\- ]*; do")
++
++    def test_both_installers_copy_the_script_the_desktop_file_and_the_icon(self):
++        modular = self.read("scripts/avalos_installer/system/optimize.py")
++        legacy = self.read("scripts/skill_instalar_usb.py")
++        for src in (modular, legacy):
++            self.assertRegex(src, r'"avalos-gamecenter"\s*[,)]')
++            for key in ("log-gamecenter-desktop-installed", "log-gamecenter-desktop-missing",
++                        "log-gamecenter-icon-installed", "log-gamecenter-icon-missing"):
++                self.assertIn(key, src)
++            self.assertRegex(src, r'_apps_dir\s*/\s*"avalos-gamecenter\.desktop"\)\s*\.write_text\s*\(')
++            self.assertRegex(src, r'_icon_dir\s*/\s*"avalos-gamecenter\.svg"\)\s*\.write_text\s*\(')
++
++    def test_the_installer_log_messages_exist_in_the_four_languages(self):
++        for lang in LANGS:
++            for key in ("log-gamecenter-desktop-installed", "log-gamecenter-desktop-missing",
++                        "log-gamecenter-icon-installed", "log-gamecenter-icon-missing"):
++                self.assertTrue(translations.TRANSLATIONS[lang].get(key), f"{lang}/{key}")
++
++    def test_the_shortcut_exists_and_welcome_shows_it(self):
++        for cfg in ("hyprland.lua", "hyprland_conf_lua.template"):
++            self.assertIn('hl.bind(mod .. " + ALT + G", hl.dsp.exec_cmd("avalos-gamecenter"))', self.read(f"configs/hyprland/{cfg}"), cfg)
++        self.assertIn('(("Super", "Alt", "G"), "k-gamecenter")', self.read("scripts/avalos-welcome"))
++
++    def test_the_control_center_opens_it(self):
++        self.assertIn('("apps", "games", ("avalos-gamecenter",)', self.read("scripts/avalos-control"))
++
++    def test_the_desktop_entry_and_icon_are_well_formed(self):
++        desktop = self.read("configs/avalos-gamecenter.desktop")
++        for line in ("Exec=avalos-gamecenter", "Icon=avalos-gamecenter", "StartupWMClass=avalos-gamecenter", "Type=Application"):
++            self.assertIn(line, desktop)
++        for loc in ("es", "zh_CN", "ja"):
++            self.assertIn(f"Name[{loc}]=", desktop)
++            self.assertIn(f"Comment[{loc}]=", desktop)
++        svg = self.read("configs/avalos-gamecenter.svg")
++        self.assertTrue(svg.lstrip().startswith("<svg") and svg.rstrip().endswith("</svg>"))
++        self.assertIn('viewBox="0 0 100 100"', svg)
++
++    def test_the_readme_lists_it(self):
++        self.assertRegex(self.read("README.md"), r"(?m)^\| \*\*AvalOS Game Center\*\* \|")
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)
+diff --git a/tests/test_gamecenter_ui.py b/tests/test_gamecenter_ui.py
+new file mode 100644
+index 0000000..90e8208
+--- /dev/null
++++ b/tests/test_gamecenter_ui.py
+@@ -0,0 +1,62 @@
++"""Front-end de avalos-gamecenter (la página que dibuja pywebview).
++
++Dos niveles, igual que el Centro de control: comprobación de sintaxis del JavaScript donde haya `node`
++(los runners de GitHub lo traen) y prueba de humo con jsdom (55 comprobaciones por idioma: lanzadores,
++GameMode, perfiles de MangoHud, opciones de lanzamiento, escapado de HTML) si jsdom está disponible.
++En local:  cd /tmp && npm install jsdom && NODE_PATH=/tmp/node_modules python3 -m unittest tests.test_gamecenter_ui
++"""
++import importlib.machinery
++import importlib.util
++import os
++import re
++import shutil
++import subprocess
++import tempfile
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parent.parent
++NODE = shutil.which("node")
++UI_TEST = ROOT / "tests" / "js" / "gamecenter_ui.js"
++
++
++def render(lang):
++    loader = importlib.machinery.SourceFileLoader("avalos_gamecenter_ui", str(ROOT / "scripts" / "avalos-gamecenter"))
++    spec = importlib.util.spec_from_loader(loader.name, loader)
++    module = importlib.util.module_from_spec(spec)
++    loader.exec_module(module)
++    return module._render_html(lang)
++
++
++def jsdom_available():
++    if not NODE:
++        return False
++    return subprocess.run([NODE, "-e", "require.resolve('jsdom')"], capture_output=True, env=os.environ).returncode == 0
++
++
++@unittest.skipUnless(NODE, "falta node")
++class JavaScriptSyntax(unittest.TestCase):
++    def test_the_page_script_parses_in_every_language(self):
++        for lang in ("en", "es", "zh", "ja"):
++            script = re.search(r"<script>(.*)</script>", render(lang), re.S).group(1)
++            with tempfile.TemporaryDirectory() as tmp:
++                path = Path(tmp) / "page.js"
++                path.write_text(script, encoding="utf-8")
++                res = subprocess.run([NODE, "--check", str(path)], capture_output=True, text=True)
++            self.assertEqual(res.returncode, 0, f"{lang}: {res.stderr}")
++
++
++@unittest.skipUnless(jsdom_available(), "falta jsdom (npm install jsdom; NODE_PATH)")
++class Smoke(unittest.TestCase):
++    def test_the_page_works_in_every_language(self):
++        for lang in ("en", "es", "zh", "ja"):
++            with tempfile.TemporaryDirectory() as tmp:
++                page = Path(tmp) / f"page-{lang}.html"
++                page.write_text(render(lang), encoding="utf-8")
++                res = subprocess.run([NODE, str(UI_TEST), str(page), lang], capture_output=True, text=True, timeout=180)
++            self.assertEqual(res.returncode, 0, f"{lang}:\n{res.stdout[-1500:]}\n{res.stderr[-500:]}")
++            self.assertIn("TODO OK", res.stdout)
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)
