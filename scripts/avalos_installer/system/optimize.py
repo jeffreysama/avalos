@@ -103,7 +103,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
 
     session.log(session.t("log-installing-scripts"), "info")
     _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
-                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control")
+                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter")
     for _script_name in _avalos_scripts:
         _content = read_config(f"scripts/{_script_name}")
         if _content:
@@ -247,6 +247,14 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
     else:
         session.log(session.t("log-control-desktop-missing"), "warn")
 
+    # avalos-gamecenter: lanzadores, GameMode, perfiles de MangoHud (todo como usuario, sin polkit).
+    _content = read_config("avalos-gamecenter.desktop")
+    if _content:
+        (_apps_dir / "avalos-gamecenter.desktop").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-gamecenter-desktop-installed"), "ok")
+    else:
+        session.log(session.t("log-gamecenter-desktop-missing"), "warn")
+
     _content = read_config("avalos-restore.svg")
     if _content:
         (_icon_dir / "avalos-restore.svg").write_text(_content, encoding="utf-8")
@@ -274,6 +282,13 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
         session.log(session.t("log-control-icon-installed"), "ok")
     else:
         session.log(session.t("log-control-icon-missing"), "warn")
+
+    _content = read_config("avalos-gamecenter.svg")
+    if _content:
+        (_icon_dir / "avalos-gamecenter.svg").write_text(_content, encoding="utf-8")
+        session.log(session.t("log-gamecenter-icon-installed"), "ok")
+    else:
+        session.log(session.t("log-gamecenter-icon-missing"), "warn")
 
     (MOUNT_ROOT / "etc" / "avalos-install-date").write_text(
         datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),

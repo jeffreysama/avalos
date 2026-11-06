@@ -19,7 +19,7 @@ It ships with **Hyprland** (Wayland) as the default desktop environment, deliver
 - **Filesystem**: Btrfs with Snapper snapshots by default
 - **Pre-configured Rice**: Beautiful and functional Hyprland + Waybar + Kitty + Rofi setup included
 - **Extras**: ZRAM, BBR congestion control, carefully selected firmware (AMD/Intel only)
-- **Built-in tools**: AvalOS Control Center, Welcome, Settings, Store, Update, Restore and Doctor (see [AvalOS Tools](#-avalos-tools))
+- **Built-in tools**: AvalOS Control Center, Game Center, Welcome, Settings, Store, Update, Restore and Doctor (see [AvalOS Tools](#-avalos-tools))
 - **Languages**: the installer and the tools are available in English, Español, 中文简体 and 日本語
 
 > **Note**: AvalOS currently supports **AMD and Intel** hardware only. NVIDIA is not supported, but could be possible (If you know how to install NVIDIA packages and all).
@@ -80,6 +80,7 @@ AvalOS ships its own small apps, all available from the app launcher:
 
 | Tool | What it does |
 |------|--------------|
+| **AvalOS Game Center** | Launchers (Steam, Lutris, Heroic, Prism, Bottles), GameMode status, MangoHud profiles, copy-ready launch options and Proton versions (`Super + Alt + G`) |
 | **AvalOS Control Center** | All your settings and the AvalOS tools in one window, with a system summary and an on-demand health check (`Super + Alt + C`) |
 | **AvalOS Welcome** | First steps and key shortcuts, shown on your first login |
 | **AvalOS Settings** | Control center for your installed system |

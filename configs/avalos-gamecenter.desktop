@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AvalOS Game Center
+Name[es]=Game Center de AvalOS
+Name[zh_CN]=AvalOS 游戏中心
+Name[ja]=AvalOS ゲームセンター
+Comment=Launchers, GameMode, MangoHud and launch options
+Comment[es]=Lanzadores, GameMode, MangoHud y opciones de lanzamiento
+Comment[zh_CN]=启动器、GameMode、MangoHud 和启动选项
+Comment[ja]=ランチャー、GameMode、MangoHud、起動オプション
+Exec=avalos-gamecenter
+Icon=avalos-gamecenter
+Terminal=false
+NoDisplay=false
+StartupNotify=true
+StartupWMClass=avalos-gamecenter
+Categories=Game;Settings;
+Keywords=games;gaming;gamemode;mangohud;steam;lutris;proton;launchers;juegos;jugar;lanzadores;游戏;启动器;ゲーム;ランチャー;

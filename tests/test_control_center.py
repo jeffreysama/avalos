@@ -314,8 +314,9 @@ class RegisteredEverywhere(unittest.TestCase):
     def test_both_installers_copy_the_script_the_desktop_file_and_the_icon(self):
         modular = self.read("scripts/avalos_installer/system/optimize.py")
         legacy = self.read("scripts/skill_instalar_usb.py")
-        self.assertIn('"avalos-control")', modular)
-        self.assertIn('"avalos-control")', legacy)
+        # en la lista de scripts que se copian (puede no ser el último elemento)
+        self.assertRegex(modular, r'"avalos-control"\s*[,)]')
+        self.assertRegex(legacy, r'"avalos-control"\s*[,)]')
         for src in (modular, legacy):
             for key in ("log-control-desktop-installed", "log-control-desktop-missing",
                         "log-control-icon-installed", "log-control-icon-missing"):

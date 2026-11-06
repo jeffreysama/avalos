@@ -39,7 +39,7 @@ const type = (text) => { const s = q('#search'); s.value = text; s.dispatchEvent
   check(doc.documentElement.lang === (lang === 'zh' ? 'zh-CN' : lang), 'lang del documento');
   check(q('#title').textContent === STR.title, 'título');
   check(q('.accent') === null || q('.accent').textContent === 'AvalOS', 'AvalOS con degradado en el título');
-  check(qa('.tile').length === 14, '14 lanzadores dibujados');
+  check(qa('.tile').length === 15, '15 lanzadores dibujados');
   check(qa('#groups h2').length === 5, '5 grupos');
   check(qa('.fact').length === 6 && qa('.fact .v').every((v) => v.textContent === '—'), 'resumen con «—» antes de cargar');
 
@@ -69,7 +69,7 @@ const type = (text) => { const s = q('#search'); s.value = text; s.dispatchEvent
   type('<img src=x onerror=alert(1)>');
   check(qa('img').length === 0 && q('#empty').textContent.includes('<img'), 'lo buscado se muestra como texto, nunca como HTML');
   type('');
-  check(qa('.tile').length === 14 && !q('#overview').classList.contains('hidden'), 'vaciar la búsqueda lo restaura todo');
+  check(qa('.tile').length === 15 && !q('#overview').classList.contains('hidden'), 'vaciar la búsqueda lo restaura todo');
 
   // Enter abre el primer resultado activo (el Doctor está desactivado, así que no cuenta)
   type('health'); calls.length = 0;

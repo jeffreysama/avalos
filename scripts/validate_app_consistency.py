@@ -47,7 +47,7 @@ LIVE = ROOT / "configs" / "hyprland" / "hyprland.lua"
 TEMPLATE = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
 CATALOG = ROOT / "configs" / "avalos-store-catalog.json"
 MODS = {"SUPER", "SHIFT", "CTRL", "ALT"}
-NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control"}
+NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter"}
 # Herramientas que abre el Centro de control y que NO son de AvalOS: comando -> paquete que las instala.
 CONTROL_TOOL_PACKAGES = {
     "nwg-look": "nwg-look", "nwg-displays": "nwg-displays", "pavucontrol": "pavucontrol",
