@@ -13,7 +13,8 @@ function check(cond, what) { n++; if (!cond) { console.log('FALLA: ' + what); pr
 
 const BASE = () => ({
   launchers: { steam: true, lutris: false, heroic: true, prism: false, bottles: false },
-  gamemode: { installed: true, state: 'idle', in_group: true, governor: 'powersave', driver: 'amd-pstate-epp', epp: 'balance_performance', target: 'performance', whitelist: ['steam', 'lutris'] },
+  gamemode: { installed: true, state: 'idle', in_group: true, governor: 'powersave', driver: 'amd-pstate-epp', epp: 'balance_performance', target: 'performance', whitelist: ['steam', 'lutris'],
+    governors: ['performance', 'powersave'], can_switch: true, performance: false, restore_to: 'powersave' },
   mango: { installed: true, active: 'standard', has_backup: false, profiles: ['minimal', 'standard', 'full', 'hidden'] },
   tools: [], system: { gpus: ['AMD · amdgpu'], monitors: [{ name: 'DP-1', mode: '2560×1440 @ 165 Hz', vrr: true }] },
 });
@@ -23,7 +24,12 @@ const OPTS = (p) => ({ gamemode: 'gamemoderun %command%', mangohud: 'mangohud %c
 async function boot(snapshot, over = {}) {
   const calls = []; const errors = [];
   const api = {
-    snapshot: async () => snapshot,
+    snapshot: async () => JSON.parse(JSON.stringify(snapshot)),       // copias: la página no comparte objetos con el «backend»
+    gamemode_info: async () => { calls.push(['gamemode_info']); return JSON.parse(JSON.stringify(snapshot.gamemode)); },
+    performance: async (a) => { calls.push(['performance', a]); const g = snapshot.gamemode; g.performance = a === 'on';
+      g.governor = g.performance ? 'performance' : 'powersave'; return { ok: true, governor: g.governor, performance: g.performance }; },
+    governor_set: async (n) => { calls.push(['governor_set', n]); snapshot.gamemode.governor = n; snapshot.gamemode.performance = n === 'performance';
+      return { ok: true, governor: n }; },
     open_launcher: async (id) => { calls.push(['open_launcher', id]); return true; },
     open_store: async () => { calls.push(['open_store']); return true; },
     gamemode_test: async () => { calls.push(['gamemode_test']); return { state: 'done', passed: 6, failed: 0, output: '' }; },
@@ -44,6 +50,7 @@ async function boot(snapshot, over = {}) {
 }
 
 (async () => {
+  let s, y;
   // ── carga ───────────────────────────────────────────────────────────────
   let p = await boot(BASE());
   check(p.d.documentElement.lang === (lang === 'zh' ? 'zh-CN' : lang), 'lang del documento');
@@ -76,8 +83,8 @@ async function boot(snapshot, over = {}) {
   x = await mkGm({ state: 'unknown' }); check(x.q('.status').textContent === STR['gm-unknown'], 'GameMode con estado ilegible');
   x = await mkGm({ in_group: false }); check(x.q('.note.warn').textContent === STR['gm-group-no'], 'grupo gamemode: aviso de volver a entrar');
   x = await mkGm({ in_group: null }); check(x.q('.note.warn').textContent === STR['gm-group-na'], 'grupo gamemode inexistente');
-  x = await mkGm({ installed: false, state: 'missing' });
-  check(x.q('.status').textContent === STR['gm-missing'] && !x.q('#gm-test-btn') && !x.qa('#content .card')[0].querySelector('.facts'), 'sin GameMode: aviso, sin botón ni datos');
+  x = await mkGm({ installed: false, state: 'missing', can_switch: false, governors: [] });
+  check(x.q('.status').textContent === STR['gm-missing'] && !x.q('#gm-test-btn') && !x.qa('#content .card')[0].querySelector('.facts') && !x.q('#gv-toggle') && !x.qa('#content .card')[0].textContent.includes(STR['gv-na']), 'sin GameMode: aviso, sin botón, datos ni controles de gobernador');
   p.q('#gm-test-btn').click();
   check(p.q('#gm-test-btn').disabled && p.q('#gm-test-btn').textContent === STR['gm-testing'], 'prueba: botón en «Probando…»');
   await tick();
@@ -88,6 +95,39 @@ async function boot(snapshot, over = {}) {
   x = await boot(BASE(), { gamemode_test: async () => ({ state: 'error', output: '<b>traza</b>' }) }); await x.ready();
   x.q('#gm-test-btn').click(); await tick();
   check(x.q('#gm-test-res .note.bad').textContent === STR['gm-test-err'] && x.q('#gm-test-res pre').textContent === '<b>traza</b>' && !x.q('#gm-test-res b'), 'prueba que no termina: aviso y salida como texto');
+
+  // ── cambio de gobernador ────────────────────────────────────────────────
+  check(p.q('#gv-toggle').textContent === STR['gv-perf-on'] && p.q('#gv-select').value === 'powersave', 'gobernador: botón de pasar a rendimiento y selector con el actual');
+  check(Array.from(p.qa('#gv-select option')).map((o) => o.value).join(',') === 'performance,powersave', 'selector con los gobernadores disponibles');
+  check(p.qa('#content .card')[0].textContent.includes(STR['gv-hint']), 'aviso de que dura hasta reiniciar');
+  p.q('#gv-toggle').click(); await tick(); await tick();
+  check(JSON.stringify(p.calls.filter((c) => c[0] === 'performance').at(-1)) === '["performance","on"]', 'pasar a rendimiento llama a la API con «on»');
+  check(p.q('#toast').textContent === STR['gv-ok'].replace('{name}', 'performance'), 'aviso con el gobernador que quedó');
+  check(p.calls.some((c) => c[0] === 'gamemode_info'), 'tras el cambio se vuelve a leer el estado');
+  check(p.q('#gv-toggle').textContent === STR['gv-perf-off'].replace('{name}', 'powersave') && p.q('#gv-select').value === 'performance', 'el botón ofrece volver y el selector marca el nuevo');
+  p.q('#gv-toggle').click(); await tick(); await tick();
+  check(JSON.stringify(p.calls.filter((c) => c[0] === 'performance').at(-1)) === '["performance","off"]' && p.q('#gv-toggle').textContent === STR['gv-perf-on'], 'volver llama con «off»');
+  p.q('#gv-select').value = 'performance'; p.q('#gv-apply').click(); await tick(); await tick();
+  check(JSON.stringify(p.calls.filter((c) => c[0] === 'governor_set').at(-1)) === '["governor_set","performance"]', 'Aplicar manda el gobernador elegido');
+  p.q('#gv-select').value = 'powersave'; p.q('#gv-apply').click(); await tick(); await tick();
+  check(JSON.stringify(p.calls.filter((c) => c[0] === 'governor_set').at(-1)) === '["governor_set","powersave"]' && p.q('#gv-select').value === 'powersave', 'Aplicar manda lo que hay en el selector, no un valor fijo');
+  for (const [err, key] of [['denied', 'gv-denied'], ['missing', 'gv-missing'], ['failed', 'gv-failed'], ['unavailable', 'gv-unavailable']]) {
+    const e = await boot(BASE(), { performance: async () => ({ ok: false, error: err, governor: 'powersave' }) }); await e.ready();
+    e.q('#gv-toggle').click(); await tick(); await tick();
+    check(e.q('#toast').textContent === STR[key] && e.q('#gv-toggle').textContent === STR['gv-perf-on'], 'error «' + err + '»: aviso y nada cambia');
+  }
+  y = await boot(BASE(), { governor_set: async () => null }); await y.ready();
+  y.q('#gv-apply').click(); await tick(); await tick();
+  check(y.q('#toast').textContent === STR['gv-failed'], 'sin respuesta del sistema: aviso genérico');
+  y = await boot(BASE(), { performance: async () => ({ ok: false, error: 'raro' }) }); await y.ready();
+  y.q('#gv-toggle').click(); await tick(); await tick();
+  check(y.q('#toast').textContent === STR['gv-failed'], 'error desconocido: aviso genérico');
+  s = BASE(); s.gamemode.can_switch = false; s.gamemode.governors = []; y = await boot(s); await y.ready();
+  check(!y.q('#gv-toggle') && !y.q('#gv-select') && y.qa('#content .card')[0].textContent.includes(STR['gv-na']), 'sin helper o polkit: aviso y sin controles');
+  s = BASE(); s.gamemode.governor = 'performance'; s.gamemode.performance = true; y = await boot(s); await y.ready();
+  check(y.q('#gv-toggle').textContent === STR['gv-perf-off'].replace('{name}', 'powersave') && y.q('#gv-select').value === 'performance', 'ya en rendimiento: ofrece volver al anterior');
+  s = BASE(); s.gamemode.restore_to = null; s.gamemode.governor = 'performance'; s.gamemode.performance = true; y = await boot(s); await y.ready();
+  check(y.q('#gv-toggle').textContent === STR['gv-perf-off'].replace('{name}', '—'), 'sin gobernador al que volver: guion, no «null»');
 
   // ── MangoHud ────────────────────────────────────────────────────────────
   check(p.q('#mg-state').textContent === STR['mg-state'] + ' ' + STR['mp-standard'], 'perfil en uso');
@@ -101,7 +141,7 @@ async function boot(snapshot, over = {}) {
     const s = BASE(); s.mango.active = active; const y = await boot(s); await y.ready();
     check(y.q('#mg-state').textContent === STR['mg-state'] + ' ' + label && !y.q('.profile.on'), 'estado «' + active + '»');
   }
-  let s = BASE(); s.mango.installed = false; x = await boot(s); await x.ready();
+  s = BASE(); s.mango.installed = false; x = await boot(s); await x.ready();
   check(x.qa('#content .card')[1].textContent === STR['mg-missing'] && x.qa('[data-profile]').length === 0, 'sin MangoHud: aviso y sin perfiles');
   x = await boot(BASE(), { mango_apply: async () => ({ error: 'write' }) }); await x.ready();
   x.q('[data-profile="minimal"] button').click(); await tick();

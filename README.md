@@ -80,7 +80,7 @@ AvalOS ships its own small apps, all available from the app launcher:
 
 | Tool | What it does |
 |------|--------------|
-| **AvalOS Game Center** | Launchers (Steam, Lutris, Heroic, Prism, Bottles), GameMode status, MangoHud profiles, copy-ready launch options and Proton versions (`Super + Alt + G`) |
+| **AvalOS Game Center** | Launchers (Steam, Lutris, Heroic, Prism, Bottles), GameMode status, MangoHud profiles, copy-ready launch options, Proton versions and a CPU performance mode (`Super + Alt + G`; `Super + Alt + P` toggles the performance mode) |
 | **AvalOS Control Center** | All your settings and the AvalOS tools in one window, with a system summary and an on-demand health check (`Super + Alt + C`) |
 | **AvalOS Welcome** | First steps and key shortcuts, shown on your first login |
 | **AvalOS Settings** | Control center for your installed system |

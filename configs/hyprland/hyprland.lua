@@ -170,7 +170,7 @@ hl.bind(mod .. " + V",
 hl.bind(mod .. " + CTRL + W", hl.dsp.exec_cmd("avalos-wallpaper"))
 hl.bind(mod .. " + CTRL + S", hl.dsp.exec_cmd("avalos-settings"))
 
--- SUPER + ALT + S / U / C / G. Hyprland compara el conjunto EXACTO de modificadores, así
+-- SUPER + ALT + S / U / C / G / P. Hyprland compara el conjunto EXACTO de modificadores, así
 -- que SUPER+ALT+S no choca con SUPER+SHIFT+S (captura) ni con SUPER+CTRL+S
 -- (avalos-settings, arriba).
 -- NO usar "ALT_L" acá: en un bind, ALT_L es el nombre de una TECLA (sirve para
@@ -182,6 +182,7 @@ hl.bind(mod .. " + ALT + S", hl.dsp.exec_cmd("avalos-store"))
 hl.bind(mod .. " + ALT + U", hl.dsp.exec_cmd("avalos-update"))
 hl.bind(mod .. " + ALT + C", hl.dsp.exec_cmd("avalos-control"))
 hl.bind(mod .. " + ALT + G", hl.dsp.exec_cmd("avalos-gamecenter"))
+hl.bind(mod .. " + ALT + P", hl.dsp.exec_cmd("avalos-gamecenter --performance toggle"))
 
 -- Gaming
 hl.bind(mod .. " + S",        hl.dsp.exec_cmd("steam"))

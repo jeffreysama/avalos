@@ -169,16 +169,21 @@ class GameModeStatus(Sandbox):
         self.put(self.cpu / "scaling_governor", "powersave\n")
         self.put(self.cpu / "scaling_driver", "amd-pstate-epp\n")
         self.put(self.cpu / "energy_performance_preference", "balance_performance\n")
+        self.put(self.cpu / "scaling_available_governors", "performance powersave\n")
+        self.helper = self.put(self.root / "cpugovctl")
+        self.helper.chmod(0o755)
         self.system_ini = self.put(self.root / "etc-gamemode.ini", "[general]\ndesiredgov=performance\n[filter]\nwhitelist=steam\nwhitelist=lutris\n")
         for patcher in (mock.patch.object(gc, "SYSFS_CPUFREQ", self.cpu),
+                        mock.patch.object(gc, "CPUGOVCTL_CANDIDATES", (self.root / "no-hay", self.helper)),
                         mock.patch.object(gc, "GAMEMODE_INI_SYSTEM", (self.root / "no-existe.ini", self.system_ini))):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def status(self, exe="/usr/bin/gamemoded", run=(0, "gamemode is inactive\n"), group=77, groups=(77,)):
+    def status(self, exe="/usr/bin/gamemoded", run=(0, "gamemode is inactive\n"), group=77, groups=(77,), pkexec="/usr/bin/pkexec"):
         fake_grp = SimpleNamespace(getgrnam=lambda name: SimpleNamespace(gr_gid=group)) if group is not None else \
             SimpleNamespace(getgrnam=mock.Mock(side_effect=KeyError("gamemode")))
-        with mock.patch.object(gc.shutil, "which", side_effect=lambda c: exe if c == "gamemoded" else None), \
+        which = lambda c: {"gamemoded": exe, "pkexec": pkexec}.get(c)  # noqa: E731
+        with mock.patch.object(gc.shutil, "which", side_effect=which), \
                 mock.patch.object(gc, "_run", return_value=run), mock.patch.object(gc, "grp", fake_grp), \
                 mock.patch.object(gc.os, "getgroups", return_value=list(groups)), \
                 mock.patch.object(gc.os, "getgid", return_value=1000):
@@ -188,7 +193,22 @@ class GameModeStatus(Sandbox):
         info = self.status()
         self.assertEqual(info, {"installed": True, "state": "idle", "in_group": True, "governor": "powersave",
                                 "driver": "amd-pstate-epp", "epp": "balance_performance", "target": "performance",
-                                "whitelist": ["steam", "lutris"]})
+                                "whitelist": ["steam", "lutris"], "governors": ["performance", "powersave"],
+                                "can_switch": True, "restore_to": "powersave", "performance": False})
+
+    def test_switching_needs_pkexec_the_helper_and_more_than_one_governor(self):
+        self.assertTrue(self.status()["can_switch"])
+        self.assertFalse(self.status(pkexec=None)["can_switch"])
+        with mock.patch.object(gc, "CPUGOVCTL_CANDIDATES", (self.root / "no-hay",)):
+            self.assertFalse(self.status()["can_switch"])
+        self.put(self.cpu / "scaling_available_governors", "performance\n")
+        self.assertFalse(self.status()["can_switch"])
+
+    def test_it_reports_when_performance_is_already_on(self):
+        self.put(self.cpu / "scaling_governor", "performance\n")
+        info = self.status()
+        self.assertTrue(info["performance"])
+        self.assertEqual(info["restore_to"], "powersave")
 
     def test_active_unknown_and_missing(self):
         self.assertEqual(self.status(run=(0, "gamemode is active"))["state"], "active")
@@ -251,6 +271,240 @@ class GameModeTest(unittest.TestCase):
 
     def test_a_test_that_cannot_run_is_an_error(self):
         self.assertEqual(self.run_test(None)[0], {"state": "error"})
+
+
+class GovernorSwitching(Sandbox):
+    """Cambio manual del gobernador con el helper de GameMode (pkexec cpugovctl set <nombre>)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cpu = self.root / "cpufreq"
+        self.put(self.cpu / "scaling_governor", "powersave\n")
+        self.put(self.cpu / "scaling_available_governors", "performance powersave\n")
+        self.helper = self.put(self.root / "cpugovctl")
+        self.helper.chmod(0o755)
+        self.state_home = self.root / "state"
+        self.runs = []
+        for patcher in (mock.patch.object(gc, "SYSFS_CPUFREQ", self.cpu),
+                        mock.patch.object(gc, "CPUGOVCTL_CANDIDATES", (self.root / "no-hay", self.helper)),
+                        mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(self.state_home)}),
+                        mock.patch.object(gc.shutil, "which", side_effect=lambda c: "/usr/bin/pkexec" if c == "pkexec" else None)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def pkexec(self, code=0, apply=True):
+        """pkexec falso: si «autoriza», escribe el gobernador pedido donde lo lee el kernel."""
+        def run(cmd, timeout):
+            self.runs.append((cmd, timeout))
+            if code == 0 and apply:
+                (self.cpu / "scaling_governor").write_text(cmd[-1] + "\n", encoding="utf-8")
+            return (code, "")
+        return mock.patch.object(gc, "_run", side_effect=run)
+
+    def governor(self):
+        return (self.cpu / "scaling_governor").read_text(encoding="utf-8").strip()
+
+    def state(self):
+        path = self.state_home / "avalos" / "gamecenter-governor"
+        return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
+    # ── descubrir el helper y los gobernadores ──
+    def test_the_helper_is_the_first_executable_candidate(self):
+        plain = self.put(self.root / "no-ejecutable")
+        plain.chmod(0o644)
+        with mock.patch.object(gc, "CPUGOVCTL_CANDIDATES", (self.root / "no-hay", plain, self.helper)):
+            self.assertEqual(gc.cpugovctl_path(), self.helper)
+        with mock.patch.object(gc, "CPUGOVCTL_CANDIDATES", (self.root / "no-hay", plain)):
+            self.assertIsNone(gc.cpugovctl_path())
+
+    def test_arch_installs_it_under_usr_lib(self):
+        self.assertIn(Path("/usr/lib/gamemode/cpugovctl"), load().CPUGOVCTL_CANDIDATES)   # sin los parches de esta clase
+
+    def test_only_closed_list_governors_that_the_kernel_offers_can_be_chosen(self):
+        self.put(self.cpu / "scaling_available_governors", "userspace conservative performance powersave ondemand\n")
+        self.assertEqual(gc.governor_choices(), ["performance", "powersave", "ondemand", "conservative"])
+        with mock.patch.object(gc, "SYSFS_CPUFREQ", self.root / "no-hay"):
+            self.assertEqual(gc.governor_choices(), [])
+
+    # ── set_governor ──
+    def test_it_runs_the_helper_through_pkexec_with_one_fixed_argument_list(self):
+        with self.pkexec():
+            result = gc.set_governor("performance")
+        self.assertEqual(result, {"ok": True, "governor": "performance"})
+        self.assertEqual(self.runs, [(["/usr/bin/pkexec", str(self.helper), "set", "performance"], gc.GOVERNOR_TIMEOUT)])
+
+    def test_nothing_unknown_or_unoffered_ever_reaches_the_privileged_command(self):
+        with self.pkexec():
+            for bad in (None, 5, "", " performance", "userspace", "performance; rm -rf ~", "../x", "PERFORMANCE", ["performance"],
+                        "schedutil"):                      # válido en la lista, pero el kernel no lo ofrece aquí
+                result = gc.set_governor(bad)
+                self.assertEqual((result["ok"], result["error"]), (False, "unavailable"), repr(bad))
+        self.assertEqual(self.runs, [])
+        self.assertEqual(self.governor(), "powersave")
+
+    def test_without_the_helper_or_pkexec_it_says_missing(self):
+        with self.pkexec(), mock.patch.object(gc, "CPUGOVCTL_CANDIDATES", (self.root / "no-hay",)):
+            self.assertEqual(gc.set_governor("performance")["error"], "missing")
+        with self.pkexec(), mock.patch.object(gc.shutil, "which", return_value=None):
+            self.assertEqual(gc.set_governor("performance")["error"], "missing")
+        self.assertEqual(self.runs, [])
+
+    def test_denied_failed_and_silently_ignored_are_told_apart(self):
+        for code, error in ((126, "denied"), (127, "denied"), (1, "failed"), (2, "failed")):
+            with self.pkexec(code=code):
+                result = gc.set_governor("performance")
+            self.assertEqual((result["ok"], result["error"], result["governor"]), (False, error, "powersave"), code)
+        with mock.patch.object(gc, "_run", return_value=None):
+            self.assertEqual(gc.set_governor("performance")["error"], "failed")
+        with self.pkexec(code=0, apply=False):             # dice que sí y el kernel no cambió: no se miente
+            result = gc.set_governor("performance")
+        self.assertEqual((result["ok"], result["error"]), (False, "failed"))
+
+    # ── modo rendimiento ──
+    def test_turning_it_on_saves_the_previous_governor_only_after_it_worked(self):
+        with self.pkexec(code=126):
+            self.assertFalse(gc.performance_mode("on")["ok"])
+        self.assertIsNone(self.state(), "un cambio fallido no deja estado")
+        with self.pkexec():
+            result = gc.performance_mode("on")
+        self.assertEqual((result["ok"], result["governor"], result["performance"]), (True, "performance", True))
+        self.assertEqual(self.state(), "powersave")
+
+    def test_turning_it_off_goes_back_to_exactly_what_there_was(self):
+        self.put(self.cpu / "scaling_available_governors", "performance powersave schedutil\n")
+        self.put(self.cpu / "scaling_governor", "powersave\n")
+        with self.pkexec():
+            gc.performance_mode("on")
+            result = gc.performance_mode("off")
+        self.assertEqual((result["ok"], result["governor"], result["performance"]), (True, "powersave", False))
+        self.assertIsNone(self.state(), "al volver se borra el estado")
+
+    def test_toggle_goes_both_ways(self):
+        with self.pkexec():
+            self.assertTrue(gc.performance_mode("toggle")["performance"])
+            self.assertFalse(gc.performance_mode("toggle")["performance"])
+        self.assertEqual(self.governor(), "powersave")
+
+    def test_already_in_the_wanted_state_changes_nothing(self):
+        with self.pkexec():
+            self.assertEqual(gc.performance_mode("off"), {"ok": True, "governor": "powersave", "performance": False})
+            self.put(self.cpu / "scaling_governor", "performance\n")
+            self.assertEqual(gc.performance_mode("on"), {"ok": True, "governor": "performance", "performance": True})
+        self.assertEqual(self.runs, [])
+        self.assertIsNone(self.state())
+
+    def test_without_a_saved_governor_it_falls_back_in_a_sensible_order(self):
+        self.put(self.cpu / "scaling_available_governors", "performance powersave schedutil\n")
+        self.put(self.cpu / "scaling_governor", "performance\n")
+        with self.pkexec():
+            self.assertEqual(gc.performance_mode("off")["governor"], "schedutil")
+        self.put(self.cpu / "scaling_available_governors", "performance powersave\n")
+        self.put(self.cpu / "scaling_governor", "performance\n")
+        with self.pkexec():
+            self.assertEqual(gc.performance_mode("off")["governor"], "powersave")
+
+    def test_a_corrupt_or_stale_saved_governor_is_ignored(self):
+        state = self.state_home / "avalos" / "gamecenter-governor"
+        for junk in ("performance", "evil; rm -rf ~", "", "../../x", "schedutil"):   # schedutil: el kernel ya no lo ofrece
+            self.put(state, junk + "\n")
+            self.put(self.cpu / "scaling_governor", "performance\n")
+            with self.pkexec():
+                result = gc.performance_mode("off")
+            self.assertEqual((result["ok"], result["governor"]), (True, "powersave"), repr(junk))
+        self.assertEqual(gc.restore_target(), "powersave")
+
+    def test_an_exotic_current_governor_is_not_saved(self):
+        self.put(self.cpu / "scaling_governor", "userspace\n")
+        with self.pkexec():
+            self.assertTrue(gc.performance_mode("on")["ok"])
+        self.assertIsNone(self.state())
+
+    def test_a_failure_saving_the_state_does_not_break_the_switch(self):
+        with self.pkexec(), mock.patch.object(gc, "_write_atomic", side_effect=OSError("disco lleno")):
+            self.assertTrue(gc.performance_mode("on")["ok"])
+        self.assertEqual(self.governor(), "performance")
+
+    def test_a_failed_switch_back_keeps_the_saved_governor(self):
+        with self.pkexec():
+            gc.performance_mode("on")
+        with self.pkexec(code=126):
+            self.assertEqual(gc.performance_mode("off")["error"], "denied")
+        self.assertEqual(self.state(), "powersave")
+        with self.pkexec():                                  # y cuando por fin se autoriza, vuelve a lo de antes
+            self.assertEqual(gc.performance_mode("off")["governor"], "powersave")
+
+    def test_an_unknown_action_does_nothing(self):
+        with self.pkexec():
+            for bad in (None, "", "encender", 1, ["on"], "ON"):
+                result = gc.performance_mode(bad)
+                self.assertEqual((result["ok"], result["error"], result["performance"]), (False, "unavailable", False), repr(bad))
+        self.assertEqual(self.runs, [])
+
+    def test_the_api_never_turns_a_bad_action_into_a_switch(self):
+        """Con el entorno listo para cambiar de verdad: lo que no es una acción válida no llega a pkexec."""
+        api = gc.GameAPI()
+        with self.pkexec():
+            for bad in (None, 3, ["on"], "encender", "ON"):
+                self.assertEqual(api.performance(bad)["error"], "unavailable", repr(bad))
+            for bad in (None, 3, ["performance"], "userspace", "performance; rm"):
+                self.assertEqual(api.governor_set(bad)["error"], "unavailable", repr(bad))
+        self.assertEqual(self.runs, [])
+        self.assertEqual(self.governor(), "powersave")
+
+    def test_the_state_lives_under_xdg_state_home(self):
+        with self.pkexec():
+            gc.performance_mode("on")
+        self.assertTrue((self.state_home / "avalos" / "gamecenter-governor").is_file())
+
+    # ── línea de comandos (el atajo de Hyprland) ──
+    def run_cli(self, argv, lang="es", result=None):
+        out, err = io.StringIO(), io.StringIO()
+        notes = []
+        with mock.patch.object(gc, "LANG", lang), mock.patch.object(gc, "_notify", side_effect=lambda t, b: notes.append((t, b))), \
+                mock.patch.object(gc, "_has_display", return_value=False), mock.patch("sys.stderr", new=err), redirect_stdout(out):
+            if result is not None:
+                with mock.patch.object(gc, "performance_mode", return_value=result):
+                    code = gc.main(argv)
+            else:
+                code = gc.main(argv)
+        return code, out.getvalue(), err.getvalue(), notes
+
+    def test_the_shortcut_toggles_and_notifies_in_the_users_language(self):
+        with self.pkexec():
+            code, out, err, notes = self.run_cli(["--performance", "toggle"], lang="es")
+        self.assertEqual((code, out.strip(), err), (0, "performance", ""))
+        self.assertEqual(notes, [(gc.STRINGS["es"]["perf-on"], f"{gc.STRINGS['es']['gm-governor']}: performance")])
+        with self.pkexec():
+            code, out, _err, notes = self.run_cli(["--performance", "toggle"], lang="ja")
+        self.assertEqual((code, out.strip()), (0, "powersave"))
+        self.assertEqual(notes[0][0], gc.STRINGS["ja"]["perf-off"])
+
+    def test_the_shortcut_reports_a_refusal_with_the_reason_and_exit_code_1(self):
+        with self.pkexec(code=126):
+            code, out, err, notes = self.run_cli(["--performance", "on"], lang="en")
+        self.assertEqual((code, out), (1, ""))
+        self.assertEqual(err.strip(), gc.STRINGS["en"]["gv-denied"])
+        self.assertEqual(notes, [(gc.STRINGS["en"]["perf-fail"], gc.STRINGS["en"]["gv-denied"])])
+
+    def test_every_error_the_logic_can_return_has_a_text(self):
+        for error in ("unavailable", "missing", "denied", "failed", "algo-nuevo"):
+            code, _out, err, notes = self.run_cli(["--performance", "on"], result={"ok": False, "error": error, "governor": None})
+            self.assertEqual(code, 1)
+            self.assertTrue(err.strip() and notes[0][1], error)
+
+    def test_the_shortcut_needs_no_graphical_session(self):
+        with self.pkexec():
+            code, *_ = self.run_cli(["--performance", "on"])
+        self.assertEqual(code, 0)
+
+    def test_notifications_go_through_notify_send_when_it_exists(self):
+        with mock.patch.object(gc.shutil, "which", side_effect=lambda c: "/usr/bin/notify-send" if c == "notify-send" else None), \
+                mock.patch.object(gc, "_run") as run:
+            gc._notify("Título", "Cuerpo")
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/notify-send", "-a", "AvalOS", "-i", "avalos-gamecenter", "Título", "Cuerpo"])
+        with mock.patch.object(gc.shutil, "which", return_value=None), mock.patch.object(gc, "_run") as run:
+            gc._notify("a", "b")
+        run.assert_not_called()
 
 
 class MangoHudFiles(Sandbox):
@@ -581,6 +835,18 @@ class TheAPI(unittest.TestCase):
             result = self.api.copy_options("gamemode", "full")
         self.assertEqual(result, {"ok": False, "text": "gamemoderun %command%"})
 
+    def test_governor_arguments_reach_the_logic_unchanged_and_bad_ones_are_refused(self):
+        with mock.patch.object(gc, "_run") as run:
+            for bad in (None, 3, ["performance"], {"g": 1}, "userspace", "performance; rm -rf ~"):
+                self.assertEqual(self.api.governor_set(bad)["error"], "unavailable", repr(bad))
+            for bad in (None, 3, ["on"], "encender"):
+                self.assertEqual(self.api.performance(bad)["error"], "unavailable", repr(bad))
+        run.assert_not_called()
+
+    def test_the_governor_info_call_is_the_gamemode_status(self):
+        with mock.patch.object(gc, "gamemode_status", return_value={"state": "idle"}):
+            self.assertEqual(self.api.gamemode_info(), {"state": "idle"})
+
     def test_launch_options_tolerates_a_bad_profile_argument(self):
         self.assertEqual(self.api.launch_options(None), gc.launch_options("standard"))
         self.assertEqual(self.api.launch_options("full"), gc.launch_options("full"))
@@ -683,6 +949,13 @@ class RegisteredEverywhere(unittest.TestCase):
         for cfg in ("hyprland.lua", "hyprland_conf_lua.template"):
             self.assertIn('hl.bind(mod .. " + ALT + G", hl.dsp.exec_cmd("avalos-gamecenter"))', self.read(f"configs/hyprland/{cfg}"), cfg)
         self.assertIn('(("Super", "Alt", "G"), "k-gamecenter")', self.read("scripts/avalos-welcome"))
+
+    def test_the_performance_shortcut_exists_and_welcome_and_readme_show_it(self):
+        bind = 'hl.bind(mod .. " + ALT + P", hl.dsp.exec_cmd("avalos-gamecenter --performance toggle"))'
+        for cfg in ("hyprland.lua", "hyprland_conf_lua.template"):
+            self.assertIn(bind, self.read(f"configs/hyprland/{cfg}"), cfg)
+        self.assertIn('(("Super", "Alt", "P"), "k-performance")', self.read("scripts/avalos-welcome"))
+        self.assertIn("Super + Alt + P", self.read("README.md"))
 
     def test_the_control_center_opens_it(self):
         self.assertIn('("apps", "games", ("avalos-gamecenter",)', self.read("scripts/avalos-control"))

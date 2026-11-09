@@ -103,6 +103,17 @@ LAUNCH_VARIANTS = ("gamemode", "mangohud", "both", "profile")
 MAX_TOOLS = 10
 GAMEMODE_TEST_TIMEOUT = 90
 
+# Cambio manual del gobernador de CPU: se hace con el helper del propio GameMode (cpugovctl), que su
+# regla de polkit ya autoriza al grupo «gamemode»: AvalOS no instala ningún helper ni política nuevos
+# con privilegios. Los candidatos son las rutas donde lo instalan Arch (libexecdir=lib) y otras distros.
+CPUGOVCTL_CANDIDATES = (Path("/usr/lib/gamemode/cpugovctl"), Path("/usr/libexec/gamemode/cpugovctl"),
+                        Path("/usr/libexec/cpugovctl"), Path("/usr/lib64/gamemode/cpugovctl"))
+# Lista cerrada: solo estos nombres (y solo si el kernel los ofrece) llegan al comando con privilegios.
+GOVERNORS_ALLOWED = ("performance", "powersave", "schedutil", "ondemand", "conservative")
+PERFORMANCE = "performance"
+RESTORE_ORDER = ("schedutil", "powersave", "ondemand", "conservative")
+GOVERNOR_TIMEOUT = 120      # puede esperar a que el usuario escriba su contraseña en el agente de polkit
+
 STRINGS = {
     "en": {
         "title": "AvalOS Game Center",
@@ -128,6 +139,20 @@ STRINGS = {
         "gm-test-fail": "GameMode test found problems ({n} failed).",
         "gm-test-err": "The test couldn't finish.",
         "gm-test-note": "Takes a few seconds and briefly switches the CPU governor.",
+        "gv-perf-on": "Switch to performance",
+        "gv-perf-off": "Back to {name}",
+        "gv-label": "Governor:",
+        "gv-apply": "Apply",
+        "gv-hint": "Lasts until you reboot. GameMode already does this by itself while a game runs.",
+        "gv-na": "Switching the governor isn't available here (it needs GameMode's helper and polkit).",
+        "gv-ok": "CPU governor set to {name}.",
+        "gv-denied": "Not authorized. Authenticate when asked, or join the gamemode group.",
+        "gv-missing": "GameMode's governor helper isn't available.",
+        "gv-failed": "The governor didn't change.",
+        "gv-unavailable": "That governor isn't available on this CPU.",
+        "perf-on": "Performance mode on",
+        "perf-off": "Performance mode off",
+        "perf-fail": "Couldn't change the CPU governor",
         "mg-missing": "MangoHud isn't installed on this system.",
         "mg-desc": "Pick how the overlay looks by default. Each game can use another profile through its launch options.",
         "mg-state": "In use:", "mg-none": "MangoHud's own look (no AvalOS profile yet)", "mg-custom": "Your own configuration",
@@ -175,6 +200,20 @@ STRINGS = {
         "gm-test-fail": "La prueba de GameMode encontró problemas ({n} fallaron).",
         "gm-test-err": "La prueba no pudo terminar.",
         "gm-test-note": "Tarda unos segundos y cambia el gobernador de CPU por un momento.",
+        "gv-perf-on": "Cambiar a rendimiento",
+        "gv-perf-off": "Volver a {name}",
+        "gv-label": "Gobernador:",
+        "gv-apply": "Aplicar",
+        "gv-hint": "Dura hasta que reinicies. GameMode ya lo hace solo mientras juegas.",
+        "gv-na": "Cambiar el gobernador no está disponible aquí (necesita el helper de GameMode y polkit).",
+        "gv-ok": "Gobernador de CPU: {name}.",
+        "gv-denied": "Sin autorización. Autentícate cuando te lo pidan o únete al grupo gamemode.",
+        "gv-missing": "El helper de gobernador de GameMode no está disponible.",
+        "gv-failed": "El gobernador no cambió.",
+        "gv-unavailable": "Ese gobernador no está disponible en esta CPU.",
+        "perf-on": "Modo rendimiento activado",
+        "perf-off": "Modo rendimiento desactivado",
+        "perf-fail": "No se pudo cambiar el gobernador de CPU",
         "mg-missing": "MangoHud no está instalado en este sistema.",
         "mg-desc": "Elige cómo se ve el overlay por defecto. Cada juego puede usar otro perfil con sus opciones de lanzamiento.",
         "mg-state": "En uso:", "mg-none": "El aspecto propio de MangoHud (todavía sin perfil de AvalOS)", "mg-custom": "Tu propia configuración",
@@ -222,6 +261,20 @@ STRINGS = {
         "gm-test-fail": "GameMode 测试发现问题（{n} 项失败）。",
         "gm-test-err": "测试未能完成。",
         "gm-test-note": "需要几秒钟，并会短暂切换 CPU 调度器。",
+        "gv-perf-on": "切换到性能模式",
+        "gv-perf-off": "恢复为 {name}",
+        "gv-label": "调度器：",
+        "gv-apply": "应用",
+        "gv-hint": "重启后失效。GameMode 在你玩游戏时已会自动切换。",
+        "gv-na": "此处无法切换调度器（需要 GameMode 的辅助程序和 polkit）。",
+        "gv-ok": "CPU 调度器已设为 {name}。",
+        "gv-denied": "未获授权。请在提示时验证身份，或加入 gamemode 用户组。",
+        "gv-missing": "GameMode 的调度器辅助程序不可用。",
+        "gv-failed": "调度器没有改变。",
+        "gv-unavailable": "此 CPU 不支持该调度器。",
+        "perf-on": "性能模式已开启",
+        "perf-off": "性能模式已关闭",
+        "perf-fail": "无法更改 CPU 调度器",
         "mg-missing": "此系统尚未安装 MangoHud。",
         "mg-desc": "选择悬浮显示的默认外观。每个游戏也可以通过启动选项使用其他配置。",
         "mg-state": "当前使用：", "mg-none": "MangoHud 自带外观（尚无 AvalOS 配置）", "mg-custom": "你自己的配置",
@@ -269,6 +322,20 @@ STRINGS = {
         "gm-test-fail": "GameMode のテストで問題が見つかりました（{n} 件失敗）。",
         "gm-test-err": "テストを完了できませんでした。",
         "gm-test-note": "数秒かかり、CPU ガバナーが一時的に切り替わります。",
+        "gv-perf-on": "パフォーマンスに切り替え",
+        "gv-perf-off": "{name} に戻す",
+        "gv-label": "ガバナー：",
+        "gv-apply": "適用",
+        "gv-hint": "再起動するまで有効です。ゲーム中は GameMode が自動で切り替えます。",
+        "gv-na": "ここではガバナーを切り替えられません（GameMode のヘルパーと polkit が必要です）。",
+        "gv-ok": "CPU ガバナーを {name} に設定しました。",
+        "gv-denied": "権限がありません。求められたら認証するか、gamemode グループに参加してください。",
+        "gv-missing": "GameMode のガバナーヘルパーを利用できません。",
+        "gv-failed": "ガバナーは変更されませんでした。",
+        "gv-unavailable": "この CPU ではそのガバナーは使えません。",
+        "perf-on": "パフォーマンスモードをオン",
+        "perf-off": "パフォーマンスモードをオフ",
+        "perf-fail": "CPU ガバナーを変更できませんでした",
         "mg-missing": "このシステムには MangoHud がインストールされていません。",
         "mg-desc": "オーバーレイの標準の見た目を選びます。ゲームごとに起動オプションで別のプロファイルも使えます。",
         "mg-state": "使用中：", "mg-none": "MangoHud 標準の見た目（AvalOS プロファイル未設定）", "mg-custom": "独自の設定",
@@ -426,7 +493,11 @@ def gamemode_status() -> dict:
         "epp": _read(SYSFS_CPUFREQ / "energy_performance_preference") or NA,
         "target": cfg["desiredgov"] or "performance",
         "whitelist": cfg["whitelist"],
+        "governors": governor_choices(),
+        "can_switch": can_switch_governor(),
+        "restore_to": restore_target(),
     }
+    info["performance"] = info["governor"] == PERFORMANCE
     if exe:
         res = _run([exe, "-s"], 8)
         info["state"] = parse_gamemode_status(res[1]) if res else "unknown"
@@ -448,6 +519,93 @@ def gamemode_test() -> dict:
     if not passed and not failed:
         return {"state": "error", "output": tail}
     return {"state": "done", "passed": passed, "failed": failed + (1 if code and not failed else 0), "output": tail}
+
+
+# ── Gobernador de CPU ──────────────────────────────────────────────────────
+def cpugovctl_path():
+    return next((p for p in CPUGOVCTL_CANDIDATES if p.is_file() and os.access(p, os.X_OK)), None)
+
+
+def current_governor():
+    return _read(SYSFS_CPUFREQ / "scaling_governor") or None
+
+
+def governor_choices() -> list:
+    """Los que se pueden pedir: los que el kernel ofrece para esta CPU y están en la lista cerrada."""
+    offered = _read(SYSFS_CPUFREQ / "scaling_available_governors").split()
+    return [g for g in GOVERNORS_ALLOWED if g in offered]
+
+
+def can_switch_governor() -> bool:
+    return bool(shutil.which("pkexec")) and cpugovctl_path() is not None and len(governor_choices()) >= 2
+
+
+def _state_file() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "avalos" / "gamecenter-governor"
+
+
+def saved_governor():
+    """El gobernador que había ANTES de pasar a rendimiento, si lo guardamos y sigue siendo válido."""
+    name = _read(_state_file())
+    return name if name in GOVERNORS_ALLOWED and name != PERFORMANCE else None
+
+
+def restore_target():
+    """A cuál se vuelve al salir del modo rendimiento: el que había antes; si no, el primero razonable."""
+    choices = governor_choices()
+    saved = saved_governor()
+    if saved in choices:
+        return saved
+    return next((g for g in RESTORE_ORDER if g in choices), None)
+
+
+def set_governor(name) -> dict:
+    """Pide el cambio con `pkexec cpugovctl set <nombre>` y lo COMPRUEBA leyendo el kernel: no se da por
+    hecho nada por el código de salida. Devuelve {"ok", "governor", "error"?}; error es unavailable
+    (no existe en esta CPU o no está en la lista), missing (falta el helper o pkexec), denied (polkit
+    no autorizó) o failed (no cambió)."""
+    now = current_governor()
+    if not isinstance(name, str) or name not in governor_choices():
+        return {"ok": False, "error": "unavailable", "governor": now}
+    helper, pkexec = cpugovctl_path(), shutil.which("pkexec")
+    if not helper or not pkexec:
+        return {"ok": False, "error": "missing", "governor": now}
+    res = _run([pkexec, str(helper), "set", name], GOVERNOR_TIMEOUT)
+    after = current_governor()
+    if after == name:
+        return {"ok": True, "governor": after}
+    # pkexec: 126 = diálogo cerrado / sin autorización, 127 = no autorizado
+    return {"ok": False, "error": "denied" if res and res[0] in (126, 127) else "failed", "governor": after}
+
+
+def performance_mode(action) -> dict:
+    """on / off / toggle. Al activarlo se guarda el gobernador anterior (solo si el cambio funcionó) para
+    poder volver exactamente a él. Devuelve lo mismo que set_governor más "performance"."""
+    if action not in ("on", "off", "toggle"):
+        return {"ok": False, "error": "unavailable", "governor": current_governor(), "performance": False}
+    now = current_governor()
+    if action == "toggle":
+        action = "off" if now == PERFORMANCE else "on"
+    if action == "on":
+        res = {"ok": True, "governor": now} if now == PERFORMANCE else set_governor(PERFORMANCE)
+        if res["ok"] and now != PERFORMANCE and now in GOVERNORS_ALLOWED:
+            try:
+                _write_atomic(_state_file(), now + "\n")
+            except OSError:
+                pass
+    else:
+        if now != PERFORMANCE:
+            res = {"ok": True, "governor": now}
+        else:
+            target = restore_target()
+            res = set_governor(target) if target else {"ok": False, "error": "unavailable", "governor": now}
+            if res["ok"]:
+                try:
+                    _state_file().unlink()
+                except OSError:
+                    pass
+    res["performance"] = res.get("governor") == PERFORMANCE
+    return res
 
 
 # ── MangoHud ───────────────────────────────────────────────────────────────
@@ -655,6 +813,15 @@ class GameAPI:
 
     def gamemode_test(self):
         return gamemode_test()
+
+    def gamemode_info(self):
+        return gamemode_status()
+
+    def governor_set(self, name):
+        return set_governor(name)
+
+    def performance(self, action="toggle"):
+        return performance_mode(action)
 
     def mango_apply(self, profile_id):
         return apply_profile(profile_id) if isinstance(profile_id, str) else {"error": "profile"}
@@ -880,6 +1047,38 @@ function renderGamemode(box) {
     facts.appendChild(fact(S['gm-epp'], g.epp));
     if (g.whitelist.length) facts.appendChild(fact(S['gm-works'], g.whitelist.join(', ')));
     card.appendChild(facts);
+    if (g.can_switch) {
+      const row = mk('div', 'row top');
+      row.style.marginTop = '10px';
+      const tg = mk('button', 'btn primary', g.performance ? fmt(S['gv-perf-off'], { name: g.restore_to || '—' }) : S['gv-perf-on']);
+      tg.type = 'button';
+      tg.id = 'gv-toggle';
+      tg.addEventListener('click', () => performanceToggle(g.performance));
+      row.appendChild(tg);
+      const pick = mk('div', 'opt');
+      const lbl = mk('span', 'lbl', S['gv-label']);
+      lbl.style.flex = '0 0 auto';
+      pick.appendChild(lbl);
+      const sel = mk('select');
+      sel.id = 'gv-select';
+      g.governors.forEach((name) => {
+        const o = mk('option', '', name);
+        o.value = name;
+        if (name === g.governor) o.selected = true;
+        sel.appendChild(o);
+      });
+      pick.appendChild(sel);
+      const ap = mk('button', 'btn', S['gv-apply']);
+      ap.type = 'button';
+      ap.id = 'gv-apply';
+      ap.addEventListener('click', () => governorApply(sel.value));
+      pick.appendChild(ap);
+      row.appendChild(pick);
+      card.appendChild(row);
+      card.appendChild(mk('div', 'note', S['gv-hint']));
+    } else {
+      card.appendChild(mk('div', 'note', S['gv-na']));
+    }
     const grp = g.in_group === true ? ['gm-group-ok', 'ok'] : g.in_group === false ? ['gm-group-no', 'warn'] : ['gm-group-na', 'warn'];
     card.appendChild(mk('div', 'note ' + grp[1], S[grp[0]]));
     card.appendChild(mk('div', 'note', S['gm-test-note']));
@@ -888,6 +1087,26 @@ function renderGamemode(box) {
     card.appendChild(res);
   }
   box.appendChild(card);
+}
+
+async function refreshGamemode() {
+  const g = await call('gamemode_info');
+  if (g) { snap.gamemode = g; render(); }
+}
+
+function governorToast(r) {
+  if (r && r.ok) toast(fmt(S['gv-ok'], { name: r.governor }));
+  else toast(S['gv-' + ((r && r.error) || 'failed')] || S['gv-failed']);
+}
+
+async function performanceToggle(isOn) {
+  governorToast(await call('performance', isOn ? 'off' : 'on'));
+  await refreshGamemode();
+}
+
+async function governorApply(name) {
+  governorToast(await call('governor_set', name));
+  await refreshGamemode();
 }
 
 async function runGamemodeTest() {
@@ -1131,14 +1350,39 @@ def _gui():
     return 0
 
 
+def _notify(title: str, body: str) -> None:
+    exe = shutil.which("notify-send")
+    if exe:
+        _run([exe, "-a", "AvalOS", "-i", "avalos-gamecenter", title, body], 5)
+
+
+def cli_performance(action: str) -> int:
+    """Para el atajo de Hyprland: cambia el gobernador, avisa con una notificación y sale (0 = hecho)."""
+    T = STRINGS[LANG]
+    res = performance_mode(action)
+    governor = res.get("governor") or NA
+    if res.get("ok"):
+        _notify(T["perf-on"] if res.get("performance") else T["perf-off"], f"{T['gm-governor']}: {governor}")
+        print(governor)
+        return 0
+    reason = T.get("gv-" + str(res.get("error")), T["gv-failed"])
+    _notify(T["perf-fail"], reason)
+    print(reason, file=sys.stderr)
+    return 1
+
+
 def main(argv=None):
     global LANG
     ap = argparse.ArgumentParser(prog="avalos-gamecenter", description="AvalOS Game Center: launchers, GameMode, MangoHud and launch options in one window.")
     ap.add_argument("--json", action="store_true", help="print what the Game Center sees, then exit")
     ap.add_argument("--lang", choices=_SUPPORTED, help="language of the window")
+    ap.add_argument("--performance", choices=("on", "off", "toggle"),
+                    help="switch the CPU governor to performance (on), back (off) or toggle it, then exit")
     a = ap.parse_args(argv)
     if a.lang:
         LANG = a.lang
+    if a.performance:
+        return cli_performance(a.performance)
     if a.json:
         print(json.dumps(snapshot(), ensure_ascii=False, indent=2))
         return 0
