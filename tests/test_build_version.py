@@ -112,6 +112,28 @@ class StampGenerator(unittest.TestCase):
         self.run_gen()
         self.assertEqual(before, ((self.out / "avalos-build").read_text(), (self.out / "avalos-scripts.tsv").read_text()))
 
+    def test_it_works_when_git_thinks_the_checkout_belongs_to_someone_else(self):
+        """build-iso.yml corre en un contenedor: el checkout es del uid del runner y git (root) se niega con
+        «detected dubious ownership». Eso rompió el run #114 de Build AvalOS ISO."""
+        env = dict(os.environ, TZ="EST5", GIT_TEST_ASSUME_DIFFERENT_OWNER="1")        # git cree que el dueño es otro
+        plain = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True, text=True, env=env)
+        if plain.returncode == 0:
+            self.skipTest("este git no comprueba el dueño del repositorio")
+        self.assertIn("dubious ownership", plain.stderr)
+        r = subprocess.run([sys.executable, str(GEN), "--repo", str(self.repo), "--scripts-dir", str(self.ship),
+                            "--out", str(self.out)], capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.stamp()["AVALOS_COMMIT"], self.git("rev-parse", "HEAD"))
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_the_repo_given_through_a_symlink_still_works(self):
+        link = self.tmp / "enlace"
+        link.symlink_to(self.repo, target_is_directory=True)
+        env = dict(os.environ, GIT_TEST_ASSUME_DIFFERENT_OWNER="1")
+        r = subprocess.run([sys.executable, str(GEN), "--repo", str(link), "--scripts-dir", str(self.ship),
+                            "--out", str(self.out)], capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_it_fails_loudly_outside_git_or_without_scripts(self):
         not_git = self.tmp / "plain"
         (not_git / "scripts").mkdir(parents=True)

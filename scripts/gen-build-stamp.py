@@ -29,8 +29,14 @@ BUILD_RE = re.compile(r"^\d{4}\.\d{2}\.\d{2}-[0-9a-f]{7}$")
 
 def git(repo: Path, *args: str) -> str:
     # TZ=UTC: las fechas salen en UTC aunque el commit se hiciera en otra zona horaria.
+    # safe.directory: build-iso.yml corre en un contenedor (root) sobre un checkout que creó el runner (otro uid) y
+    # git se niega con «detected dubious ownership» (run #114). Es nuestro propio checkout y solo se lee: se declara
+    # seguro solo para estas llamadas (git únicamente respeta safe.directory en la configuración global, del
+    # sistema o de la línea de comandos, y -c es lo último) sin tocar la configuración global, que cambiaría lo
+    # que hacen los demás pasos del job.
     env = dict(os.environ, TZ="UTC", LC_ALL="C")
-    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=env)
+    r = subprocess.run(["git", "-c", f"safe.directory={repo}", "-C", str(repo), *args],
+                       capture_output=True, text=True, env=env)
     if r.returncode != 0:
         raise SystemExit(f"gen-build-stamp: «git {' '.join(args)}» falló: {r.stderr.strip()}")
     return r.stdout.strip()
@@ -70,8 +76,9 @@ def main(argv=None) -> int:
     ap.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent, help="raíz del repo")
     args = ap.parse_args(argv)
 
-    info = build_info(args.repo)
-    rows = script_rows(args.repo, args.scripts_dir)
+    repo = args.repo.resolve()    # safe.directory se compara con la ruta real
+    info = build_info(repo)
+    rows = script_rows(repo, args.scripts_dir)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "avalos-build").write_text("".join(f"{k}={v}\n" for k, v in info.items()), encoding="utf-8")
     (args.out / "avalos-scripts.tsv").write_text("".join("\t".join(r) + "\n" for r in rows), encoding="utf-8")
