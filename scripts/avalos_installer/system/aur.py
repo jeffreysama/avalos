@@ -65,6 +65,28 @@ def write_user_mangohud_config(mount_root: Path, username: str, content: str) ->
     return target
 
 
+USERMOD_NO_SUCH_GROUP = 6  # usermod(8): «specified group doesn't exist»
+
+
+def add_user_to_gamemode_group(session: InstallSession, username: str) -> bool:
+    """Mete al usuario en el grupo «gamemode».
+
+    La regla de polkit del paquete gamemode autoriza (sin contraseña) el helper que cambia el gobernador de
+    la CPU solo a los miembros de ese grupo: sin él, el modo rendimiento del Game Center no funciona. El
+    paquete crea el grupo con un hook de sysusers; si ese hook no corrió, usermod sale con 6 y antes el fallo
+    pasaba sin dejar rastro. Aquí se crea el grupo, se reintenta una vez y el resultado queda en el log.
+    """
+    rc, out = session.run_chroot(["usermod", "-aG", "gamemode", username])
+    if rc == USERMOD_NO_SUCH_GROUP:
+        session.run_chroot(["groupadd", "-r", "gamemode"])
+        rc, out = session.run_chroot(["usermod", "-aG", "gamemode", username])
+    if rc == 0:
+        session.log(session.t("log-gamemode-group-ok"), "ok")
+        return True
+    session.log(session.t("log-gamemode-group-failed", rc=rc, out=(out or "").strip()[-300:]), "warn")
+    return False
+
+
 def install_aur(session: InstallSession, ctx: InstallContext) -> None:
     session.step("aur", "active")
     session.status(session.t("status-installing-aur"))
@@ -156,51 +178,54 @@ def install_aur(session: InstallSession, ctx: InstallContext) -> None:
             else:
                 session.step("aur", "done", session.t("step-aur-count-zero"))
 
-            if ctx.install_gaming:
-                session.run_chroot(["usermod", "-aG", "gamemode", ctx.username])
+        # La configuración de juegos (grupo gamemode, gamemode.ini, MangoHud, Flathub) no necesita yay: los
+        # paquetes son de los repos oficiales. Antes esto vivía dentro del `else:` de arriba y, si el
+        # bootstrap de AUR fallaba (red, makepkg), se saltaba entero y en silencio.
+        if ctx.install_gaming:
+            add_user_to_gamemode_group(session, ctx.username)
 
-                gamemode_conf = (
-                    "[general]\n"
-                    "reaper_freq=5\n"
-                    "desiredgov=performance\n"
-                    "softrealtime=auto\n"
-                    "renice=-10\n\n"
-                    "[gpu]\n"
-                    "apply_gpu_optimisations=accept-responsibility\n"
-                    "gpu_device=0\n"
-                    "amd_performance_level=high\n\n"
-                    "[filter]\n"
-                    "whitelist=steam\nwhitelist=lutris\nwhitelist=heroic\n"
-                )
+            gamemode_conf = (
+                "[general]\n"
+                "reaper_freq=5\n"
+                "desiredgov=performance\n"
+                "softrealtime=auto\n"
+                "renice=-10\n\n"
+                "[gpu]\n"
+                "apply_gpu_optimisations=accept-responsibility\n"
+                "gpu_device=0\n"
+                "amd_performance_level=high\n\n"
+                "[filter]\n"
+                "whitelist=steam\nwhitelist=lutris\nwhitelist=heroic\n"
+            )
+            try:
+                gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
+                gm_path.write_text(gamemode_conf, encoding="utf-8")
+                session.log(session.t("log-gamemode-ini-ok"), "ok")
+            except OSError as e:
+                session.log(f"[WARN] gamemode.ini: {e}", "warn")
+
+            mango_content = read_config("mangohud/MangoHud.conf")
+            if mango_content:
                 try:
-                    gm_path = MOUNT_ROOT / "etc" / "gamemode.ini"
-                    gm_path.write_text(gamemode_conf, encoding="utf-8")
-                    session.log(session.t("log-gamemode-ini-ok"), "ok")
-                except OSError as e:
-                    session.log(f"[WARN] gamemode.ini: {e}", "warn")
+                    write_user_mangohud_config(MOUNT_ROOT, ctx.username, mango_content)
+                    session.log(session.t("log-mangohud-ok"), "ok")
+                except (OSError, KeyError, ValueError) as e:
+                    session.log(f"[WARN] MangoHud.conf: {e}", "warn")
 
-                mango_content = read_config("mangohud/MangoHud.conf")
-                if mango_content:
-                    try:
-                        write_user_mangohud_config(MOUNT_ROOT, ctx.username, mango_content)
-                        session.log(session.t("log-mangohud-ok"), "ok")
-                    except (OSError, KeyError, ValueError) as e:
-                        session.log(f"[WARN] MangoHud.conf: {e}", "warn")
-
-                # --user: las instalaciones de la tienda (avalos-store) son --user, así que el remoto va en la
-                # configuración del usuario. Sin --user flatpak usa la instalación del SISTEMA y habla con su
-                # helper por D-Bus, que dentro del chroot no existe («The name is not activatable»); además el
-                # rc se ignoraba y se anunciaba un éxito falso. Si aun así falla, avalos-store lo agrega solo.
-                rc_flat, _ = session.run_chroot(
-                    ["sudo", "-H", "-u", ctx.username, "flatpak", "remote-add", "--user",
-                     "--if-not-exists", "flathub",
-                     "https://dl.flathub.org/repo/flathub.flatpakrepo"],
-                    timeout=120
-                )
-                if rc_flat == 0:
-                    session.log(session.t("log-flathub-ok"), "ok")
-                else:
-                    session.log(session.t("log-flathub-failed"), "warn")
+            # --user: las instalaciones de la tienda (avalos-store) son --user, así que el remoto va en la
+            # configuración del usuario. Sin --user flatpak usa la instalación del SISTEMA y habla con su
+            # helper por D-Bus, que dentro del chroot no existe («The name is not activatable»); además el
+            # rc se ignoraba y se anunciaba un éxito falso. Si aun así falla, avalos-store lo agrega solo.
+            rc_flat, _ = session.run_chroot(
+                ["sudo", "-H", "-u", ctx.username, "flatpak", "remote-add", "--user",
+                 "--if-not-exists", "flathub",
+                 "https://dl.flathub.org/repo/flathub.flatpakrepo"],
+                timeout=120
+            )
+            if rc_flat == 0:
+                session.log(session.t("log-flathub-ok"), "ok")
+            else:
+                session.log(session.t("log-flathub-failed"), "warn")
     finally:
         if sudoers_tmp and sudoers_tmp.exists():
             try:

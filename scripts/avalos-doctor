@@ -19,8 +19,10 @@
 # Requiere: python 3.9+. La ventana además python-pywebview, webkit2gtk-4.1 y
 # python-gobject (ya instalados por el instalador); sin ellos --text sigue andando.
 import argparse
+import grp
 import json
 import os
+import pwd
 import re
 import shutil
 import socket
@@ -96,6 +98,7 @@ STRINGS = {
         "t-gaming": "Gaming settings", "t-net-route": "Connection", "t-net-dns": "DNS",
         "t-net-mirror": "Arch mirror", "t-net-avalos": "AvalOS repository", "t-apps": "AvalOS apps",
         "t-sync": "AvalOS sync pin",
+        "t-gamemode": "GameMode group",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "{rel} is running but its files are gone from disk: reboot to use the updated kernel",
         "d-kernel-bore-cpu": "{rel} (BORE) needs x86-64-v3 and this CPU is {cpu}: switch to the Compat kernel in Updates",
@@ -154,6 +157,11 @@ STRINGS = {
         "d-apps-warn": "Missing: {missing}",
         "d-sync-ok": "Both point to {sha}",
         "d-sync-mismatch": "avalos-update-helper ({a}) and avalos-update ({b}) point to different versions: copy both together",
+        "d-gamemode-ok": "{user} is in the gamemode group: performance mode can switch the CPU governor without a password",
+        "d-gamemode-relogin": "{user} is in the gamemode group but this session started before that: log out and back in",
+        "d-gamemode-warn": "{user} is not in the gamemode group, so performance mode can't switch the CPU governor: run sudo usermod -aG gamemode {user} and log in again",
+        "d-gamemode-nogroup": "The gamemode group doesn't exist: run sudo systemd-sysusers (or reinstall gamemode)",
+        "d-gamemode-skip": "GameMode isn't installed: nothing to check",
         "t-polkit-agent": "Authentication agent", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} is running: the store and Update can ask for permission",
         "d-polkit-agent-warn": "No polkit authentication agent is running: the store and Update will fail with «Error creating textual authentication agent». Start it with /usr/lib/hyprpolkitagent/hyprpolkitagent and add it to hyprland.lua",
@@ -186,6 +194,7 @@ STRINGS = {
         "t-gaming": "Ajustes para juegos", "t-net-route": "Conexión", "t-net-dns": "DNS",
         "t-net-mirror": "Mirror de Arch", "t-net-avalos": "Repositorio de AvalOS", "t-apps": "Apps de AvalOS",
         "t-sync": "Pin de sincronización de AvalOS",
+        "t-gamemode": "Grupo de GameMode",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "{rel} está en ejecución pero sus archivos ya no están en disco: reinicia para usar el kernel actualizado",
         "d-kernel-bore-cpu": "{rel} (BORE) necesita x86-64-v3 y esta CPU es {cpu}: cambia al kernel Compat en Actualizaciones",
@@ -244,6 +253,11 @@ STRINGS = {
         "d-apps-warn": "Faltan: {missing}",
         "d-sync-ok": "Ambos apuntan a {sha}",
         "d-sync-mismatch": "avalos-update-helper ({a}) y avalos-update ({b}) apuntan a versiones distintas: cópialos juntos",
+        "d-gamemode-ok": "{user} está en el grupo gamemode: el modo rendimiento puede cambiar el gobernador de la CPU sin contraseña",
+        "d-gamemode-relogin": "{user} ya está en el grupo gamemode, pero esta sesión empezó antes: cierra sesión y vuelve a entrar",
+        "d-gamemode-warn": "{user} no está en el grupo gamemode, así que el modo rendimiento no puede cambiar el gobernador de la CPU: ejecuta sudo usermod -aG gamemode {user} y vuelve a iniciar sesión",
+        "d-gamemode-nogroup": "El grupo gamemode no existe: ejecuta sudo systemd-sysusers (o reinstala gamemode)",
+        "d-gamemode-skip": "GameMode no está instalado: nada que comprobar",
         "t-polkit-agent": "Agente de autenticación", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} está corriendo: la tienda y Actualizar pueden pedir permisos",
         "d-polkit-agent-warn": "No hay un agente de autenticación de polkit corriendo: la tienda y Actualizar fallarán con «Error creating textual authentication agent». Inícialo con /usr/lib/hyprpolkitagent/hyprpolkitagent y agrégalo a hyprland.lua",
@@ -276,6 +290,7 @@ STRINGS = {
         "t-gaming": "游戏相关设置", "t-net-route": "网络连接", "t-net-dns": "DNS",
         "t-net-mirror": "Arch 镜像源", "t-net-avalos": "AvalOS 软件源", "t-apps": "AvalOS 应用",
         "t-sync": "AvalOS 同步版本锁定",
+        "t-gamemode": "GameMode 用户组",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "正在运行 {rel}，但它的文件已不在磁盘上：请重启以使用更新后的内核",
         "d-kernel-bore-cpu": "{rel} (BORE) 需要 x86-64-v3，而此 CPU 是 {cpu}：请在“更新”中切换到 Compat 内核",
@@ -334,6 +349,11 @@ STRINGS = {
         "d-apps-warn": "缺少：{missing}",
         "d-sync-ok": "两者都指向 {sha}",
         "d-sync-mismatch": "avalos-update-helper（{a}）和 avalos-update（{b}）指向不同版本：请一起复制",
+        "d-gamemode-ok": "{user} 已在 gamemode 组中：性能模式无需密码即可切换 CPU 调速器",
+        "d-gamemode-relogin": "{user} 已在 gamemode 组中，但当前会话开始得更早：请注销后重新登录",
+        "d-gamemode-warn": "{user} 不在 gamemode 组中，性能模式无法切换 CPU 调速器：请运行 sudo usermod -aG gamemode {user} 并重新登录",
+        "d-gamemode-nogroup": "gamemode 组不存在：请运行 sudo systemd-sysusers（或重新安装 gamemode）",
+        "d-gamemode-skip": "未安装 GameMode：无需检查",
         "t-polkit-agent": "认证代理", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} 正在运行：商店和更新可以请求权限",
         "d-polkit-agent-warn": "没有运行 polkit 认证代理：商店和更新会因“Error creating textual authentication agent”而失败。请运行 /usr/lib/hyprpolkitagent/hyprpolkitagent，并把它加入 hyprland.lua",
@@ -366,6 +386,7 @@ STRINGS = {
         "t-gaming": "ゲーム向け設定", "t-net-route": "接続", "t-net-dns": "DNS",
         "t-net-mirror": "Arch ミラー", "t-net-avalos": "AvalOS リポジトリ", "t-apps": "AvalOS アプリ",
         "t-sync": "AvalOS 同期ピン",
+        "t-gamemode": "GameMode グループ",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "{rel} が動作中ですが、そのファイルはディスク上にありません：更新後のカーネルを使うには再起動してください",
         "d-kernel-bore-cpu": "{rel} (BORE) には x86-64-v3 が必要ですが、この CPU は {cpu} です：アップデートで Compat カーネルに切り替えてください",
@@ -424,6 +445,11 @@ STRINGS = {
         "d-apps-warn": "不足：{missing}",
         "d-sync-ok": "どちらも {sha} を指しています",
         "d-sync-mismatch": "avalos-update-helper（{a}）と avalos-update（{b}）が別のバージョンを指しています：2 つを一緒にコピーしてください",
+        "d-gamemode-ok": "{user} は gamemode グループに入っています：パフォーマンスモードはパスワードなしで CPU ガバナーを切り替えられます",
+        "d-gamemode-relogin": "{user} は gamemode グループに入っていますが、このセッションはその前に始まっています：ログアウトして再ログインしてください",
+        "d-gamemode-warn": "{user} は gamemode グループに入っていないため、パフォーマンスモードは CPU ガバナーを切り替えられません：sudo usermod -aG gamemode {user} を実行して再ログインしてください",
+        "d-gamemode-nogroup": "gamemode グループが存在しません：sudo systemd-sysusers を実行してください（または gamemode を再インストール）",
+        "d-gamemode-skip": "GameMode がインストールされていません：確認することはありません",
         "t-polkit-agent": "認証エージェント", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} が動作中です：ストアとアップデートが権限を要求できます",
         "d-polkit-agent-warn": "polkit 認証エージェントが動作していません：ストアとアップデートは「Error creating textual authentication agent」で失敗します。/usr/lib/hyprpolkitagent/hyprpolkitagent を起動し、hyprland.lua に追加してください",
@@ -755,6 +781,30 @@ def chk_gaming():
     return R("ok", "d-gaming-ok", n=n) if n >= 1048576 else R("warn", "d-gaming-warn", n=n)
 
 
+GAMEMODE_HELPERS = (Path("/usr/lib/gamemode/cpugovctl"), Path("/usr/libexec/gamemode/cpugovctl"))
+
+
+def chk_gamemode():
+    """El modo rendimiento del Game Center cambia el gobernador de la CPU con el helper de GameMode vía pkexec;
+    la regla de polkit del paquete solo lo autoriza, sin contraseña, a los miembros del grupo gamemode."""
+    if not any(p.is_file() for p in GAMEMODE_HELPERS):
+        return R("skip", "d-gamemode-skip")
+    try:
+        gr = grp.getgrnam("gamemode")
+    except KeyError:
+        return R("warn", "d-gamemode-nogroup")
+    try:
+        pw = pwd.getpwuid(os.getuid())
+    except KeyError:
+        return R("skip", "d-error", err="passwd")
+    if gr.gr_gid in set(os.getgroups()) | {os.getgid()}:
+        return R("ok", "d-gamemode-ok", user=pw.pw_name)
+    if pw.pw_name in gr.gr_mem or pw.pw_gid == gr.gr_gid:
+        # ya está en /etc/group, pero la sesión es anterior: los grupos se leen al iniciar sesión
+        return R("warn", "d-gamemode-relogin", user=pw.pw_name)
+    return R("warn", "d-gamemode-warn", user=pw.pw_name)
+
+
 def chk_net_route():
     iface = _default_route()
     return R("ok", "d-net-route-ok", iface=iface) if iface else R("fail", "d-net-route-fail")
@@ -930,6 +980,7 @@ CHECKS = [
     ("vulkan", "hardware", chk_vulkan, False),
     ("ucode", "hardware", chk_ucode, False),
     ("gaming", "hardware", chk_gaming, False),
+    ("gamemode", "hardware", chk_gamemode, False),
     ("net-route", "network", chk_net_route, False),
     ("net-dns", "network", chk_net_dns, True),
     ("net-mirror", "network", chk_net_mirror, True),
