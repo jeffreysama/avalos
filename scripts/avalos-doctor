@@ -98,6 +98,7 @@ STRINGS = {
         "t-gaming": "Gaming settings", "t-net-route": "Connection", "t-net-dns": "DNS",
         "t-net-mirror": "Arch mirror", "t-net-avalos": "AvalOS repository", "t-apps": "AvalOS apps",
         "t-sync": "AvalOS sync pin",
+        "t-build": "AvalOS build",
         "t-gamemode": "GameMode group",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "{rel} is running but its files are gone from disk: reboot to use the updated kernel",
@@ -157,6 +158,8 @@ STRINGS = {
         "d-apps-warn": "Missing: {missing}",
         "d-sync-ok": "Both point to {sha}",
         "d-sync-mismatch": "avalos-update-helper ({a}) and avalos-update ({b}) point to different versions: copy both together",
+        "d-build-ok": "Installed from build {build}",
+        "d-build-none": "No build stamp: development ISO, or installed before AvalOS Version (nothing to fix)",
         "d-gamemode-ok": "{user} is in the gamemode group: performance mode can switch the CPU governor without a password",
         "d-gamemode-relogin": "{user} is in the gamemode group but this session started before that: log out and back in",
         "d-gamemode-warn": "{user} is not in the gamemode group, so performance mode can't switch the CPU governor: run sudo usermod -aG gamemode {user} and log in again",
@@ -194,6 +197,7 @@ STRINGS = {
         "t-gaming": "Ajustes para juegos", "t-net-route": "Conexión", "t-net-dns": "DNS",
         "t-net-mirror": "Mirror de Arch", "t-net-avalos": "Repositorio de AvalOS", "t-apps": "Apps de AvalOS",
         "t-sync": "Pin de sincronización de AvalOS",
+        "t-build": "Build de AvalOS",
         "t-gamemode": "Grupo de GameMode",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "{rel} está en ejecución pero sus archivos ya no están en disco: reinicia para usar el kernel actualizado",
@@ -253,6 +257,8 @@ STRINGS = {
         "d-apps-warn": "Faltan: {missing}",
         "d-sync-ok": "Ambos apuntan a {sha}",
         "d-sync-mismatch": "avalos-update-helper ({a}) y avalos-update ({b}) apuntan a versiones distintas: cópialos juntos",
+        "d-build-ok": "Instalado desde el build {build}",
+        "d-build-none": "Sin sello de build: ISO de desarrollo, o instalado antes de AvalOS Version (no hay nada que arreglar)",
         "d-gamemode-ok": "{user} está en el grupo gamemode: el modo rendimiento puede cambiar el gobernador de la CPU sin contraseña",
         "d-gamemode-relogin": "{user} ya está en el grupo gamemode, pero esta sesión empezó antes: cierra sesión y vuelve a entrar",
         "d-gamemode-warn": "{user} no está en el grupo gamemode, así que el modo rendimiento no puede cambiar el gobernador de la CPU: ejecuta sudo usermod -aG gamemode {user} y vuelve a iniciar sesión",
@@ -290,6 +296,7 @@ STRINGS = {
         "t-gaming": "游戏相关设置", "t-net-route": "网络连接", "t-net-dns": "DNS",
         "t-net-mirror": "Arch 镜像源", "t-net-avalos": "AvalOS 软件源", "t-apps": "AvalOS 应用",
         "t-sync": "AvalOS 同步版本锁定",
+        "t-build": "AvalOS 构建版本",
         "t-gamemode": "GameMode 用户组",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "正在运行 {rel}，但它的文件已不在磁盘上：请重启以使用更新后的内核",
@@ -349,6 +356,8 @@ STRINGS = {
         "d-apps-warn": "缺少：{missing}",
         "d-sync-ok": "两者都指向 {sha}",
         "d-sync-mismatch": "avalos-update-helper（{a}）和 avalos-update（{b}）指向不同版本：请一起复制",
+        "d-build-ok": "安装自构建 {build}",
+        "d-build-none": "没有构建标记：开发版 ISO，或安装于 AvalOS Version 之前（无需处理）",
         "d-gamemode-ok": "{user} 已在 gamemode 组中：性能模式无需密码即可切换 CPU 调速器",
         "d-gamemode-relogin": "{user} 已在 gamemode 组中，但当前会话开始得更早：请注销后重新登录",
         "d-gamemode-warn": "{user} 不在 gamemode 组中，性能模式无法切换 CPU 调速器：请运行 sudo usermod -aG gamemode {user} 并重新登录",
@@ -386,6 +395,7 @@ STRINGS = {
         "t-gaming": "ゲーム向け設定", "t-net-route": "接続", "t-net-dns": "DNS",
         "t-net-mirror": "Arch ミラー", "t-net-avalos": "AvalOS リポジトリ", "t-apps": "AvalOS アプリ",
         "t-sync": "AvalOS 同期ピン",
+        "t-build": "AvalOS ビルド",
         "t-gamemode": "GameMode グループ",
         "d-kernel-ok": "{rel}",
         "d-kernel-reboot": "{rel} が動作中ですが、そのファイルはディスク上にありません：更新後のカーネルを使うには再起動してください",
@@ -445,6 +455,8 @@ STRINGS = {
         "d-apps-warn": "不足：{missing}",
         "d-sync-ok": "どちらも {sha} を指しています",
         "d-sync-mismatch": "avalos-update-helper（{a}）と avalos-update（{b}）が別のバージョンを指しています：2 つを一緒にコピーしてください",
+        "d-build-ok": "ビルド {build} からインストール済み",
+        "d-build-none": "ビルド情報がありません：開発版 ISO、または AvalOS Version より前のインストールです（対処は不要です）",
         "d-gamemode-ok": "{user} は gamemode グループに入っています：パフォーマンスモードはパスワードなしで CPU ガバナーを切り替えられます",
         "d-gamemode-relogin": "{user} は gamemode グループに入っていますが、このセッションはその前に始まっています：ログアウトして再ログインしてください",
         "d-gamemode-warn": "{user} は gamemode グループに入っていないため、パフォーマンスモードは CPU ガバナーを切り替えられません：sudo usermod -aG gamemode {user} を実行して再ログインしてください",
@@ -874,6 +886,15 @@ def chk_net_avalos():
     return R("ok", "d-net-avalos-ok", host=host, ms=info) if ok else R("warn", "d-net-avalos-warn", host=host, err=info)
 
 
+BUILD_FILE = Path("/usr/share/avalos/build")
+
+
+def chk_build():
+    """De qué build de la ISO viene el sistema (sello del CI que copia el instalador; `avalos-version` da el detalle)."""
+    m = re.search(r"^AVALOS_BUILD=(\S+)\s*$", _read(BUILD_FILE), re.M)
+    return R("ok", "d-build-ok", build=m.group(1)) if m else R("info", "d-build-none")
+
+
 def chk_apps():
     missing = []
     for app in AVALOS_APPS:
@@ -985,6 +1006,7 @@ CHECKS = [
     ("net-dns", "network", chk_net_dns, True),
     ("net-mirror", "network", chk_net_mirror, True),
     ("net-avalos", "network", chk_net_avalos, True),
+    ("build", "avalos", chk_build, False),
     ("apps", "avalos", chk_apps, False),
     ("sync", "avalos", chk_sync, False),
 ]

@@ -55,6 +55,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from avalos_installer.core.buildstamp import build_id
+
 LIVE_LOG = Path("/tmp/avalos-install.log")
 USB_MOUNT_DIR = Path("/tmp/avalos_usb_log")
 USB_LOG_DIRNAME = "AvalOS-logs"
@@ -243,6 +245,7 @@ class InstallLog:
             "AvalOS installer — log de instalación",
             f"Inicio: {datetime.now():%Y-%m-%d %H:%M:%S} (reloj del live: puede no ser la hora real)",
             f"Instalador: {self._variant} · imagen {osr.get('IMAGE_ID', '?')} {image}",
+            f"Build de AvalOS: {build_id() or 'sin sello (ISO de desarrollo)'}",
             f"Kernel {os.uname().release} · Python {platform.python_version()} · arranque {efi}",
             "=" * 72,
         ])

@@ -88,6 +88,7 @@ AvalOS ships its own small apps, all available from the app launcher:
 | **AvalOS Update** | Update system packages, the kernel, AUR, Flatpak and AvalOS itself, and can take a Btrfs snapshot first as a safety net |
 | **AvalOS Restore** | Roll the system back to an earlier snapshot without a USB drive; the current state is snapshotted first, so the restore can be undone |
 | **AvalOS Doctor** | Health check across System, Storage, Packages, Hardware, Network and AvalOS: what needs attention comes first, and the report can be copied |
+| **AvalOS Version** | `avalos-version` shows which ISO build the system came from (also on the OS line of Fastfetch) and which commit and date each AvalOS script shipped with; `--json` for bug reports |
 
 ---
 

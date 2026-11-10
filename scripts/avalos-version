@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""avalos-version — qué build de AvalOS y qué versión de sus scripts hay instalados.
+
+El sello lo escribe el CI al construir la ISO (scripts/gen-build-stamp.py) y el instalador lo copia al sistema:
+  /usr/share/avalos/build         AVALOS_BUILD=AAAA.MM.DD-<commit>, AVALOS_COMMIT, AVALOS_COMMIT_DATE
+  /usr/share/avalos/scripts.tsv   nombre, commit, fecha y sha256 de cada script tal como salió en la ISO
+Cada script se compara con ese hash: «cambiado» significa que el archivo instalado ya no es el de la ISO
+(por ejemplo porque Actualizar → sincronizar lo reemplazó, o porque alguien lo editó).
+
+Uso:  avalos-version            resumen legible (en el idioma del sistema)
+      avalos-version --short    solo el build (código de salida 1 si el sistema no tiene sello)
+      avalos-version --json     lo mismo en JSON, para pegarlo en un informe
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+DATA_DIR = Path("/usr/share/avalos")
+BUILD_FILE = DATA_DIR / "build"
+SCRIPTS_FILE = DATA_DIR / "scripts.tsv"
+BIN_DIR = Path("/usr/local/bin")
+SYNC_APPS = ("avalos-update-helper", "avalos-update")
+_PIN_RE = re.compile(r'^AVALOS_SYNC_REF\s*=\s*"([0-9a-f]{40})"', re.M)
+
+# ── i18n — mismo patrón que avalos-doctor ────────────────────────────────────────────────────────
+_AVALOS_LANG_FILE = Path("/etc/avalos-lang")
+_SUPPORTED = ("en", "es", "zh", "ja")
+
+
+def _detectar_idioma() -> str:
+    try:
+        code = _AVALOS_LANG_FILE.read_text(encoding="utf-8").strip()
+        if code in _SUPPORTED:
+            return code
+    except OSError:
+        pass
+    _lang_raw = os.environ.get("LANG", "en_US").split("_")[0].split(".")[0]
+    return _lang_raw if _lang_raw in _SUPPORTED else "en"
+
+
+LANG = _detectar_idioma()
+
+STR = {
+    "en": {
+        "no-stamp": "No build stamp (development ISO, or installed before AvalOS Version)",
+        "commit": "commit", "sync": "sync", "scripts": "Scripts",
+        "sync-same": "avalos-update-helper and avalos-update agree",
+        "sync-diff": "avalos-update-helper and avalos-update point to different versions",
+        "st-ok": "ok", "st-changed": "changed", "st-missing": "missing",
+        "all-ok": "all as shipped in the ISO",
+        "summary": "{ok} ok, {changed} changed since the ISO, {missing} missing",
+    },
+    "es": {
+        "no-stamp": "Sin sello de build (ISO de desarrollo, o instalado antes de AvalOS Version)",
+        "commit": "commit", "sync": "sync", "scripts": "Scripts",
+        "sync-same": "avalos-update-helper y avalos-update coinciden",
+        "sync-diff": "avalos-update-helper y avalos-update apuntan a versiones distintas",
+        "st-ok": "ok", "st-changed": "cambiado", "st-missing": "falta",
+        "all-ok": "todos como salieron en la ISO",
+        "summary": "ok: {ok} · cambiados desde la ISO: {changed} · faltan: {missing}",
+    },
+    "zh": {
+        "no-stamp": "没有构建标记（开发版 ISO，或安装于 AvalOS Version 之前）",
+        "commit": "提交", "sync": "同步", "scripts": "脚本",
+        "sync-same": "avalos-update-helper 与 avalos-update 一致",
+        "sync-diff": "avalos-update-helper 与 avalos-update 指向不同版本",
+        "st-ok": "正常", "st-changed": "已更改", "st-missing": "缺失",
+        "all-ok": "全部与 ISO 中的一致",
+        "summary": "{ok} 个正常，{changed} 个相对 ISO 已更改，{missing} 个缺失",
+    },
+    "ja": {
+        "no-stamp": "ビルド情報なし（開発版 ISO、または AvalOS Version より前のインストール）",
+        "commit": "コミット", "sync": "同期", "scripts": "スクリプト",
+        "sync-same": "avalos-update-helper と avalos-update は一致しています",
+        "sync-diff": "avalos-update-helper と avalos-update が別のバージョンを指しています",
+        "st-ok": "正常", "st-changed": "変更あり", "st-missing": "なし",
+        "all-ok": "すべて ISO の内容のままです",
+        "summary": "{ok} 件正常、{changed} 件が ISO から変更、{missing} 件なし",
+    },
+}
+
+
+# ── lectura ──────────────────────────────────────────────────────────────────────────────────────
+def _read(path) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _sha256(path):
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def parse_build(text: str) -> dict:
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip().strip('"')
+    return out
+
+
+def parse_scripts(text: str) -> list:
+    rows = []
+    for line in text.splitlines():
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) == 4 and parts[0].strip() and not parts[0].startswith("#"):
+            rows.append({"name": parts[0], "commit": parts[1], "date": parts[2], "sha256": parts[3]})
+    return rows
+
+
+def sync_pins() -> dict:
+    """El commit al que apunta cada copia del pin de sincronización (el Doctor vigila que coincidan)."""
+    pins = []
+    for app in SYNC_APPS:
+        m = _PIN_RE.search(_read(BIN_DIR / app))
+        pins.append(m.group(1) if m else None)
+    helper, update = pins
+    match = None if (helper is None or update is None) else helper == update
+    return {"helper": helper, "update": update, "match": match}
+
+
+def collect() -> dict:
+    build = parse_build(_read(BUILD_FILE))
+    rows = []
+    for row in parse_scripts(_read(SCRIPTS_FILE)):
+        installed = _sha256(BIN_DIR / row["name"])
+        status = "missing" if installed is None else ("ok" if installed == row["sha256"] else "changed")
+        rows.append({**row, "installed_sha256": installed, "status": status})
+    return {
+        "build": build.get("AVALOS_BUILD") or None,
+        "commit": build.get("AVALOS_COMMIT") or None,
+        "commit_date": build.get("AVALOS_COMMIT_DATE") or None,
+        "stamp": bool(build.get("AVALOS_BUILD")),
+        "sync": sync_pins(),
+        "scripts": rows,
+        "summary": {s: sum(1 for r in rows if r["status"] == s) for s in ("ok", "changed", "missing")},
+    }
+
+
+# ── salida ───────────────────────────────────────────────────────────────────────────────────────
+def render(info: dict, s: dict) -> str:
+    out = []
+    if info["stamp"]:
+        out.append(f"AvalOS {info['build']}")
+        if info["commit"]:
+            out.append(f"  {s['commit']:<8}{info['commit'][:12]}  ({info['commit_date'] or '?'})")
+    else:
+        out.append("AvalOS")
+        out.append(f"  {s['no-stamp']}")
+    sync = info["sync"]
+    if sync["match"] is True:
+        out.append(f"  {s['sync']:<8}{sync['helper'][:7]}  {s['sync-same']}")
+    elif sync["match"] is False:
+        out.append(f"  {s['sync']:<8}{sync['helper'][:7]} / {sync['update'][:7]}  {s['sync-diff']}")
+    rows = info["scripts"]
+    if rows:
+        summ = info["summary"]
+        text = s["all-ok"] if summ["ok"] == len(rows) else s["summary"].format(**summ)
+        out += ["", f"{s['scripts']} ({len(rows)}): {text}"]
+        width = max(len(r["name"]) for r in rows) + 2
+        for r in rows:
+            out.append(f"  {r['name']:<{width}}{r['commit']:<9}{r['date']:<12}{s['st-' + r['status']]}")
+    return "\n".join(out)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="avalos-version", description="Build de AvalOS y versión de sus scripts.")
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument("--short", action="store_true", help="solo el build (salida 1 si no hay sello)")
+    group.add_argument("--json", action="store_true", help="salida en JSON")
+    args = ap.parse_args(argv)
+    info = collect()
+    if args.short:
+        if info["build"]:
+            print(info["build"])
+            return 0
+        return 1
+    if args.json:
+        print(json.dumps(info, indent=2, ensure_ascii=False))
+        return 0
+    print(render(info, STR[LANG]))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

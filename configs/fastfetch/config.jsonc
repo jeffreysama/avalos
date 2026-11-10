@@ -22,7 +22,7 @@
     { "type": "title",    "format": "{user-name}@{host-name}" },
     "separator",
 
-    { "type": "os",       "key": " OS",            "format": "AvalOS ({id})" },
+    { "type": "os",       "key": " OS",            "format": "AvalOS {build-id}" },
     { "type": "host",     "key": "\uf0e4 Host" },
     { "type": "kernel",   "key": " Kernel" },
     { "type": "uptime",   "key": "\uf55f Uptime" },

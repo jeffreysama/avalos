@@ -21,9 +21,27 @@ from __future__ import annotations
 
 import re
 
+from avalos_installer.core.buildstamp import build_id
 from avalos_installer.core.config import MOUNT_ROOT, VCONSOLE_TO_XKB, AVALOS_REPO
 from avalos_installer.core.context import InstallContext
 from avalos_installer.core.session import InstallSession
+
+
+def write_os_release(session: InstallSession) -> None:
+    """/etc/os-release de AvalOS. BUILD_ID es el build de la ISO con la que se instaló (el sello del CI, ver
+    core/buildstamp.py), o «rolling» si la ISO no trae sello; Fastfetch lo muestra en su línea OS."""
+    build = build_id() or "rolling"
+    session.write_file("etc/os-release", f"""\
+NAME="AvalOS"
+PRETTY_NAME="AvalOS"
+ID=avalos
+ID_LIKE=arch
+BUILD_ID={build}
+ANSI_COLOR="38;2;122;162;247"
+HOME_URL="https://github.com/{AVALOS_REPO}"
+DOCUMENTATION_URL="https://wiki.archlinux.org"
+LOGO=avalos-logo
+""")
 
 
 def configure_locale(session: InstallSession, ctx: InstallContext, kernel_pkg: str) -> bool:
@@ -140,17 +158,7 @@ def configure_locale(session: InstallSession, ctx: InstallContext, kernel_pkg: s
     # + snapper/grub-btrfs) contra el os-release de fabrica de Arch,
     # asi que el menu quedaba diciendo "Arch Linux" para siempre por
     # mas que el archivo en si ya dijera AvalOS.
-    session.write_file("etc/os-release", f"""\
-NAME="AvalOS"
-PRETTY_NAME="AvalOS"
-ID=avalos
-ID_LIKE=arch
-BUILD_ID=rolling
-ANSI_COLOR="38;2;122;162;247"
-HOME_URL="https://github.com/{AVALOS_REPO}"
-DOCUMENTATION_URL="https://wiki.archlinux.org"
-LOGO=avalos-logo
-""")
+    write_os_release(session)
     session.write_file("etc/lsb-release", """\
 LSB_VERSION=1.4
 DISTRIB_ID=AvalOS

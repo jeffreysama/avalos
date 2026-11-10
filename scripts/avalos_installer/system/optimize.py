@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import datetime
 
+from avalos_installer.core.buildstamp import install_stamp
 from avalos_installer.core.config import MOUNT_ROOT, read_config
 from avalos_installer.core.session import InstallSession
 
@@ -103,7 +104,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
 
     session.log(session.t("log-installing-scripts"), "info")
     _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
-                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter")
+                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter", "avalos-version")
     for _script_name in _avalos_scripts:
         _content = read_config(f"scripts/{_script_name}")
         if _content:
@@ -119,6 +120,9 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
     _scripts_faltantes = [n for n in _avalos_scripts if not (_bin_dir / n).is_file()]
     if _scripts_faltantes:
         session.log(session.t("log-scripts-incomplete", names=", ".join(_scripts_faltantes)), "err")
+
+    # Sello de build de la ISO (build + hash de cada script): lo lee avalos-version.
+    install_stamp(session)
 
     # avalos-store necesita su catálogo de apps aparte — no es un script
     # ejecutable, es data, así que va directo a configs/ (sin el prefijo
