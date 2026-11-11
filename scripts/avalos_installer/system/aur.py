@@ -65,7 +65,7 @@ def write_user_mangohud_config(mount_root: Path, username: str, content: str) ->
     return target
 
 
-USERMOD_NO_SUCH_GROUP = 6  # usermod(8): «specified group doesn't exist»
+USERMOD_NO_SUCH_GROUP = 6  # usermod(8): «specified user/group doesn't exist» (sí, el mismo código para los dos)
 
 
 def add_user_to_gamemode_group(session: InstallSession, username: str) -> bool:
@@ -78,8 +78,12 @@ def add_user_to_gamemode_group(session: InstallSession, username: str) -> bool:
     """
     rc, out = session.run_chroot(["usermod", "-aG", "gamemode", username])
     if rc == USERMOD_NO_SUCH_GROUP:
-        session.run_chroot(["groupadd", "-r", "gamemode"])
-        rc, out = session.run_chroot(["usermod", "-aG", "gamemode", username])
+        # El 6 también sale cuando falta el USUARIO: solo se crea el grupo si de verdad no existe
+        # (getent, no el texto del error, que depende del idioma).
+        group_rc, _ = session.run_chroot(["getent", "group", "gamemode"])
+        if group_rc != 0:
+            session.run_chroot(["groupadd", "-r", "gamemode"])
+            rc, out = session.run_chroot(["usermod", "-aG", "gamemode", username])
     if rc == 0:
         session.log(session.t("log-gamemode-group-ok"), "ok")
         return True

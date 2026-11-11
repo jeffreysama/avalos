@@ -6,7 +6,6 @@ Hallazgo de v38: la configuración de juegos (usermod, gamemode.ini, MangoHud, F
 de «yay se instaló bien», así que un fallo del bootstrap de AUR la saltaba entera y en silencio."""
 import importlib.machinery
 import importlib.util
-import os
 import re
 import shutil
 import sys
@@ -29,10 +28,11 @@ USER = "jeff"
 class FakeSession:
     """Sesión mínima: guarda cada comando del chroot y cada línea del log, y contesta con rc guiados."""
 
-    def __init__(self, yay_rc=0, usermod_rcs=(0,)):
+    def __init__(self, yay_rc=0, usermod_rcs=(0,), group_exists=True):
         self.calls, self.logs, self.steps = [], [], []
         self.yay_rc = yay_rc
         self.usermod_rcs = list(usermod_rcs)
+        self.group_exists = group_exists
 
     def t(self, key, **kw):
         return key + ("" if not kw else ":" + ",".join(f"{k}={v}" for k, v in sorted(kw.items())))
@@ -50,6 +50,11 @@ class FakeSession:
         self.calls.append(list(cmd))
         if cmd[0] == "usermod":
             return (self.usermod_rcs.pop(0) if self.usermod_rcs else 0), "usermod: salida"
+        if cmd[:2] == ["getent", "group"]:
+            return (0 if self.group_exists else 2), ""       # getent: 2 = «no encontrado»
+        if cmd[0] == "groupadd":
+            self.group_exists = True
+            return 0, ""
         if "bash" in cmd:                      # el bootstrap de yay (git clone + makepkg)
             return self.yay_rc, "makepkg: fallo simulado"
         return 0, ""
@@ -67,11 +72,20 @@ class AddUserToGamemodeGroup(unittest.TestCase):
         self.assertEqual(s.logs[-1], ("log-gamemode-group-ok", "ok"))
 
     def test_a_missing_group_is_created_and_usermod_retried(self):
-        s = FakeSession(usermod_rcs=(6, 0))               # 6 = «specified group doesn't exist»
+        s = FakeSession(usermod_rcs=(6, 0), group_exists=False)     # 6 = «specified group doesn't exist»
         self.assertTrue(aur.add_user_to_gamemode_group(s, USER))
-        self.assertEqual([c[0] for c in s.calls], ["usermod", "groupadd", "usermod"])
-        self.assertEqual(s.calls[1], ["groupadd", "-r", "gamemode"])
+        self.assertEqual([c[0] for c in s.calls], ["usermod", "getent", "groupadd", "usermod"])
+        self.assertEqual(s.calls[2], ["groupadd", "-r", "gamemode"])
         self.assertEqual(s.logs[-1][1], "ok")
+
+    def test_a_missing_user_is_not_mistaken_for_a_missing_group(self):
+        """usermod devuelve 6 también cuando falta el usuario: con el grupo ya creado no hay que crear nada."""
+        s = FakeSession(usermod_rcs=(6,), group_exists=True)
+        self.assertFalse(aur.add_user_to_gamemode_group(s, USER))
+        self.assertEqual([c[0] for c in s.calls], ["usermod", "getent"])
+        msg, level = s.logs[-1]
+        self.assertEqual(level, "warn")
+        self.assertIn("rc=6", msg)
 
     def test_any_other_failure_is_reported_and_does_not_create_a_group(self):
         s = FakeSession(usermod_rcs=(1,))
@@ -83,8 +97,9 @@ class AddUserToGamemodeGroup(unittest.TestCase):
         self.assertIn("rc=1", msg)
 
     def test_a_failure_after_creating_the_group_is_still_reported(self):
-        s = FakeSession(usermod_rcs=(6, 6))
+        s = FakeSession(usermod_rcs=(6, 6), group_exists=False)
         self.assertFalse(aur.add_user_to_gamemode_group(s, USER))
+        self.assertEqual([c[0] for c in s.calls], ["usermod", "getent", "groupadd", "usermod"])
         self.assertEqual(s.logs[-1][1], "warn")
 
 
@@ -177,6 +192,12 @@ class GamemodeGroupCheck(unittest.TestCase):
         status, key, _, _ = self.run_check(installed=False)
         self.assertEqual((status, key), ("skip", "d-gamemode-skip"))
 
+    def test_root_is_skipped_because_it_never_needs_the_group(self):
+        status, key, _, _ = self.run_check(uid=0)
+        self.assertEqual((status, key), ("skip", "d-gamemode-root"))
+        status, key, _, _ = self.run_check(uid=0, installed=False)       # sin GameMode sigue mandando lo de «no instalado»
+        self.assertEqual((status, key), ("skip", "d-gamemode-skip"))
+
     def test_missing_group_warns_with_its_own_message(self):
         status, key, _, _ = self.run_check(group=None)
         self.assertEqual((status, key), ("warn", "d-gamemode-nogroup"))
@@ -202,7 +223,8 @@ class GamemodeGroupCheck(unittest.TestCase):
         self.assertEqual(table["gamemode"], ("hardware", "chk_gamemode", False))
 
     def test_every_text_has_every_language_and_the_same_placeholders(self):
-        keys = ("t-gamemode", "d-gamemode-ok", "d-gamemode-relogin", "d-gamemode-warn", "d-gamemode-nogroup", "d-gamemode-skip")
+        keys = ("t-gamemode", "d-gamemode-ok", "d-gamemode-relogin", "d-gamemode-warn", "d-gamemode-nogroup", "d-gamemode-skip",
+                "d-gamemode-root")
         en = self.doc.STRINGS["en"]
         for key in keys:
             want = set(re.findall(r"\{(\w+)\}", en[key]))
@@ -213,7 +235,7 @@ class GamemodeGroupCheck(unittest.TestCase):
 
     def test_the_engine_renders_every_outcome_in_every_language(self):
         outcomes = (dict(installed=False), dict(group=None), dict(session_groups=(985,)),
-                    dict(group=(985, (USER,))), dict(group=(985, ())))
+                    dict(group=(985, (USER,))), dict(group=(985, ())), dict(uid=0))
         for lang in LANGS:
             for kw in outcomes:
                 _, key, args, _ = self.run_check(**kw)

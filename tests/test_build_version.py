@@ -267,6 +267,16 @@ class VersionCli(unittest.TestCase):
             fh.write("# comentario\nsolo-dos\tcolumnas\n\ncinco\ta\tb\tc\td\n")
         self.assertEqual([r["name"] for r in self.v.collect()["scripts"]], ["avalos-a"])
 
+    def test_names_that_are_not_plain_file_names_are_ignored_and_never_read(self):
+        """La tabla la escribe root, pero un nombre con ruta no debe poder hacer que se lea otro archivo."""
+        self.ship({"avalos-a": "A\n"})
+        secret = "secreto\n"
+        (self.bin.parent / "decoy").write_text(secret)
+        with open(self.data / "scripts.tsv", "a") as fh:
+            for bad in ("../decoy", "sub/avalos-x", "/etc/passwd", ".oculto", "con espacio", "x" * 65, "-opcion", "a\\b"):
+                fh.write(f"{bad}\tabc1234\t2026-11-01\t{sha(secret)}\n")
+        self.assertEqual([r["name"] for r in self.v.collect()["scripts"]], ["avalos-a"])
+
     def pin(self, app, sha_):
         (self.bin / app).write_text(f'#!/usr/bin/env python3\nAVALOS_SYNC_REF = "{sha_}"\n')
 

@@ -165,6 +165,7 @@ STRINGS = {
         "d-gamemode-warn": "{user} is not in the gamemode group, so performance mode can't switch the CPU governor: run sudo usermod -aG gamemode {user} and log in again",
         "d-gamemode-nogroup": "The gamemode group doesn't exist: run sudo systemd-sysusers (or reinstall gamemode)",
         "d-gamemode-skip": "GameMode isn't installed: nothing to check",
+        "d-gamemode-root": "Running as root: the gamemode group only matters for normal users",
         "t-polkit-agent": "Authentication agent", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} is running: the store and Update can ask for permission",
         "d-polkit-agent-warn": "No polkit authentication agent is running: the store and Update will fail with «Error creating textual authentication agent». Start it with /usr/lib/hyprpolkitagent/hyprpolkitagent and add it to hyprland.lua",
@@ -264,6 +265,7 @@ STRINGS = {
         "d-gamemode-warn": "{user} no está en el grupo gamemode, así que el modo rendimiento no puede cambiar el gobernador de la CPU: ejecuta sudo usermod -aG gamemode {user} y vuelve a iniciar sesión",
         "d-gamemode-nogroup": "El grupo gamemode no existe: ejecuta sudo systemd-sysusers (o reinstala gamemode)",
         "d-gamemode-skip": "GameMode no está instalado: nada que comprobar",
+        "d-gamemode-root": "Ejecutado como root: el grupo gamemode solo importa a los usuarios normales",
         "t-polkit-agent": "Agente de autenticación", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} está corriendo: la tienda y Actualizar pueden pedir permisos",
         "d-polkit-agent-warn": "No hay un agente de autenticación de polkit corriendo: la tienda y Actualizar fallarán con «Error creating textual authentication agent». Inícialo con /usr/lib/hyprpolkitagent/hyprpolkitagent y agrégalo a hyprland.lua",
@@ -363,6 +365,7 @@ STRINGS = {
         "d-gamemode-warn": "{user} 不在 gamemode 组中，性能模式无法切换 CPU 调速器：请运行 sudo usermod -aG gamemode {user} 并重新登录",
         "d-gamemode-nogroup": "gamemode 组不存在：请运行 sudo systemd-sysusers（或重新安装 gamemode）",
         "d-gamemode-skip": "未安装 GameMode：无需检查",
+        "d-gamemode-root": "以 root 身份运行：gamemode 组仅对普通用户有意义",
         "t-polkit-agent": "认证代理", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} 正在运行：商店和更新可以请求权限",
         "d-polkit-agent-warn": "没有运行 polkit 认证代理：商店和更新会因“Error creating textual authentication agent”而失败。请运行 /usr/lib/hyprpolkitagent/hyprpolkitagent，并把它加入 hyprland.lua",
@@ -462,6 +465,7 @@ STRINGS = {
         "d-gamemode-warn": "{user} は gamemode グループに入っていないため、パフォーマンスモードは CPU ガバナーを切り替えられません：sudo usermod -aG gamemode {user} を実行して再ログインしてください",
         "d-gamemode-nogroup": "gamemode グループが存在しません：sudo systemd-sysusers を実行してください（または gamemode を再インストール）",
         "d-gamemode-skip": "GameMode がインストールされていません：確認することはありません",
+        "d-gamemode-root": "root で実行中：gamemode グループは一般ユーザーにのみ関係します",
         "t-polkit-agent": "認証エージェント", "t-flathub": "Flathub (Flatpak)",
         "d-polkit-agent-ok": "{name} が動作中です：ストアとアップデートが権限を要求できます",
         "d-polkit-agent-warn": "polkit 認証エージェントが動作していません：ストアとアップデートは「Error creating textual authentication agent」で失敗します。/usr/lib/hyprpolkitagent/hyprpolkitagent を起動し、hyprland.lua に追加してください",
@@ -801,6 +805,8 @@ def chk_gamemode():
     la regla de polkit del paquete solo lo autoriza, sin contraseña, a los miembros del grupo gamemode."""
     if not any(p.is_file() for p in GAMEMODE_HELPERS):
         return R("skip", "d-gamemode-skip")
+    if os.getuid() == 0:
+        return R("skip", "d-gamemode-root")        # root cambia el gobernador sin pasar por polkit
     try:
         gr = grp.getgrnam("gamemode")
     except KeyError:

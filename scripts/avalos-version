@@ -25,6 +25,7 @@ SCRIPTS_FILE = DATA_DIR / "scripts.tsv"
 BIN_DIR = Path("/usr/local/bin")
 SYNC_APPS = ("avalos-update-helper", "avalos-update")
 _PIN_RE = re.compile(r'^AVALOS_SYNC_REF\s*=\s*"([0-9a-f]{40})"', re.M)
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")   # un nombre de archivo, nunca una ruta
 
 # ── i18n — mismo patrón que avalos-doctor ────────────────────────────────────────────────────────
 _AVALOS_LANG_FILE = Path("/etc/avalos-lang")
@@ -114,7 +115,7 @@ def parse_scripts(text: str) -> list:
     rows = []
     for line in text.splitlines():
         parts = line.rstrip("\n").split("\t")
-        if len(parts) == 4 and parts[0].strip() and not parts[0].startswith("#"):
+        if len(parts) == 4 and _NAME_RE.match(parts[0]):
             rows.append({"name": parts[0], "commit": parts[1], "date": parts[2], "sha256": parts[3]})
     return rows
 
