@@ -5,7 +5,6 @@ El instalador la dejaba en /etc/MangoHud/MangoHud.conf, y MangoHud no mira ahí:
 $MANGOHUD_CONFIGFILE (wiki de Arch y documentación de MangoHud). El tema Tokyo Night nunca se veía.
 Ahora se escribe en ~/.config/MangoHud/ del usuario, con su dueño (el instalador corre como root).
 """
-import ast
 import os
 import sys
 import tempfile
@@ -97,16 +96,11 @@ class WritingTheUserConfig(unittest.TestCase):
         self.assertEqual((target.stat().st_uid, target.stat().st_gid), (os.getuid(), os.getgid()))
 
 
-def function_node(path, name):
-    return next(n for n in ast.parse(Path(path).read_text(encoding="utf-8")).body
-                if isinstance(n, ast.FunctionDef) and n.name == name)
-
-
 class BothInstallersDoTheSame(unittest.TestCase):
-    def test_the_legacy_copy_is_the_same_code(self):
-        modular = function_node(ROOT / "scripts/avalos_installer/system/aur.py", "write_user_mangohud_config")
-        legacy = function_node(LEGACY, "write_user_mangohud_config")
-        self.assertEqual(ast.dump(legacy), ast.dump(modular))
+    def test_the_legacy_installer_embeds_the_same_code(self):
+        """El legado es el modular empaquetado (scripts/build-legacy-installer.py): lleva aur.py tal cual."""
+        modular = (ROOT / "scripts/avalos_installer/system/aur.py").read_text(encoding="utf-8")
+        self.assertIn(modular, LEGACY.read_text(encoding="utf-8"))
 
     def test_neither_installer_writes_into_etc_mangohud_any_more(self):
         for path in (ROOT / "scripts/avalos_installer/system/aur.py", LEGACY):
@@ -118,7 +112,7 @@ class BothInstallersDoTheSame(unittest.TestCase):
         modular = (ROOT / "scripts/avalos_installer/system/aur.py").read_text(encoding="utf-8")
         legacy = LEGACY.read_text(encoding="utf-8")
         self.assertIn("write_user_mangohud_config(MOUNT_ROOT, ctx.username, mango_content)", modular)
-        self.assertIn("write_user_mangohud_config (MOUNT_ROOT ,usuario ,_contenido_mango )", legacy)
+        self.assertIn("write_user_mangohud_config(MOUNT_ROOT, ctx.username, mango_content)", legacy)
         for src in (modular, legacy):
             self.assertIn("log-mangohud-ok", src)
 
@@ -128,7 +122,7 @@ class BothInstallersDoTheSame(unittest.TestCase):
         modular = (ROOT / "scripts/avalos_installer/system/aur.py").read_text(encoding="utf-8")
         legacy = LEGACY.read_text(encoding="utf-8")
         self.assertIn("except (OSError, KeyError, ValueError) as e:", modular)
-        self.assertIn("except (OSError ,KeyError ,ValueError )as e :", legacy)
+        self.assertIn("except (OSError, KeyError, ValueError) as e:", legacy)
 
     def test_the_default_config_still_ships_with_the_repo(self):
         text = (ROOT / "configs/mangohud/MangoHud.conf").read_text(encoding="utf-8")

@@ -148,9 +148,10 @@ class _LogBridge(logging.Handler):
 
 class InstallLog:
     def __init__(self, path: Path = LIVE_LOG, usb_mount_dir: Path = USB_MOUNT_DIR, run=None,
-                 variant: str = "modular (avalos_installer)"):
+                 variant: str | None = None):
         self.path = Path(path)
-        self._variant = variant
+        # El instalador legado de un solo archivo (scripts/skill_instalar_usb.py) lo declara con esta variable.
+        self._variant = variant or os.environ.get("AVALOS_INSTALLER_VARIANT") or "modular (avalos_installer)"
         self._usb_mount_dir = Path(usb_mount_dir)
         self._run = run or _sh
 

@@ -240,10 +240,11 @@ jobs:
             cp scripts/translations.py \
                "$AIROOTFS/usr/share/avalos/installer/translations.py"
 
-            # avalos-install-old: el instalador monolitico original, de
-            # respaldo. Wrapper identico al que "avalos-install" usaba
-            # hasta esta sesion -- ver git blame de este archivo para el
-            # historial exacto si hace falta.
+            # avalos-install-old: el MISMO instalador que avalos-install pero en un solo archivo autonomo
+            # (scripts/skill_instalar_usb.py lo genera scripts/build-legacy-installer.py a partir de
+            # scripts/avalos_installer/, y tests/test_legacy_bundle.py falla si no esta al dia). No usa el
+            # directorio avalos_installer/ de abajo: lleva los modulos dentro, asi que sirve de respaldo si
+            # ese directorio falla. El monolito original esta en el historial de git (commit 2f2d844).
             printf '%s' "IyEvYmluL2Jhc2gKZXhwb3J0IFBZVEhPTlBBVEg9Ii91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlciR7UFlUSE9OUEFUSDorOiRQWVRIT05QQVRIfSIKZXhlYyBweXRob24zIC91c3Ivc2hhcmUvYXZhbG9zL2luc3RhbGxlci9za2lsbF9pbnN0YWxhcl91c2IucHkgIiRAIgo=" | base64 -d > "$AIROOTFS/usr/local/bin/avalos-install-old"
             chmod 755 "$AIROOTFS/usr/local/bin/avalos-install-old"
             echo "Instalador legado copiado (avalos-install-old)"
@@ -255,10 +256,8 @@ jobs:
           # comando principal, lo que arranca el live por defecto —
           # ver customize_airootfs.sh) ahora apunta acá. Ver
           # ESTADO_MODULARIZACION_AVALOS_v2.md para el detalle completo de
-          # que se extrajo y como se probo. avalos-install-old (arriba)
-          # queda como fallback exacto del comportamiento anterior por si
-          # este paquete nuevo tiene algun problema no detectado en las
-          # pruebas con mocks — ninguno de los dos se elimina.
+          # que se extrajo y como se probo. avalos-install-old (arriba) es
+          # este mismo instalador empaquetado en un solo archivo.
           if [[ -d "scripts/avalos_installer" ]]; then
             mkdir -p "$AIROOTFS/usr/share/avalos/installer"
             cp -r scripts/avalos_installer \

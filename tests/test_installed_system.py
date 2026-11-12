@@ -70,9 +70,8 @@ class RateMirrors(unittest.TestCase):
         self.assertIn("--save", args[:-1])
 
     def test_legacy_installer_and_manual_guide_use_the_same_order(self):
-        legacy = read("scripts/skill_instalar_usb.py")
-        self.assertIn('"rate-mirrors","--allow-root","--save","/etc/pacman.d/mirrorlist","arch"', legacy)
-        self.assertNotRegex(legacy, r'"rate-mirrors"\s*,\s*"arch"')
+        # el legado es el modular empaquetado: lleva este mismo módulo tal cual
+        self.assertIn(read("scripts/avalos_installer/network/mirrors.py"), read("scripts/skill_instalar_usb.py"))
         guide = read("docs/INSTALL.md")
         self.assertIn("rate-mirrors --allow-root --save /etc/pacman.d/mirrorlist arch", guide)
         self.assertNotIn("rate-mirrors arch --allow-root", guide)
@@ -84,9 +83,7 @@ class FlathubRemote(unittest.TestCase):
         self.assertRegex(aur, r'"flatpak", "remote-add", "--user",')
         self.assertIn('session.t("log-flathub-failed")', aur)
         self.assertIn("if rc_flat == 0:", aur)
-        legacy = read("scripts/skill_instalar_usb.py")
-        self.assertIn('"flatpak","remote-add","--user",', legacy)
-        self.assertIn('self ._t ("log-flathub-failed")', legacy)
+        self.assertIn(aur, read("scripts/skill_instalar_usb.py"))            # el legado lleva este mismo módulo
 
     def test_manual_guide_adds_the_remote_for_the_user(self):
         guide = read("docs/INSTALL.md")

@@ -53,9 +53,7 @@ class WizardTimeout(unittest.TestCase):
         modular = read("scripts/avalos_installer/core/install.py")
         self.assertIn("_config_ready.wait(timeout=WIZARD_IDLE_TIMEOUT_S)", modular)
         self.assertNotRegex(modular, r"_config_ready\.wait\(timeout=600\)\):")
-        legacy = read("scripts/skill_instalar_usb.py")
-        self.assertIn("_config_lista .wait (timeout =6 *60 *60 )", legacy)
-        self.assertNotIn("_config_lista .wait (timeout =600 )", legacy)
+        self.assertIn(modular, read("scripts/skill_instalar_usb.py"))        # el legado lleva este mismo módulo
 
     def test_the_modular_installer_waits_that_long_and_reports_an_abandoned_wizard(self):
         waited = []

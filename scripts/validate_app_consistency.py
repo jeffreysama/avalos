@@ -20,7 +20,8 @@ Chequeos:
            modificadores válidos y combinaciones duplicadas.
   apps     cada avalos-<x> que el template ejecuta o para el que define una
            window_rule: existe scripts/avalos-<x>, está en la lista del
-           instalador modular, del legado y del workflow; las que deben
+           instalador modular (el legado se genera de él: lo vigila
+           tests/test_legacy_bundle.py) y del workflow; las que deben
            aparecer en el lanzador (settings, store, update) tienen su
            .desktop en configs/ y el instalador lo copia.
   catalog  configs/avalos-store-catalog.json: campos, ids únicos, source.
@@ -205,7 +206,6 @@ def check_apps() -> None:
     src = _strip_comments(TEMPLATE.read_text(encoding="utf-8"))
     used = set(re.findall(r'exec_cmd\(\s*["\'](avalos-[a-z-]+)', src)) | set(re.findall(r'class\s*=\s*"(avalos-[a-z-]+)"', src))
     optimize = (ROOT / "scripts/avalos_installer/system/optimize.py").read_text(encoding="utf-8")
-    legacy = (ROOT / "scripts/skill_instalar_usb.py").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/build-iso.yml").read_text(encoding="utf-8")
     m = re.search(r"for _s in ([a-z\- ]+); do", workflow)
     wf_list = set(m.group(1).split()) if m else set()
@@ -213,9 +213,8 @@ def check_apps() -> None:
         errs = []
         if not (ROOT / "scripts" / app).is_file():
             errs.append(f"no existe scripts/{app}")
-        for label, text in (("instalador modular (optimize.py)", optimize), ("instalador legado", legacy)):
-            if f'"{app}"' not in text:
-                errs.append(f"no está en la lista de scripts del {label}")
+        if f'"{app}"' not in optimize:
+            errs.append("no está en la lista de scripts del instalador (optimize.py)")
         if app not in wf_list:
             errs.append("no está en la lista 'for _s in …' de build-iso.yml (no llegaría al live)")
         if app in NEEDS_DESKTOP:
@@ -226,14 +225,12 @@ def check_apps() -> None:
                 reads = rf'\(\s*["\'](?:scripts/)?{re.escape(app)}\.desktop["\']'
                 if not re.search(r"read_config" + reads, optimize):
                     errs.append(f"el instalador modular no lee/copia {app}.desktop (falta read_config(\"{app}.desktop\"))")
-                if not re.search(r"_leer_config\s*" + reads, legacy):
-                    errs.append(f"el instalador legado no lee/copia {app}.desktop")
         elif not (ROOT / "configs" / f"{app}.desktop").is_file():
             warn(f"{app}: sin .desktop (solo se abre por atajo/menú de Settings)")
         if errs:
             bad(f"apps: {app}", "\n".join(errs))
         else:
-            ok(f"apps: {app} — script, listas del instalador/legado/workflow" + (" y .desktop" if app in NEEDS_DESKTOP else ""))
+            ok(f"apps: {app} — script, listas del instalador/workflow" + (" y .desktop" if app in NEEDS_DESKTOP else ""))
 
 
 # ── 2b) atajos que muestra avalos-welcome ───────────────────────────────────────
@@ -299,7 +296,6 @@ def check_control_tiles() -> None:
         bad("control: lanzadores", "no se pudieron leer TILES/GROUPS/STRINGS de scripts/avalos-control (tienen que ser literales de Python)")
         return
     pacstrap = (ROOT / "scripts/avalos_installer/system/pacstrap.py").read_text(encoding="utf-8")
-    legacy = (ROOT / "scripts/skill_instalar_usb.py").read_text(encoding="utf-8")
     errs, seen = [], set()
     for group, tid, argv, _icon in tiles:
         if tid in seen:
@@ -318,9 +314,8 @@ def check_control_tiles() -> None:
             if not pkg:
                 errs.append(f"{tid}: '{cmd}' no está en CONTROL_TOOL_PACKAGES (¿qué paquete lo instala?)")
             else:
-                for label, src in (("pacstrap.py", pacstrap), ("el instalador legado", legacy)):
-                    if f'"{pkg}"' not in src:
-                        errs.append(f"{tid}: el paquete {pkg} (de {cmd}) no está en la lista de {label}")
+                if f'"{pkg}"' not in pacstrap:
+                    errs.append(f"{tid}: el paquete {pkg} (de {cmd}) no está en la lista de pacstrap.py")
         for lang, table in strings.items():
             for key in (f"t-{tid}", f"d-{tid}"):
                 if not table.get(key):
