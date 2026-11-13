@@ -19,7 +19,7 @@ import linecache
 import os
 import sys
 
-BUNDLE_SOURCE_SHA256 = "cedcb70cb7d245c68168eb63c6fc6d9d1bba1859da929ff68088f70dc9f62308"
+BUNDLE_SOURCE_SHA256 = "bc0473da4092b0b11fda837bb8aa05e5699aa9d85726703b2b53aaa846534881"
 
 # nombre del módulo -> (¿es paquete?, ruta de origen, código fuente). Las rutas son las del repo, para que los
 # errores y los tracebacks apunten a scripts/avalos_installer/… y no a este archivo.
@@ -5004,7 +5004,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
 
     session.log(session.t("log-installing-scripts"), "info")
     _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
-                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter", "avalos-version")
+                       "avalos-update", "avalos-update-helper", "avalos-store", "avalos-store-helper", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter", "avalos-version")
     for _script_name in _avalos_scripts:
         _content = read_config(f"scripts/{_script_name}")
         if _content:

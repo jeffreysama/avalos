@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""avalos-store-helper — instala/desinstala UNA app del catálogo de AvalOS Store como root (vía pkexec).
+
+POR QUÉ EXISTE (CWE-250 / CWE-88). Antes la Store ejecutaba «pkexec pacman -S …» directo y la policy de polkit
+(com.avalos.store.install) autorizaba `/usr/bin/pacman` con argv1=-S y auth_admin_keep. pkexec NO valida el
+resto de los argumentos, así que, mientras la autenticación seguía en caché (como la de sudo), cualquier
+proceso del mismo usuario podía correr, SIN contraseña y como root:
+
+    pkexec pacman -S --config /home/usuario/evil.conf paquete     # XferCommand = <cualquier cosa>
+    pkexec pacman -S --noconfirm --overwrite '*' …                # pisar archivos del sistema
+
+Ahora la policy solo autoriza ESTE script, y este script solo acepta un ID de app del catálogo (leído de un
+archivo de root, no de la línea de comandos), y corre pacman con una línea de comandos FIJA:
+
+    avalos-store-helper install   <app-id>     →  pacman -S --noconfirm --needed -- <paquete>
+    avalos-store-helper uninstall <app-id>     →  pacman -R --noconfirm          -- <paquete>
+
+Lo que NO hace, a propósito: no acepta nombres de paquete ni opciones de pacman; no instala nada que el
+catálogo no declare como `pacman`; no instala AUR ni Flatpak (la Store los lanza como el usuario: yay en una
+terminal, flatpak --user); no desinstala paquetes del sistema base aunque el catálogo los listara por error.
+
+El catálogo solo se lee si es de confianza: archivo regular (no symlink), de root, sin escritura para grupo ni
+otros, y en una carpeta con las mismas garantías. Si existe pero NO es de confianza, se aborta (no se salta al
+siguiente candidato en silencio).
+
+Código de salida: el de pacman; 1 = rechazado/error; 2 = argumentos inválidos; 124 = pacman colgado sin
+salida (se mató); 127 = no se pudo ejecutar pacman.
+"""
+from __future__ import annotations
+
+import argparse
+import codecs
+import contextlib
+import json
+import os
+import pwd
+import re
+import select
+import signal
+import stat
+import subprocess
+import sys
+from pathlib import Path
+from typing import NoReturn
+
+# Mismas rutas que usa la GUI (avalos-store: CATALOG_CANDIDATES) SIN el directorio del script: aquí solo cuentan
+# rutas de sistema. El instalador deja el catálogo en /usr/local/bin (optimize.py) y `sync-system-files` lo actualiza.
+CATALOG_CANDIDATES = [
+    Path("/usr/local/bin/avalos-store-catalog.json"),
+    Path("/usr/share/avalos-store/avalos-store-catalog.json"),
+    Path("/usr/local/share/avalos-store/avalos-store-catalog.json"),
+]
+PACMAN = "/usr/bin/pacman"          # ruta absoluta: nada de buscar «pacman» en un PATH
+TRUSTED_UIDS = (0,)                 # dueños aceptables del catálogo (solo los tests lo cambian)
+IDLE_TIMEOUT = 180                  # segundos sin una sola línea de salida → se mata (pacman colgado)
+KILL_GRACE = 10.0                   # SIGTERM → espera → SIGKILL (pacman atrapa SIGTERM y revierte)
+
+# Paquetes que NUNCA se desinstalan desde la Store, aunque un catálogo mal editado los listara. pacman -R ya
+# se niega si otro paquete los necesita; esto es el cinturón además de los tirantes.
+PROTECTED = frozenset({
+    "base", "base-devel", "linux", "linux-lts", "linux-zen", "linux-hardened", "linux-avalos", "linux-avalos-bore",
+    "linux-avalos-compat", "linux-avalos-headers", "linux-firmware", "linux-avalos-firmware", "pacman", "glibc",
+    "systemd", "bash", "coreutils", "util-linux", "filesystem", "sudo", "polkit", "grub", "efibootmgr",
+    "btrfs-progs", "mkinitcpio", "shadow", "hyprland", "sddm", "networkmanager", "dbus", "archlinux-keyring",
+})
+
+_APP_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_PKG_RE = re.compile(r"[A-Za-z0-9@_+][A-Za-z0-9@._+-]{0,127}")
+
+
+def _fail(msg: str, code: int = 1) -> NoReturn:
+    print(f"avalos-store-helper: {msg}", flush=True)
+    sys.exit(code)
+
+
+def _require_root_via_pkexec() -> str:
+    """Solo vale si de verdad somos root Y nos lanzó pkexec (PKEXEC_UID con un usuario real)."""
+    if os.geteuid() != 0:
+        _fail("este script debe correr como root, vía pkexec.")
+    uid = os.environ.get("PKEXEC_UID")
+    if uid is None:
+        _fail("PKEXEC_UID no está seteado — no se invocó vía pkexec.")
+    try:
+        return pwd.getpwuid(int(uid)).pw_name
+    except (ValueError, KeyError, OverflowError):
+        _fail(f"UID invocador ({uid}) no resuelve a un usuario real.")
+
+
+# ── Catálogo ────────────────────────────────────────────────────────────
+def _es_confiable(path: Path) -> bool:
+    """Archivo regular (lstat: un symlink NO vale) de un dueño de confianza, sin escritura para grupo/otros, dentro
+    de una carpeta que cumple lo mismo — si no, cualquiera que pudiera escribir ahí decidiría qué se instala como root."""
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        pst = os.stat(path.parent)
+    except OSError:
+        return False
+    return all(s.st_uid in TRUSTED_UIDS and not (s.st_mode & (stat.S_IWGRP | stat.S_IWOTH)) for s in (st, pst))
+
+
+def _cargar_catalogo() -> list[dict]:
+    for path in CATALOG_CANDIDATES:
+        if not os.path.lexists(path):
+            continue
+        if not _es_confiable(path):
+            _fail(f"el catálogo {path} no es de confianza (tiene que ser un archivo normal de root, sin escritura "
+                  "para otros, en una carpeta igual) — no se instala ni se quita nada.")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError) as e:
+            _fail(f"no se pudo leer el catálogo {path}: {e}")
+        if not isinstance(data, list):
+            _fail(f"el catálogo {path} no es una lista de apps.")
+        return [a for a in data if isinstance(a, dict)]
+    _fail("no se encontró el catálogo de la Store (avalos-store-catalog.json) en una ruta de sistema.")
+
+
+def _app(app_id: str) -> dict:
+    if not isinstance(app_id, str) or not _APP_ID_RE.fullmatch(app_id):
+        _fail(f"ID de app no válido: {app_id!r}")
+    for app in _cargar_catalogo():
+        if app.get("id") == app_id:
+            return app
+    _fail(f"'{app_id}' no está en el catálogo de la Store.")
+
+
+def _paquete(app: dict, fuentes: tuple[str, ...], accion: str) -> str:
+    source, pkg = app.get("source"), app.get("package")
+    if source not in fuentes:
+        _fail(f"'{app.get('id')}' tiene source={source!r}: este helper solo puede {accion} apps de {'/'.join(fuentes)}.")
+    if not isinstance(pkg, str) or not _PKG_RE.fullmatch(pkg):
+        _fail(f"'{app.get('id')}' tiene un nombre de paquete no válido en el catálogo: {pkg!r}")
+    return pkg
+
+
+# ── Ejecución ───────────────────────────────────────────────────────────
+def _matar_arbol(proc: subprocess.Popen) -> None:
+    for sig, espera in ((signal.SIGTERM, KILL_GRACE), (signal.SIGKILL, 5.0)):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, sig)
+        try:
+            proc.wait(timeout=espera)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+@contextlib.contextmanager
+def _senales_como_salida():
+    """SIGTERM/SIGHUP → SystemExit para que el `finally` de _stream mate el árbol de pacman (si no, el helper
+    moría y pacman quedaba corriendo a medias, huérfano, con db.lck tomado)."""
+    previos = {}
+
+    def _salir(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            previos[sig] = signal.signal(sig, _salir)
+        except (ValueError, OSError):
+            pass
+    try:
+        yield
+    finally:
+        for sig, previo in previos.items():
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(sig, previo)
+
+
+def _stream(cmd: list[str], idle_timeout: float | None = None) -> int:
+    """Corre cmd reenviando su salida EN VIVO (la GUI la muestra línea a línea). Lee del fd con os.read (no
+    readline: select() no ve el búfer de Python y se perdían las últimas líneas antes de un cuelgue); los '\\r' de
+    las barras de progreso cuentan como fin de línea; un byte inválido no mata nada."""
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0, start_new_session=True)
+    except OSError as e:
+        print(f"avalos-store-helper: no se pudo ejecutar {cmd[0]}: {e}", flush=True)
+        return 127
+    fd = proc.stdout.fileno()
+    dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pendiente = ""
+    if idle_timeout is None:
+        idle_timeout = IDLE_TIMEOUT      # se resuelve al llamar (no al definir): los tests lo acortan
+    try:
+        while True:
+            if idle_timeout is not None:
+                listo, _, _ = select.select([fd], [], [], idle_timeout)
+                if not listo:
+                    if pendiente:
+                        print(pendiente, flush=True)
+                    _matar_arbol(proc)
+                    print(f"avalos-store-helper: sin salida por {idle_timeout:.0f}s — proceso colgado, se mató.", flush=True)
+                    return 124
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            texto = pendiente + dec.decode(chunk)
+            retenido = ""
+            if texto.endswith("\r"):
+                texto, retenido = texto[:-1], "\r"
+            *lineas, resto = texto.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            for linea in lineas:
+                print(linea, flush=True)
+            pendiente = resto + retenido
+        pendiente += dec.decode(b"", final=True)
+        if pendiente:
+            print(pendiente.replace("\r", ""), flush=True)
+    except BaseException:
+        _matar_arbol(proc)
+        raise
+    finally:
+        proc.stdout.close()
+    proc.wait()
+    return proc.returncode
+
+
+def cmd_install(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    pkg = _paquete(_app(args.app_id), ("pacman",), "instalar")
+    print(f"avalos-store-helper: instalando '{args.app_id}' (paquete {pkg})", flush=True)
+    sys.exit(_stream([PACMAN, "-S", "--noconfirm", "--needed", "--", pkg]))
+
+
+def cmd_uninstall(args: argparse.Namespace) -> None:
+    _require_root_via_pkexec()
+    pkg = _paquete(_app(args.app_id), ("pacman", "aur"), "desinstalar")
+    if pkg in PROTECTED:
+        _fail(f"'{pkg}' es un paquete del sistema: la Store nunca lo desinstala.")
+    print(f"avalos-store-helper: desinstalando '{args.app_id}' (paquete {pkg})", flush=True)
+    sys.exit(_stream([PACMAN, "-R", "--noconfirm", "--", pkg]))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="avalos-store-helper", description="instala/desinstala apps del catálogo de AvalOS Store (root, vía pkexec)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for nombre, func, ayuda in (("install", cmd_install, "instalar una app de pacman del catálogo"),
+                                ("uninstall", cmd_uninstall, "desinstalar una app (pacman/AUR) del catálogo")):
+        p = sub.add_parser(nombre, help=ayuda)
+        p.add_argument("app_id", help="id de la app en avalos-store-catalog.json (no un nombre de paquete)")
+        p.set_defaults(func=func)
+    args = ap.parse_args()
+    with _senales_como_salida():
+        args.func(args)
+
+
+if __name__ == "__main__":
+    main()
