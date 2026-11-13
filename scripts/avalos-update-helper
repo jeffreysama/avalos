@@ -865,6 +865,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("scripts/avalos-wallpaper", "/usr/local/bin/avalos-wallpaper", 0o755),
         ("scripts/avalos-about", "/usr/local/bin/avalos-about", 0o755),
         ("scripts/avalos-store", "/usr/local/bin/avalos-store", 0o755),
+        ("scripts/avalos-store-helper", "/usr/local/bin/avalos-store-helper", 0o755),
         ("scripts/avalos-restore", "/usr/local/bin/avalos-restore", 0o755),
         ("scripts/avalos-doctor", "/usr/local/bin/avalos-doctor", 0o755),
         ("scripts/avalos-welcome", "/usr/local/bin/avalos-welcome", 0o755),

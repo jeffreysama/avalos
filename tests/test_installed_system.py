@@ -162,8 +162,16 @@ class StoreFlatpak(unittest.TestCase):
         self.assertTrue(any(e[0] == "log" and "sin red" in e[1] for e in self.events))
 
     def test_pacman_installs_never_touch_flathub(self):
-        self.api._do_install({"id": "y", "name": "Y", "source": "pacman", "package": "htop"})
-        self.assertEqual(self.calls, [("popen", ["pkexec", "pacman", "-S", "--noconfirm", "--needed", "htop"])])
+        """Con el helper instalado la GUI le pasa el ID de la app (no el nombre del paquete): es lo único que la
+        policy de polkit autoriza (ver tests/test_store_helper.py)."""
+        with mock.patch.object(self.store.os, "access", return_value=True):
+            self.api._do_install({"id": "y", "name": "Y", "source": "pacman", "package": "htop"})
+        self.assertEqual(self.calls, [("popen", ["pkexec", self.store.STORE_HELPER, "install", "y"])])
+
+    def test_pacman_installs_fall_back_to_absolute_pacman_when_the_helper_is_not_installed(self):
+        with mock.patch.object(self.store.os, "access", return_value=False):
+            self.api._do_install({"id": "y", "name": "Y", "source": "pacman", "package": "htop"})
+        self.assertEqual(self.calls, [("popen", ["pkexec", "/usr/bin/pacman", "-S", "--noconfirm", "--needed", "--", "htop"])])
 
     def test_the_official_flathub_url_is_used(self):
         self.assertEqual(self.store.FLATHUB_REPO_URL, "https://dl.flathub.org/repo/flathub.flatpakrepo")
