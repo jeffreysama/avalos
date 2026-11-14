@@ -420,6 +420,15 @@ jobs:
             pahole cpio perl tar xz zstd libelf \
             github-cli
 
+      # Solo lo necesario para revisar el parche BORE. ANTES de bajar el artifact: actions/checkout limpia el workspace.
+      - name: Checkout parcial (verificador del parche BORE)
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/check-bore-patch.py
+            pkgs/linux-avalos/bore.pin
+          sparse-checkout-cone-mode: false
+
       - name: Descargar PKGBUILD preparado
         uses: actions/download-artifact@v7
         with:
@@ -479,10 +488,18 @@ jobs:
           # mismo pkgdesc que el estandar, palabra por palabra — no se podía
           # distinguir uno de otro por descripción.
 
-          BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${MAJOR}.${MINOR}/sched/0001-bore.patch"
-          if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
-             && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
-            echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
+          # El parche viene de un repositorio AJENO y acaba en un kernel que AvalOS firma. Antes se bajaba de «master»
+          # (rama mutable) sin ninguna comprobación. Ahora: (1) el ref sale de bore.pin («master», o el commit revisado si
+          # mode=enforce); (2) scripts/check-bore-patch.py rechaza parches que toquen algo fuera del planificador o traigan
+          # patrones que un planificador no necesita, y avisa si el parche cambió desde la última revisión humana.
+          BORE_PIN="${{ env.PKGBUILD_DIR }}/bore.pin"
+          BORE_REF=$(python3 scripts/check-bore-patch.py --print-ref --version "${MAJOR}.${MINOR}" --pin "$BORE_PIN" || echo master)
+          BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/${BORE_REF}/${MAJOR}.${MINOR}/sched/0001-bore.patch"
+          if curl -fsSL --max-time 60 --max-filesize 262144 "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
+             && [[ -s "$BORE_DIR/bore-scheduler.patch" ]] \
+             && python3 scripts/check-bore-patch.py "$BORE_DIR/bore-scheduler.patch" --version "${MAJOR}.${MINOR}" \
+                  --pin "$BORE_PIN" --summary "$GITHUB_STEP_SUMMARY"; then
+            echo "Parche BORE descargado y revisado para ${MAJOR}.${MINOR} (ref: ${BORE_REF})"
             sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF+BORE|g' "$BORE_DIR/PKGBUILD"
 
             if grep -qE '^\s*"config"' "$BORE_DIR/PKGBUILD"; then
@@ -501,7 +518,8 @@ jobs:
             # linux-avalos-bore que en realidad es EEVDF puro y `pacman -Qi` mentia. Ahora la
             # descripcion dice la verdad y el run deja un warning visible en Actions.
             sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF (SIN BORE: parche no disponible para esta version)|g' "$BORE_DIR/PKGBUILD"
-            echo "::warning::linux-avalos-bore se compila SIN el parche BORE (${BORE_URL} no disponible)"
+            rm -f "$BORE_DIR/bore-scheduler.patch"      # por si se bajó pero el verificador lo rechazó
+            echo "::warning::linux-avalos-bore se compila SIN el parche BORE (${BORE_URL} no disponible o rechazado por check-bore-patch.py: ver el resumen del job)"
           fi
 
           sudo -u builder env \
