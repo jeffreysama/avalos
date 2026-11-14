@@ -31,11 +31,11 @@ fmt = string.Formatter()
 
 
 def load(path, name):
-    sys.modules.setdefault("webview", types.ModuleType("webview"))
     loader = importlib.machinery.SourceFileLoader(name, str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
+    with mock.patch.dict(sys.modules, {"webview": types.ModuleType("webview")}):   # solo durante la carga
+        loader.exec_module(module)
     return module
 
 

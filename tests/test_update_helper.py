@@ -788,7 +788,7 @@ class RestoreParsers(HelperCase):
     def test_restore_refuses_a_root_that_is_not_the_avalos_btrfs_layout(self):
         for line in ("/dev/sda2[/@] rw,relatime,subvol=/@home\n", "/dev/sda2 rw\n", "", "/dev/sda2 ro,subvol=/@var\n"):
             with self.subTest(line=line), mock.patch.object(self.h, "_run", return_value=(0, line, "")):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
                     self.h._root_source_device()
         with mock.patch.object(self.h, "_run", return_value=(0, "/dev/mapper/cr[/@] rw,subvol=/@,x\n", "")):
             self.assertEqual(self.h._root_source_device(), "/dev/mapper/cr")
