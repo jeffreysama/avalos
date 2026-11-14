@@ -43,9 +43,9 @@ HOSTILE_NAMES = ["normal.png", "Sunset #3.png", "doble ##x.png", "cuatro ####x.p
 
 
 def load():
-    sys.modules.setdefault("webview", types.ModuleType("webview"))
     home = tempfile.mkdtemp(prefix="avalos-wp-home-")
-    with mock.patch.dict(os.environ, {"HOME": home}):
+    # webview y HOME falsos SOLO mientras se carga el script (unittest discover corre todo en un mismo proceso)
+    with mock.patch.dict(sys.modules, {"webview": types.ModuleType("webview")}), mock.patch.dict(os.environ, {"HOME": home}):
         loader = importlib.machinery.SourceFileLoader("avalos_wallpaper_under_test", str(SCRIPT))
         spec = importlib.util.spec_from_loader(loader.name, loader)
         module = importlib.util.module_from_spec(spec)
