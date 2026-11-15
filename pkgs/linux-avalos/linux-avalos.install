@@ -1,3 +1,13 @@
+# Versión del kernel instalado de esta variante: directorios de /usr/lib/modules que terminan en «-<variante>»
+# (linux-avalos → «-avalos», linux-avalos-bore → «-avalos-bore»). Antes: `ls | grep | tail -1` (SC2010), que ordenaba
+# alfabéticamente: con dos versiones presentes «7.2.9-…» ganaba a «7.2.14-…». Ahora: glob + sort -V.
+_kernel_version() {
+    local _suffix="-${1#linux-}" _d
+    for _d in /usr/lib/modules/*"${_suffix}"; do
+        [[ -d "$_d" ]] && printf '%s\0' "${_d##*/}"
+    done | sort -zV | tail -zn1 | tr -d '\0'
+}
+
 post_install() {
     local _pkgbase="linux-avalos"
     echo ":: AvalOS — Generando initramfs para ${_pkgbase}…"
@@ -19,7 +29,7 @@ post_install() {
     fi
 
     echo ":: AvalOS — ${_pkgbase} instalado correctamente."
-    echo "   Kernel: $(ls /usr/lib/modules/ | grep -- "-${_pkgbase#linux-}\$" | tail -1)"
+    echo "   Kernel: $(_kernel_version "${_pkgbase}")"
 }
 
 post_upgrade() {
@@ -78,7 +88,7 @@ _update_bootloader() {
         echo ":: AvalOS — Actualizando archivos de kernel en la ESP (systemd-boot)…"
         local _pkgbase="linux-avalos"
         local _kver
-        _kver=$(ls /usr/lib/modules/ | grep -- "-${_pkgbase#linux-}\$" | tail -1)
+        _kver=$(_kernel_version "${_pkgbase}")
         local _esp=""
         for _candidate in /efi /boot/efi /boot; do
             if mountpoint -q "$_candidate" \
