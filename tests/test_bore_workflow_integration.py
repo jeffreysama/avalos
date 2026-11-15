@@ -5,7 +5,6 @@ script no ven. No toca la red ni el sistema."""
 import os
 import re
 import shutil
-import stat
 import subprocess
 import tempfile
 import textwrap
