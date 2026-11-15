@@ -359,6 +359,14 @@ jobs:
             pahole cpio perl tar xz zstd libelf \
             github-cli
 
+      # Solo lo necesario para verificar el tarball. ANTES de bajar el artifact: actions/checkout limpia el workspace.
+      - name: Checkout parcial (verificador del tarball del kernel)
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/verify-kernel-tarball.py
+          sparse-checkout-cone-mode: false
+
       - name: Descargar PKGBUILD preparado
         uses: actions/download-artifact@v7
         with:
@@ -370,6 +378,21 @@ jobs:
           useradd -m -G wheel builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
+      - name: Verificar la firma PGP del tarball del kernel
+        # El PKGBUILD usa sha256sums 'SKIP' y makepkg corre con --skippgpcheck: sin este paso el tarball (de una CDN de
+        # terceros) se aceptaba tal cual. Baja linux-<ver>.tar.xz + .tar.sign, comprueba la firma contra las huellas
+        # pineadas de Linus Torvalds y Greg KH y deja el tarball verificado en el directorio del PKGBUILD: makepkg lo
+        # encuentra ahí y no lo vuelve a bajar. Si la verificación falla el build se detiene.
+        # Interruptor sin commit: variable del repo AVALOS_KERNEL_PGP=warn acepta (con aviso) una firma VÁLIDA de otra clave
+        # — p. ej. si un release sale firmado por Sasha Levin, cuya huella no está pineada. Cualquier otro valor = enforce.
+        env:
+          KERNEL_VER: ${{ needs.check-version.outputs.kernel_ver }}
+          PGP_MODE: ${{ vars.AVALOS_KERNEL_PGP }}
+        run: |
+          ARGS=()
+          [[ "$PGP_MODE" == "warn" ]] && ARGS+=(--allow-unpinned-signer)
+          python3 scripts/verify-kernel-tarball.py --version "$KERNEL_VER" --dest "${{ env.PKGBUILD_DIR }}" "${ARGS[@]}"
 
       - name: Compilar linux-avalos
         run: |
@@ -426,6 +449,7 @@ jobs:
         with:
           sparse-checkout: |
             scripts/check-bore-patch.py
+            scripts/verify-kernel-tarball.py
             pkgs/linux-avalos/bore.pin
           sparse-checkout-cone-mode: false
 
@@ -440,6 +464,21 @@ jobs:
           useradd -m -G wheel builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
+      - name: Verificar la firma PGP del tarball del kernel
+        # El PKGBUILD usa sha256sums 'SKIP' y makepkg corre con --skippgpcheck: sin este paso el tarball (de una CDN de
+        # terceros) se aceptaba tal cual. Baja linux-<ver>.tar.xz + .tar.sign, comprueba la firma contra las huellas
+        # pineadas de Linus Torvalds y Greg KH y deja el tarball verificado en el directorio del PKGBUILD: makepkg lo
+        # encuentra ahí y no lo vuelve a bajar. Si la verificación falla el build se detiene.
+        # Interruptor sin commit: variable del repo AVALOS_KERNEL_PGP=warn acepta (con aviso) una firma VÁLIDA de otra clave
+        # — p. ej. si un release sale firmado por Sasha Levin, cuya huella no está pineada. Cualquier otro valor = enforce.
+        env:
+          KERNEL_VER: ${{ needs.check-version.outputs.kernel_ver }}
+          PGP_MODE: ${{ vars.AVALOS_KERNEL_PGP }}
+        run: |
+          ARGS=()
+          [[ "$PGP_MODE" == "warn" ]] && ARGS+=(--allow-unpinned-signer)
+          python3 scripts/verify-kernel-tarball.py --version "$KERNEL_VER" --dest "${{ env.PKGBUILD_DIR }}" "${ARGS[@]}"
 
       - name: Compilar linux-avalos-bore
         # FIX-JOBS (18-ago): antes tenia continue-on-error a nivel de step
@@ -566,6 +605,14 @@ jobs:
             pahole cpio perl tar xz zstd libelf \
             github-cli
 
+      # Solo lo necesario para verificar el tarball. ANTES de bajar el artifact: actions/checkout limpia el workspace.
+      - name: Checkout parcial (verificador del tarball del kernel)
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/verify-kernel-tarball.py
+          sparse-checkout-cone-mode: false
+
       - name: Descargar PKGBUILD preparado
         uses: actions/download-artifact@v7
         with:
@@ -577,6 +624,21 @@ jobs:
           useradd -m -G wheel builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
+      - name: Verificar la firma PGP del tarball del kernel
+        # El PKGBUILD usa sha256sums 'SKIP' y makepkg corre con --skippgpcheck: sin este paso el tarball (de una CDN de
+        # terceros) se aceptaba tal cual. Baja linux-<ver>.tar.xz + .tar.sign, comprueba la firma contra las huellas
+        # pineadas de Linus Torvalds y Greg KH y deja el tarball verificado en el directorio del PKGBUILD: makepkg lo
+        # encuentra ahí y no lo vuelve a bajar. Si la verificación falla el build se detiene.
+        # Interruptor sin commit: variable del repo AVALOS_KERNEL_PGP=warn acepta (con aviso) una firma VÁLIDA de otra clave
+        # — p. ej. si un release sale firmado por Sasha Levin, cuya huella no está pineada. Cualquier otro valor = enforce.
+        env:
+          KERNEL_VER: ${{ needs.check-version.outputs.kernel_ver }}
+          PGP_MODE: ${{ vars.AVALOS_KERNEL_PGP }}
+        run: |
+          ARGS=()
+          [[ "$PGP_MODE" == "warn" ]] && ARGS+=(--allow-unpinned-signer)
+          python3 scripts/verify-kernel-tarball.py --version "$KERNEL_VER" --dest "${{ env.PKGBUILD_DIR }}" "${ARGS[@]}"
 
       - name: Compilar linux-avalos-compat (x86-64-v2)
         run: |
