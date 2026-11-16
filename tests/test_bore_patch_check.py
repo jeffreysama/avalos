@@ -235,16 +235,23 @@ class Check(unittest.TestCase):
 
 
 class Wiring(unittest.TestCase):
-    def test_the_committed_pin_is_well_formed_and_covers_the_kernel_series_in_the_pkgbuild(self):
+    def test_the_committed_pin_is_well_formed(self):
+        """Solo la FORMA: NO se exige que cubra la serie del PKGBUILD. El bot de bump (build-kernel.yml) cambia de serie
+        por su cuenta (7.2 → 7.3) y, si este test lo exigiera, el CI se pondría rojo en cada cambio de serie hasta que alguien
+        revisara a mano el parche nuevo; sin entrada el workflow solo avisa (mode=warn) o compila sin BORE (mode=enforce)."""
         m = load()
         pin = m.load_pin(str(PIN_FILE))
         self.assertIn(pin.mode, ("warn", "enforce"))
-        pkgver = re.search(r"^pkgver=(\d+)\.(\d+)", (ROOT / "pkgs/linux-avalos/PKGBUILD").read_text(encoding="utf-8"), re.M)
-        series = f"{pkgver[1]}.{pkgver[2]}"
-        self.assertIn(series, pin.entries, f"bore.pin no tiene entrada para la serie del PKGBUILD ({series})")
-        sha, commit = pin.entries[series]
-        self.assertRegex(sha, r"^[0-9a-f]{64}$")
-        self.assertRegex(commit, r"^[0-9a-f]{40}$")
+        self.assertTrue(pin.entries, "el pin no tiene ninguna entrada")
+        for version, (sha, commit) in pin.entries.items():
+            self.assertRegex(version, r"^[0-9]+\.[0-9]+$")
+            self.assertRegex(sha, r"^[0-9a-f]{64}$")
+            self.assertRegex(commit, r"^[0-9a-f]{40}$")
+        # load_pin ignora en silencio las líneas que no entiende: un typo en una entrada la dejaría sin efecto sin avisar
+        for raw in PIN_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line and not line.startswith("mode="):
+                self.assertIsNotNone(m.PIN_ENTRY.fullmatch(line), f"línea del pin que no se entiende: {raw!r}")
 
     def test_the_workflow_runs_the_checker_and_no_longer_downloads_from_a_mutable_branch_unchecked(self):
         text = WORKFLOW.read_text(encoding="utf-8")
