@@ -6,7 +6,9 @@ Estas pruebas fijan la regla: nada que controle un usuario (inputs, nombre de ra
 en un `run:`; entra por `env:` y se valida. Y que los valores que SÍ se interpolan desde `needs.*.outputs` (la versión del
 kernel y la de la ISO) nacen de un paso que los valida con una expresión regular — que además se prueba con bash real.
 """
+import os
 import re
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -66,14 +68,36 @@ class VersionOutputsAreValidated(unittest.TestCase):
         self.fail(f"{wf_name}: no encontré el paso que escribe {output_line_prefix}")
 
     def regex_in(self, run, var):
-        m = re.search(r'if ! \[\[ "\$' + var + r'" =~ (.+?) \]\]; then', run)
-        self.assertTrue(m, f"el paso que escribe {var} no lo valida con [[ =~ ]] antes de publicarlo")
+        m = re.search(r'if ! \( LC_ALL=C; \[\[ "\$' + var + r'" =~ (.+?) \]\] \); then', run)
+        self.assertTrue(m, f"el paso que escribe {var} no lo valida con [[ =~ ]] (dentro de un subshell con LC_ALL=C) antes de publicarlo")
         self.assertLess(m.start(), run.index('>> "$GITHUB_OUTPUT"'), "la validación tiene que ir ANTES de escribir el output")
         return m.group(1)
 
-    def bash_accepts(self, pattern, value):
-        r = subprocess.run(["bash", "-c", f'[[ "$1" =~ {pattern} ]]', "bash", value], capture_output=True, timeout=10)
+    @staticmethod
+    def utf8_locales():
+        """Locales UTF-8 distintos de C que existan aquí: en ellos los rangos de [[ =~ ]] siguen la colación y aceptan
+        «ñ» o «７» (reproducido con en_US.UTF-8). En un equipo sin ninguno la prueba no puede ejercitar ese riesgo."""
+        out = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split() if shutil.which("locale") else []
+        return [l for l in out if "utf" in l.lower() and not l.lower().startswith(("c.", "posix"))]
+
+    def bash_accepts(self, pattern, value, locale=None):
+        """El MISMO envoltorio que el workflow (subshell con LC_ALL=C), bajo el locale pedido."""
+        env = {**os.environ, "LC_ALL": locale} if locale else {k: v for k, v in os.environ.items() if k not in ("LC_ALL",)}
+        r = subprocess.run(["bash", "-c", f'( LC_ALL=C; [[ "$1" =~ {pattern} ]] )', "bash", value], capture_output=True, timeout=10, env=env)
         return r.returncode == 0
+
+    def test_the_validation_does_not_depend_on_the_runner_locale(self):
+        """Falló en un Arch con locale UTF-8: «ñ» y «７.２» pasaban el regex. Con LC_ALL=C dentro del subshell, no."""
+        kernel = self.regex_in(self.producing_run("build-kernel.yml", 'echo "kernel_ver='), "KERNEL_VER")
+        iso = self.regex_in(self.producing_run("build-iso.yml", 'echo "version='), "VERSION")
+        for loc in [None, *self.utf8_locales()]:
+            with self.subTest(locale=loc):
+                self.assertFalse(self.bash_accepts(kernel, "７.２", loc))
+                self.assertFalse(self.bash_accepts(kernel, "٩.٩", loc))
+                self.assertFalse(self.bash_accepts(iso, "ñ", loc))
+                self.assertFalse(self.bash_accepts(iso, "é1", loc))
+                self.assertTrue(self.bash_accepts(kernel, "7.2.14", loc))
+                self.assertTrue(self.bash_accepts(iso, "2026.11.14", loc))
 
     def test_the_kernel_version_is_validated_before_it_becomes_an_output(self):
         pattern = self.regex_in(self.producing_run("build-kernel.yml", 'echo "kernel_ver='), "KERNEL_VER")

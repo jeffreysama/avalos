@@ -383,6 +383,15 @@ class SignalsKillPacman(HelperCase):
         except (OSError, IndexError):
             return False
 
+    @staticmethod
+    def reap(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=20)
+        for pipe in (proc.stdout, proc.stderr):
+            if pipe is not None and not pipe.closed:
+                pipe.close()
+
     def test_terminating_the_helper_terminates_pacman(self):
         pidfile = self.tmp / "pacman.pid"
         slow = self.tmp / "slow-pacman"
@@ -393,7 +402,7 @@ class SignalsKillPacman(HelperCase):
                 pidfile.unlink(missing_ok=True)
                 proc = subprocess.Popen([sys.executable, "-c", self.DRIVER, str(HELPER), str(self.tmp)],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                self.addCleanup(lambda p=proc: p.poll() is None and p.kill())
+                self.addCleanup(self.reap, proc)
                 deadline = time.monotonic() + 20
                 while time.monotonic() < deadline and not pidfile.exists():
                     time.sleep(0.05)

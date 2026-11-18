@@ -186,6 +186,7 @@ def verify(tarball: Path, signature: Path, home: Path, pinned: dict[str, str], a
         xz = subprocess.Popen(["xz", "-dc", str(tarball)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:
         return False, f"no se pudo ejecutar xz: {e}"
+    g = None
     try:
         g = subprocess.Popen(["gpg", "--homedir", str(home), "--batch", "--no-tty", "--status-fd", "1", "--verify", str(signature), "-"],
                              stdin=xz.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -194,15 +195,23 @@ def verify(tarball: Path, signature: Path, home: Path, pinned: dict[str, str], a
         xz_err = xz.stderr.read().decode("utf-8", "replace")
         xz_rc = xz.wait(timeout=60)
     except subprocess.TimeoutExpired:
-        xz.kill()
+        if g is not None:
+            g.kill()
+            g.communicate()
         return False, "gpg/xz no terminaron a tiempo"
     except OSError as e:
-        xz.kill()
         return False, f"no se pudo ejecutar gpg: {e}"
     finally:
-        for p in (xz, ):
-            if p.poll() is None:
-                p.kill()
+        # sin esto quedaban xz «still running» y sus pipes abiertos (ResourceWarning) en las rutas de error
+        if xz.poll() is None:
+            xz.kill()
+        try:
+            xz.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        for pipe in (xz.stdout, xz.stderr):
+            if pipe is not None and not pipe.closed:
+                pipe.close()
     status = parse_status(out.decode("utf-8", "replace"))
     if xz_rc != 0:
         return False, f"xz no pudo descomprimir el tarball (rc={xz_rc}): {xz_err.strip()[:120]}"
