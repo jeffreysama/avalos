@@ -639,6 +639,17 @@ def _ventoy_version(exe: Path) -> str:
             return part.replace("ventoy-", "").replace("-windows", "")
     return ""
 
+# Ventoy2Disk.exe se ejecuta como ADMINISTRADOR y escribe en un disco: solo se baja del repositorio de releases de Ventoy.
+# El sha256.txt se pide de la MISMA carpeta, así que si la URL pudiera apuntar a otro sitio, el hash y el zip saldrían
+# juntos del mismo atacante y la verificación no probaría nada. La URL sale de una respuesta JSON de la API de GitHub.
+_VENTOY_RELEASE_URL = re.compile(
+    r"https://github\.com/ventoy/Ventoy/releases/download/v[0-9][0-9A-Za-z._-]*/ventoy-[0-9][0-9A-Za-z._-]*-windows\.zip")
+
+
+def _is_ventoy_release_url(url) -> bool:
+    return isinstance(url, str) and _VENTOY_RELEASE_URL.fullmatch(url) is not None
+
+
 def _get_latest_ventoy_url() -> tuple[str, str]:
     """Devuelve (url_zip, version) de la última release de GitHub."""
     try:
@@ -647,7 +658,7 @@ def _get_latest_ventoy_url() -> tuple[str, str]:
         tag = data["tag_name"].lstrip("v")
         for asset in data.get("assets", []):
             name = asset.get("name", "")
-            if "windows" in name.lower() and name.endswith(".zip"):
+            if "windows" in name.lower() and name.endswith(".zip") and _is_ventoy_release_url(asset.get("browser_download_url")):
                 return asset["browser_download_url"], tag
     except Exception:
         pass
@@ -784,13 +795,12 @@ class AvalAPI:
         try:
             url, ver = _get_latest_ventoy_url()
             self._a._jsc("pyLog", f"  URL: {url}", "INF")
-            if not url.startswith("https://"):
-                # _get_latest_ventoy_url() arma esto desde la respuesta JSON de la
-                # API de GitHub (browser_download_url) — en la práctica siempre
-                # https, pero no había ninguna garantía a nivel de código; esto
-                # corta acá en vez de dejar que urlretrieve siga un esquema
-                # inesperado (file:, etc).
-                raise ValueError(f"URL de descarga con esquema inesperado (no https): {url}")
+            if not _is_ventoy_release_url(url):
+                # _get_latest_ventoy_url() arma esto desde la respuesta JSON de la API de GitHub
+                # (browser_download_url). Antes solo se exigía «https://»: cualquier host valía, y el sha256.txt se
+                # pide de la misma carpeta, así que hash y zip habrían salido juntos del mismo sitio. Ahora solo
+                # el repositorio de releases de Ventoy (y de paso se descartan file:, ftp:, etc.).
+                raise ValueError(f"URL de descarga que no es una release de Ventoy en GitHub: {url}")
             # mkstemp en vez de mktemp: mktemp solo genera un nombre (no crea el
             # archivo), dejando una ventana entre "elegir el nombre" y "abrirlo"
             # donde algo más en la misma máquina podría crear un symlink ahí

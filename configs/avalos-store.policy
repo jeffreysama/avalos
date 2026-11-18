@@ -6,45 +6,32 @@
 <!--
   AvalOS — avalos-store
   ───────────────────────────────────────────────────────────────
-  avalos-store (la GUI, corriendo SIN privilegios) invoca
-  directo "pkexec pacman -S ..." / "pkexec pacman -R ..." para
-  instalar/desinstalar paquetes oficiales y de AUR del catálogo
-  — no pasa por un helper propio como avalos-update-helper.
-  hyprpolkitagent ya corre en el sistema instalado (exec-once de
-  hyprland.lua) — no hace falta instalar ni configurar nada más
-  para que el diálogo gráfico de autenticación aparezca.
+  avalos-store (la GUI, corriendo SIN privilegios) instala/desinstala las apps de pacman del catálogo
+  llamando a "pkexec /usr/local/bin/avalos-store-helper install|uninstall <id-de-app>".
+  hyprpolkitagent ya corre en el sistema instalado (exec-once de hyprland.lua) — no hace falta instalar ni
+  configurar nada más para que el diálogo gráfico de autenticación aparezca.
 
-  Dos acciones separadas (una por argv1: -S, -R) en vez de una
-  sola sobre pacman en general: org.freedesktop.policykit.exec.
-  argv1 acota CADA acción a esa operación exacta, así que
-  "pkexec pacman -Syu" o cualquier otra bandera fuera de -S/-R
-  NUNCA matchean ninguna de las dos — solo caen en la acción
-  genérica org.freedesktop.policykit.exec (sin memoria de sesión,
-  pide contraseña siempre). Sin este archivo, TODO uso de pkexec
-  contra pacman (incluyendo el de avalos-update-helper, que
-  también invoca pacman internamente) caería en esa misma acción
-  genérica.
+  QUÉ CAMBIÓ Y POR QUÉ. Antes estas dos acciones autorizaban "/usr/bin/pacman" con argv1=-S / -R. pkexec NO
+  valida el resto de los argumentos (pkexec(1): "pkexec does no validation of the ARGUMENTS passed to
+  PROGRAM"), así que mientras la autenticación seguía en caché (auth_admin_keep, como la de sudo) cualquier
+  proceso del mismo usuario podía ejecutar, sin contraseña y como root, p. ej.
+      pkexec pacman -S <opción que apunta a un pacman.conf del usuario> algo   (XferCommand = lo que sea)
+  Ahora las acciones solo autorizan avalos-store-helper, y ese script solo acepta un ID del catálogo (que lee
+  de un archivo de root) y corre pacman con una línea de comandos fija: nada de nombres de paquete ni opciones
+  que vengan de afuera. Una acción por argv1 (install / uninstall) para conservar el texto de cada diálogo.
 
-  IMPORTANTE — alcance real de esto, sin adornarlo: pkexec NO
-  valida los argumentos posteriores a argv1 (ver pkexec(1),
-  sección "REQUIRED AUTHORIZATIONS": "pkexec does no validation
-  of the ARGUMENTS passed to PROGRAM"). O sea que esta policy
-  autoriza "pkexec pacman -S <cualquier-paquete>", no solo los
-  que están en avalos-store-catalog.json — mismo alcance real que
-  ya tiene "apply-system" en avalos-update-helper (pacman -Syu
-  completo, sin acotar por paquete tampoco). No es una regresión
-  de seguridad frente a lo que ya existe, pero tampoco hay forma
-  de limitar polkit a "solo estos paquetes" sin mover esto a un
-  helper propio con su propia lista blanca — ver nota de
-  arquitectura en el resumen de la sesión si en algún momento se
-  quiere endurecer esto.
+  Mezcla de versiones (los sistemas ya instalados reciben esta policy y la GUI por `sync-system-files`, pero
+  el helper nuevo solo llega con una ISO nueva o copiándolo a mano, igual que avalos-update-helper):
+    · GUI nueva + helper ausente → la GUI cae a "pkexec /usr/bin/pacman -S …", que ya no coincide con ninguna
+      acción de AvalOS y usa la genérica de pkexec: funciona, pero pide contraseña cada vez (sin memoria).
+    · helper presente + policy vieja → pkexec usa la acción genérica: también pide contraseña cada vez.
 
-  allow_active=auth_admin_keep: pide contraseña de admin la
-  primera vez y la recuerda un rato (como sudo), para no pedirla
-  de nuevo entre instalar/desinstalar varias apps seguidas en la
-  misma sesión de la Store.
-  allow_inactive/allow_any=no: nunca autoriza desde una sesión
-  inactiva o remota — solo con sesión gráfica activa al frente.
+  allow_active=auth_admin_keep: pide contraseña de admin la primera vez y la recuerda un rato (como sudo),
+  para no pedirla de nuevo entre instalar/desinstalar varias apps seguidas en la misma sesión de la Store.
+  Con el helper, lo que esa memoria autoriza ya no es «pacman con cualquier argumento» sino «instalar o
+  quitar apps del catálogo».
+  allow_inactive/allow_any=no: nunca autoriza desde una sesión inactiva o remota — solo con sesión gráfica
+  activa al frente.
 -->
 <policyconfig>
   <vendor>AvalOS</vendor>
@@ -70,8 +57,8 @@
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_admin_keep</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/pacman</annotate>
-    <annotate key="org.freedesktop.policykit.exec.argv1">-S</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/avalos-store-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">install</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
 
@@ -94,8 +81,8 @@
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_admin_keep</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/pacman</annotate>
-    <annotate key="org.freedesktop.policykit.exec.argv1">-R</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/avalos-store-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">uninstall</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
 </policyconfig>

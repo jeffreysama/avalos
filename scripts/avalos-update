@@ -22,6 +22,7 @@
 #
 # Requiere: python-pywebview, webkit2gtk-4.1, python-gobject (ya en
 # HYPRLAND_PKGS por avalos-wallpaper), pacman-contrib (checkupdates).
+import codecs
 import json
 import os
 import re
@@ -41,6 +42,63 @@ import webview
 AVALOS_SYNC_REF = "411cefc366a45756914af998d3ff2c2ff4215f68"
 REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 HELPER_BIN = "/usr/local/bin/avalos-update-helper"
+
+# Segundos sin una sola línea del helper antes de darlo por colgado (los tests lo acortan).
+HELPER_IDLE_TIMEOUT = 180
+
+
+def _read_lines_raw(proc, idle_timeout):
+    """Líneas de proc.stdout (un pipe en BINARIO sin búfer), leídas del fd con os.read.
+
+    Antes: select() sobre el pipe + readline() de un TextIOWrapper. select() mira el fd, no el búfer de Python: las líneas
+    que llegaban juntas quedaban retenidas hasta la siguiente salida y, si el helper se colgaba justo después, esas últimas
+    líneas (las que explican el cuelgue) no se mostraban nunca. Los '\\r' de las barras de progreso de pacman siguen contando
+    como fin de línea (lo que hacía el modo texto con saltos de línea universales); un byte inválido no mata nada.
+    Lanza TimeoutError si pasan `idle_timeout` segundos sin salida (tras entregar lo que hubiera pendiente)."""
+    fd = proc.stdout.fileno()
+    dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pending = ""
+    while True:
+        ready, _, _ = select.select([fd], [], [], idle_timeout)
+        if not ready:
+            if pending:
+                yield pending
+            raise TimeoutError(f"sin salida por {idle_timeout}s")
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        text, hold = pending + dec.decode(chunk), ""
+        if text.endswith("\r"):          # puede ser la mitad de un \r\n: se decide con el siguiente trozo
+            text, hold = text[:-1], "\r"
+        *lines, rest = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        yield from lines
+        pending = rest + hold
+    pending += dec.decode(b"", final=True)
+    if pending:
+        yield pending.replace("\r", "")
+
+
+def _read_lines(proc, idle_timeout):
+    """_read_lines_raw + cierre del pipe al terminar (también si se interrumpe o lanza TimeoutError): sin esto el descriptor
+    quedaba abierto hasta que el recolector de basura lo cerraba y Python avisaba con un ResourceWarning por cada llamada."""
+    try:
+        yield from _read_lines_raw(proc, idle_timeout)
+    finally:
+        proc.stdout.close()
+
+
+def _abort_proc(proc):
+    """Corta al helper colgado. Si pkexec ya hizo exec (el proceso es del helper, de ROOT) el usuario no puede matarlo:
+    kill() lanza PermissionError y, sin esto, el hilo moría con un traceback y la pantalla se quedaba en «Actualizando…»
+    para siempre. Tampoco se espera sin límite a un proceso que no se pudo matar."""
+    try:
+        proc.kill()
+    except (PermissionError, ProcessLookupError):
+        pass
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        pass
 TEMPLATE_LOCAL = Path("/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template")
 
 KERNEL_VARIANTS = {
@@ -481,10 +539,7 @@ class UpdateAPI:
         cmd = ["pkexec", HELPER_BIN, *args]
         self._log(f"$ {' '.join(args)}", "step")
         try:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace", bufsize=1,
-            )
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
         except FileNotFoundError:
             self._log("pkexec no está disponible en este sistema.", "err")
             return False
@@ -493,24 +548,19 @@ class UpdateAPI:
         # distinto — pkexec esperando la autenticación (ej. el diálogo de
         # hyprpolkitagent abrió sin foco en otro workspace) — que solo se
         # ve desde acá afuera, antes de que el helper llegue a arrancar.
-        idle_timeout = 180
-        while True:
-            listo, _, _ = select.select([proc.stdout], [], [], idle_timeout)
-            if not listo:
-                proc.kill()
-                proc.wait()
-                self._log(
-                    f"sin respuesta por {idle_timeout}s (¿diálogo de "
-                    f"contraseña perdido en otro workspace?) — se canceló.",
-                    "err",
-                )
-                return False
-            line = proc.stdout.readline()
-            if line == "":
-                break
-            line = line.rstrip("\n")
-            cls = "step" if line.startswith("### ") else "info"
-            self._log(line[4:] if line.startswith("### ") else line, cls)
+        idle_timeout = HELPER_IDLE_TIMEOUT
+        try:
+            for line in _read_lines(proc, idle_timeout):
+                cls = "step" if line.startswith("### ") else "info"
+                self._log(line[4:] if line.startswith("### ") else line, cls)
+        except TimeoutError:
+            _abort_proc(proc)
+            self._log(
+                f"sin respuesta por {idle_timeout}s (¿diálogo de "
+                f"contraseña perdido en otro workspace?) — se canceló.",
+                "err",
+            )
+            return False
         proc.wait()
         if proc.returncode != 0:
             self._log(f"(código de salida {proc.returncode})", "err")

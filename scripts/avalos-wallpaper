@@ -213,6 +213,50 @@ def _current_state():
     return path, fit
 
 
+# ── Ruta segura para hyprpaper.conf ─────────────────────────────────────
+# hyprlang interpreta caracteres dentro de los VALORES (verificado contra la librería real, hyprlang 0.6.8):
+#   '#'  empieza un comentario → «Sunset #3.png» quedaba como «/…/Sunset» (y '##' no se puede escribir
+#        de forma fiable: «####» también se trunca);
+#   '$'  expande variables y el entorno → «$HOME.png» se convertía en «/root.png»;
+#   '{{' es una expresión → la config entera se rechazaba; una barra invertida seguida de otra barra, de '{'
+#        o de '}' se des-escapa;
+#   un salto de línea parte la línea → «Invalid config line» y hyprpaper no arranca en el siguiente login.
+# En vez de intentar escapar (poco fiable), `path` apunta siempre a un enlace simbólico fijo con nombre
+# seguro hacia la imagen elegida. _current_state() ya hace .resolve(), así que el «Actual» sigue funcionando.
+LINK_BASE = "avalos-wallpaper-current"
+_HYPRLANG_ESPECIALES = set("#${}\\")
+
+
+def _hyprlang_seguro(texto: str) -> bool:
+    """True si el texto puede ir tal cual como valor en hyprpaper.conf (ni especiales de hyprlang ni controles)."""
+    return not any(c in _HYPRLANG_ESPECIALES or ord(c) < 32 or ord(c) == 127 for c in texto)
+
+
+def _enlace_a(p: Path) -> Path:
+    """Crea (de forma atómica) el enlace HYPR_DIR/avalos-wallpaper-current<ext> → p y devuelve su ruta. Borra solo
+    enlaces simbólicos propios de otras extensiones, nunca archivos reales. hyprpaper decide el formato por el
+    contenido (libmagic), no por la extensión, así que la extensión del enlace es solo cosmética."""
+    HYPR_DIR.mkdir(parents=True, exist_ok=True)
+    ext = p.suffix.lower() if p.suffix.lower() in EXTS else ".png"
+    link = HYPR_DIR / f"{LINK_BASE}{ext}"
+    tmp = HYPR_DIR / f".{LINK_BASE}.{os.getpid()}.tmp"
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    os.symlink(str(p), tmp)
+    try:
+        os.replace(tmp, link)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    for otra in EXTS - {ext}:
+        viejo = HYPR_DIR / f"{LINK_BASE}{otra}"
+        if viejo.is_symlink():
+            viejo.unlink(missing_ok=True)
+    return link
+
+
 # ── API expuesta a JS vía pywebview ─────────────────────────────────────
 class WallpaperAPI:
     def list(self):
@@ -227,22 +271,37 @@ class WallpaperAPI:
     def apply(self, path, fit_mode):
         if fit_mode not in FIT_MODES:
             fit_mode = "cover"
-        p = Path(path)
-        if not p.is_file():
+        if not isinstance(path, str) or not path:
+            return json.dumps({"ok": False, "message": T["err-notfound"]})
+        p = Path(path).expanduser()
+        if not p.is_absolute() or not p.is_file():
             return json.dumps({"ok": False, "message": T["err-notfound"]})
 
         try:
-            HYPR_DIR.mkdir(parents=True, exist_ok=True)
+            link = _enlace_a(p)
+            if not _hyprlang_seguro(str(link)):   # HOME rarísimo con '#', '$'… — mejor fallar que escribir una config rota
+                raise ValueError(f"la ruta {link} tiene caracteres que hyprlang interpreta")
             content = (
                 "# Generado por avalos-wallpaper — no editar a mano,\n"
                 "# se sobreescribe cada vez que cambiás de fondo.\n"
+                "# `path` es un enlace simbólico fijo hacia la imagen elegida (ver _enlace_a en avalos-wallpaper).\n"
                 "wallpaper {\n"
                 "    monitor =\n"
-                f"    path = {p}\n"
+                f"    path = {link}\n"
                 f"    fit_mode = {fit_mode}\n"
                 "}\n\nsplash = false\nipc = on\n"
             )
-            HYPR_CONF.write_text(content, encoding="utf-8")
+            # atómico: un corte a mitad de write_text dejaba hyprpaper.conf truncado y hyprpaper sin arrancar
+            tmp_conf = HYPR_CONF.with_name(f".{HYPR_CONF.name}.{os.getpid()}.tmp")
+            try:
+                tmp_conf.write_text(content, encoding="utf-8")
+                os.replace(tmp_conf, HYPR_CONF)
+            except BaseException:
+                try:
+                    tmp_conf.unlink()
+                except OSError:
+                    pass
+                raise
         except Exception as e:
             return json.dumps({"ok": False, "message": f"{T['err-write']}: {e}"})
 
@@ -250,7 +309,7 @@ class WallpaperAPI:
         live_ok = False
         try:
             r = subprocess.run(
-                ["hyprctl", "hyprpaper", "wallpaper", f",{p},{fit_mode}"],
+                ["hyprctl", "hyprpaper", "wallpaper", f",{link},{fit_mode}"],
                 capture_output=True, timeout=5, text=True,
             )
             live_ok = (r.returncode == 0)

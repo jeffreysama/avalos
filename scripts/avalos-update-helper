@@ -18,7 +18,8 @@
 #   segundo mecanismo de privilegio pisando al de flatpak).
 # ────────────────────────────────────────────────────────────────────
 from __future__ import annotations
-import argparse, ctypes, fcntl, hashlib, json, os, pwd, re, select, subprocess, sys, time, urllib.request
+import argparse, codecs, contextlib, ctypes, fcntl, glob, hashlib, json, os, pwd, re, select, signal, subprocess, sys, tempfile, time
+import urllib.error, urllib.request
 from pathlib import Path
 
 # AVALOS_SYNC_REF: SHA (40 hex) del commit desde el que cmd_sync_system_files baja
@@ -50,6 +51,20 @@ GRUB_CFG = BOOT_DIR / "grub" / "grub.cfg"
 SUDOERS_AUR = Path("/etc/sudoers.d/zz-avalos-update-aur")
 # flock que mantiene apply-aur mientras existe SUDOERS_AUR: si nadie tiene el lock, el archivo es huérfano.
 AUR_LOCK = Path("/run/avalos-update-aur.lock")
+# Regla de systemd-tmpfiles que borra SUDOERS_AUR en el ARRANQUE: si el equipo se apaga a mitad de un
+# apply-aur (corte de luz, kill -9), el NOPASSWD no puede sobrevivir al reinicio hasta que alguien vuelva
+# a correr el helper. `r!` = solo con --boot: un `systemd-tmpfiles --create` de un hook de pacman no la
+# toca (verificado con systemd 255). NOTAFTER= no sirve para esto: en sudoers local es un error de sintaxis.
+TMPFILES_AUR = Path("/etc/tmpfiles.d/avalos-update-aur.conf")
+# Raíz bajo la que sync-system-files escribe los destinos absolutos de `manifest` ("/" en producción; solo
+# los tests la cambian, para no tocar el sistema real).
+SYNC_ROOT = Path("/")
+# Tope por archivo descargado: el más grande de RUTAS pesa ~100 KB. Sin tope, un servidor hostil o roto podría
+# hacer que un proceso ROOT llene la RAM antes de que la verificación de hash llegue a correr.
+MAX_DESCARGA = 8 * 1024 * 1024
+# Segundos entre SIGTERM y SIGKILL al matar un proceso colgado: pacman atrapa SIGTERM y revierte la
+# transacción; con SIGKILL directo quedaba db.lck y paquetes a medias.
+KILL_GRACE = 10.0
 
 KERNEL_VARIANTS = {
     "eevdf": ("linux-avalos", "linux-avalos-headers"),
@@ -83,7 +98,7 @@ def _require_root_via_pkexec() -> str:
         _fail("PKEXEC_UID no está seteado — no se invocó vía pkexec.")
     try:
         usuario = pwd.getpwuid(int(uid)).pw_name
-    except (ValueError, KeyError):
+    except (ValueError, KeyError, OverflowError):
         _fail(f"UID invocador ({uid}) no resuelve a un usuario real.")
     else:
         _limpiar_sudoers_aur_huerfano()
@@ -105,25 +120,74 @@ def _aur_lock_try() -> int | None:
     return fd
 
 
+def _sudoers_aur_tmp() -> Path:
+    """Nombre CON punto: sudo ignora en sudoers.d los archivos con '.' en el nombre (sudoers(5), «includedir»;
+    verificado con sudo 1.9.15). Se escribe y valida con este nombre y solo entonces se renombra al definitivo."""
+    return SUDOERS_AUR.with_name(SUDOERS_AUR.name + ".tmp")
+
+
 def _limpiar_sudoers_aur_huerfano() -> None:
     """apply-aur deja en sudoers.d un NOPASSWD temporal que SIEMPRE borra en su finally. Si el proceso
     muriera antes (kill -9, corte de luz) quedaría sudo sin contraseña permanente para ese usuario
     (con el nombre actual el archivo SÍ es efectivo). Todo subcomando lo borra al entrar, salvo que
-    un apply-aur siga vivo (mantiene el lock): ese archivo es suyo."""
-    if not SUDOERS_AUR.exists():
+    un apply-aur siga vivo (mantiene el lock): ese archivo es suyo. Además TMPFILES_AUR lo borra en el
+    arranque, para el caso de que nadie vuelva a correr el helper tras un corte de luz."""
+    candidatos = [p for p in (SUDOERS_AUR, _sudoers_aur_tmp()) if os.path.lexists(p)]
+    if not candidatos:
         return
     fd = _aur_lock_try()
     if fd is None:
         return
     try:
-        SUDOERS_AUR.unlink()
-        _out(f"eliminado un NOPASSWD temporal huérfano de una corrida anterior ({SUDOERS_AUR.name}).")
-    except FileNotFoundError:
-        pass
-    except OSError as e:
-        _out(f"aviso: no se pudo borrar {SUDOERS_AUR} (sudo sin contraseña para ese usuario hasta que se borre): {e}")
+        for p in candidatos:
+            try:
+                p.unlink()
+                _out(f"eliminado un NOPASSWD temporal huérfano de una corrida anterior ({p.name}).")
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                _out(f"aviso: no se pudo borrar {p} (sudo sin contraseña para ese usuario hasta que se borre): {e}")
     finally:
         os.close(fd)
+
+
+def _matar_arbol(proc: subprocess.Popen) -> None:
+    """SIGTERM al GRUPO de procesos (sudo → yay → makepkg/pacman) y SIGKILL solo si en KILL_GRACE segundos no
+    terminó. Antes: kill() al hijo directo, que dejaba huérfanos a yay/makepkg y le quitaba a pacman la
+    oportunidad de revertir la transacción (db.lck colgado, paquetes a medias). Requiere que el hijo sea
+    líder de su grupo (start_new_session=True en _stream)."""
+    for sig, espera in ((signal.SIGTERM, KILL_GRACE), (signal.SIGKILL, 5.0)):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, sig)
+        try:
+            proc.wait(timeout=espera)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+@contextlib.contextmanager
+def _senales_como_salida():
+    """SIGTERM/SIGHUP → SystemExit, para que los `finally` corran. Sin esto el proceso muere en seco y, p. ej.,
+    el NOPASSWD temporal de apply-aur o el montaje top-level de restore quedaban puestos. La GUI mata al
+    helper tras 180 s de silencio y el usuario puede cerrar la ventana a mitad. SIGKILL no se puede atrapar:
+    para ese caso están la limpieza al arrancar cualquier subcomando y la regla de tmpfiles."""
+    previos = {}
+
+    def _salir(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            previos[sig] = signal.signal(sig, _salir)
+        except (ValueError, OSError):   # ValueError: no es el hilo principal
+            pass
+    try:
+        yield
+    finally:
+        for sig, previo in previos.items():
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(sig, previo)
 
 
 def _stream(cmd: list[str], idle_timeout: float | None = None, **kw) -> int:
@@ -132,49 +196,126 @@ def _stream(cmd: list[str], idle_timeout: float | None = None, **kw) -> int:
     puede mostrar progreso real durante una compilación de AUR de 10
     minutos en vez de una barra congelada.
 
-    idle_timeout (segundos, default None = sin límite, comportamiento
-    igual que antes): NO es un límite de duración total — una
-    compilación larga que sigue imprimiendo progreso nunca lo dispara.
-    Es específicamente para detectar un proceso COLGADO Y EN SILENCIO
-    (snapper/btrfs esperando algo que nunca llega, por ejemplo): si no
-    sale NINGUNA línea en ese lapso, se mata el proceso y se corta acá
-    con código 124, en vez de quedar esperando para siempre sin que el
-    GUI (ni quien mira el log) tenga ninguna señal de que algo se
-    trabó. Implementado con select() sobre el fd del pipe (no con
-    subprocess.run(timeout=...), que exigiría comunicate() y perdería
-    el streaming línea por línea de arriba)."""
+    idle_timeout (segundos, default None = sin límite): NO es un límite de duración total — una
+    compilación larga que sigue imprimiendo progreso nunca lo dispara. Es para detectar un proceso
+    COLGADO Y EN SILENCIO (snapper/btrfs esperando algo que nunca llega, por ejemplo): si no sale NINGUNA
+    byte en ese lapso, se mata el árbol de procesos y se corta con código 124.
+
+    Se lee del fd con os.read (no con readline sobre un TextIOWrapper): select() mira el fd, no el búfer
+    de Python, así que con readline() las líneas que llegaban juntas quedaban retenidas hasta la siguiente
+    salida — y si el proceso se colgaba justo después, esas últimas líneas (las que explican el cuelgue) no se
+    mostraban nunca. Los '\r' de las barras de progreso de pacman/curl siguen contando como fin de línea
+    (lo mismo que hacía el modo texto con saltos de línea universales)."""
     print(f"### $ {' '.join(cmd)}", flush=True)
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",  # un byte raro en la salida no debe matar a pacman a mitad
-        bufsize=1, **kw,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
+            start_new_session=True, **kw,
+        )
+    except OSError as e:
+        print(f"### ERROR: no se pudo ejecutar {cmd[0]}: {e}", flush=True)
+        return 127
+    fd = proc.stdout.fileno()
+    dec = codecs.getincrementaldecoder("utf-8")(errors="replace")  # un byte raro no debe matar a pacman a mitad
+    pendiente = ""
     try:
         while True:
             if idle_timeout is not None:
-                listo, _, _ = select.select([proc.stdout], [], [], idle_timeout)
+                listo, _, _ = select.select([fd], [], [], idle_timeout)
                 if not listo:
-                    proc.kill()
-                    proc.wait()
+                    if pendiente:
+                        print(pendiente, flush=True)
+                    _matar_arbol(proc)
                     print(
                         f"### ERROR: sin salida por {idle_timeout:.0f}s — "
                         f"proceso colgado (pid {proc.pid}), se mató.",
                         flush=True,
                     )
                     return 124
-            linea = proc.stdout.readline()
-            if linea == "":
+            chunk = os.read(fd, 65536)
+            if not chunk:
                 break
-            print(linea, end="", flush=True)
+            texto = pendiente + dec.decode(chunk)
+            retenido = ""
+            if texto.endswith("\r"):      # podría ser la mitad de un \r\n: se decide con el siguiente trozo
+                texto, retenido = texto[:-1], "\r"
+            *lineas, resto = texto.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            for linea in lineas:
+                print(linea, flush=True)
+            pendiente = resto + retenido
+        pendiente += dec.decode(b"", final=True)
+        if pendiente:
+            print(pendiente.replace("\r", ""), flush=True)
     except BaseException:
-        # Solo si algo reventó a mitad (p. ej. KeyboardInterrupt): ahí sí se mata al hijo.
-        proc.kill()
-        proc.wait()
+        # Solo si algo reventó a mitad (p. ej. SystemExit por SIGTERM, KeyboardInterrupt): ahí sí se mata el árbol.
+        _matar_arbol(proc)
         raise
+    finally:
+        proc.stdout.close()
     # EOF normal: el hijo terminó (o está terminando). Ya no se consulta con poll() para matarlo: en
     # esa ventana poll() puede devolver None y el kill() convertía un exit 0 en rc=-9.
     proc.wait()
     return proc.returncode
+
+
+# ── Descargas: solo https, con tope de tamaño ───────────────────────────
+class _SoloHttpsRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib sigue redirecciones a http:// y ftp:// sin avisar: una respuesta que degrade el canal dejaría de
+    estar protegida por TLS. El manifiesto y los archivos que cubre bajan por el MISMO canal: aunque cada
+    archivo se verifique contra el manifiesto, un manifiesto servido por http no prueba nada."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.lower().startswith("https://"):
+            raise urllib.error.URLError(f"redirección a un destino que no es https rechazada: {newurl[:80]}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_SoloHttpsRedirect)
+
+
+def _descargar(url: str, timeout: float = 15, limite: int = MAX_DESCARGA) -> bytes:
+    """GET por https con tope de `limite` bytes. Lanza ValueError (no es https), OSError/URLError (red, HTTP
+    != 200, demasiado grande). Nunca lee sin tope."""
+    if not isinstance(url, str) or not url.lower().startswith("https://"):
+        raise ValueError(f"solo se descarga por https: {str(url)[:80]!r}")
+    req = urllib.request.Request(url, headers={"User-Agent": "avalos-update-helper"})
+    with _OPENER.open(req, timeout=timeout) as resp:
+        if resp.status != 200:
+            raise OSError(f"HTTP {resp.status}")
+        datos = resp.read(limite + 1)
+    if len(datos) > limite:
+        raise OSError(f"la respuesta supera el tope de {limite} bytes")
+    return datos
+
+
+def _escribir_atomico(dest: Path, contenido: bytes, modo: int) -> None:
+    """Escribe `contenido` en `dest` de forma atómica, durable y sin seguir symlinks: temporal ÚNICO creado con
+    O_EXCL (mkstemp) en el mismo directorio, permisos fijados ANTES del rename, fsync del archivo y del
+    directorio, os.replace. Antes: `<dest>.avalos-tmp` con nombre predecible escrito con write_bytes, que SIGUE
+    un symlink plantado ahí (y sin fsync: un corte de luz podía dejar el destino vacío)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # restos de una corrida matada (SIGKILL / corte de luz) y del esquema viejo («<dest>.avalos-tmp»)
+    for resto in (*dest.parent.glob(f".{glob.escape(dest.name)}.avalos-tmp-*"), dest.with_name(dest.name + ".avalos-tmp")):
+        with contextlib.suppress(OSError):
+            resto.unlink()
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.avalos-tmp-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(contenido)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, modo)
+        os.replace(tmp, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    with contextlib.suppress(OSError):   # sin esto el rename puede perderse en un corte de luz justo después
+        dfd = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
 
 
 def detectar_cpu_arch_level() -> str:
@@ -501,26 +642,99 @@ def cmd_apply_kernel(args: argparse.Namespace) -> None:
     _out(f"listo — {pkg} instalado. Reiniciá para arrancar con el kernel nuevo.")
 
 
+# Nombres que aceptamos para pasarle a yay (y que acaban en su línea de comandos como ROOT→usuario): los de
+# pacman/AUR — nunca empiezan con '-' (opción de yay: --sudo=, --editor=… ejecutan lo que sea) ni con '.'.
+_AUR_PKG_RE = re.compile(r"[A-Za-z0-9@_+][A-Za-z0-9@._+-]{0,127}")
+# Usuario que va escrito TAL CUAL en sudoers: sin espacios, comas, '=', ':', '!', '#', '%', '@', '+' iniciales
+# ni saltos de línea (un nombre con "\n" inyectaría reglas). El instalador ya solo crea [a-z_][a-z0-9_-]{0,31}.
+_USUARIO_SUDOERS_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,31}\$?")
+
+
+def _paquete_aur(valor: str) -> str:
+    if not _AUR_PKG_RE.fullmatch(valor):
+        raise argparse.ArgumentTypeError(f"nombre de paquete no válido: {valor!r}")
+    return valor
+
+
+def _visudo_ok(path: Path) -> bool:
+    """`visudo -cf`: sintaxis de sudoers válida. Un archivo roto en sudoers.d dejaría a TODOS sin sudo, así que
+    solo se activa lo que pasó esto; si visudo no está o no responde, rc=-1 → no se activa (fail closed)."""
+    rc, _salida, _err = _run(["visudo", "-cf", str(path)], timeout=15)
+    return rc == 0
+
+
+def _activar_sudoers_aur(usuario: str) -> None:
+    """Escribe el NOPASSWD temporal de forma segura: archivo nuevo (O_EXCL|O_NOFOLLOW, modo 0440 desde el
+    primer instante), fsync, validación con visudo bajo un nombre que sudo IGNORA, y recién entonces un rename
+    atómico al nombre efectivo. Antes: write_text + chmod — con una ventana con modo 0644 y sin validar la
+    sintaxis. 'Defaults !authenticate' quita el prompt para este usuario sea cual sea el orden de los archivos."""
+    contenido = f"Defaults:{usuario} !authenticate\n{usuario} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    tmp = _sudoers_aur_tmp()
+    with contextlib.suppress(FileNotFoundError):
+        tmp.unlink()
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o440)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(contenido)
+            f.flush()
+            os.fsync(f.fileno())
+        if not _visudo_ok(tmp):
+            _fail("visudo rechazó el sudoers temporal de AUR — por seguridad no se instala nada de AUR (sudoers roto).")
+        os.replace(tmp, SUDOERS_AUR)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
+def _borrar_sudoers_aur() -> bool:
+    """Borra el sudoers temporal (y su .tmp). False si NO se pudo: ahí queda sudo sin contraseña y hay que avisarlo
+    en voz alta; la limpieza del próximo subcomando y la regla de tmpfiles del arranque lo reintentan."""
+    ok = True
+    for p in (SUDOERS_AUR, _sudoers_aur_tmp()):
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            _out(f"ERROR DE SEGURIDAD: no se pudo borrar {p}: {e} — hay sudo SIN contraseña hasta que se borre. "
+                 f"Borralo a mano: sudo rm {p}")
+            ok = False
+    return ok
+
+
+def _instalar_limpieza_en_arranque() -> None:
+    """Deja una regla de systemd-tmpfiles que borra SUDOERS_AUR en el arranque (ver TMPFILES_AUR). Defensa en
+    profundidad: si no se puede escribir, solo se avisa — el finally y la limpieza del próximo subcomando siguen."""
+    regla = f"r! {SUDOERS_AUR}\n"
+    try:
+        if TMPFILES_AUR.is_file() and TMPFILES_AUR.read_text(encoding="utf-8") == regla:
+            return
+        _escribir_atomico(TMPFILES_AUR, regla.encode("utf-8"), 0o644)
+    except OSError as e:
+        _out(f"aviso: no se pudo instalar la regla de tmpfiles que limpia el NOPASSWD en el arranque ({TMPFILES_AUR}): {e}")
+
+
 def cmd_apply_aur(args: argparse.Namespace) -> None:
     usuario = _require_root_via_pkexec()
     if not args.packages:
         _fail("no se especificó ningún paquete de AUR.")
+    if not _USUARIO_SUDOERS_RE.fullmatch(usuario):
+        _fail(f"el usuario {usuario!r} tiene un nombre que no es seguro escribir en sudoers — no se instala nada de AUR.")
 
     # Mismo patrón que el instalador para el bootstrap de yay: sudoers
     # NOPASSWD temporal para que 'sudo pacman -U' (que yay invoca
     # internamente al instalar lo que compiló) no se quede esperando
     # una contraseña que no tiene cómo pedir desde acá. Limpieza
-    # garantizada con try/finally, igual que ahí.
+    # garantizada con try/finally (SIGTERM/SIGHUP también la ejecutan: ver
+    # _senales_como_salida), con respaldo en el próximo subcomando y en el arranque.
     lock_fd = _aur_lock_try()
     if lock_fd is None:
         _fail("ya hay otra actualización de AUR en curso (o no se pudo tomar el candado) — esperá a que termine.")
+    borrado = True
     try:
-        # 'Defaults !authenticate' quita el prompt para este usuario sea cual sea el orden de los archivos.
-        SUDOERS_AUR.write_text(
-            f"Defaults:{usuario} !authenticate\n"
-            f"{usuario} ALL=(ALL:ALL) NOPASSWD: ALL\n"
-        )
-        SUDOERS_AUR.chmod(0o440)
+        _instalar_limpieza_en_arranque()
+        _activar_sudoers_aur(usuario)
         _out(f"instalando/actualizando de AUR como {usuario}: {' '.join(args.packages)}")
         rc = 1
         # idle_timeout: mismo hueco que pacman -S/-R arriba — --noconfirm evita la
@@ -532,11 +746,12 @@ def cmd_apply_aur(args: argparse.Namespace) -> None:
         )
     finally:
         try:
-            SUDOERS_AUR.unlink()
-        except FileNotFoundError:
-            pass
-        os.close(lock_fd)
+            borrado = _borrar_sudoers_aur()
+        finally:
+            os.close(lock_fd)
 
+    if not borrado:
+        _fail("no se pudo borrar el NOPASSWD temporal de AUR (ver arriba).", 5)
     if rc != 0:
         _fail(f"yay terminó con código {rc}.", rc)
     _out("paquetes de AUR actualizados.")
@@ -563,16 +778,26 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
         _out("snapshot creado.")
 
 
+_HASH_RE = re.compile(r"[0-9a-f]{64}")
+_RUTA_MANIFEST_RE = re.compile(r"[A-Za-z0-9._+@/-]+")
+
+
+def _ruta_relativa_segura(ruta: str) -> bool:
+    """Ruta del repo, relativa y sin trucos: sin '/' inicial, sin '..', sin segmentos vacíos ni '.' sueltos."""
+    if not _RUTA_MANIFEST_RE.fullmatch(ruta) or ruta.startswith("/") or ruta.endswith("/"):
+        return False
+    return all(seg not in ("", ".", "..") for seg in ruta.split("/"))
+
+
 def _cargar_manifest_hashes() -> dict[str, str] | None:
     """Baja y parsea configs/MANIFEST.sha256 (formato de `sha256sum`: '<hash>  <ruta>'
     por línea, generado por scripts/gen-sync-manifest.py). None si no se pudo bajar
     o el formato no es el esperado — cmd_sync_system_files trata eso como fallo
-    CERRADO (no sincroniza nada), nunca como "confiar sin verificar"."""
+    CERRADO (no sincroniza nada), nunca como "confiar sin verificar". Estricto a propósito: hash = 64 hex
+    (antes solo se miraba el largo), ruta relativa sin '..', y una ruta repetida invalida TODO el manifiesto
+    (antes la última línea ganaba en silencio)."""
     try:
-        with urllib.request.urlopen(f"{REPO_RAW}/configs/MANIFEST.sha256", timeout=15) as resp:
-            if resp.status != 200:
-                return None
-            texto = resp.read().decode("utf-8")
+        texto = _descargar(f"{REPO_RAW}/configs/MANIFEST.sha256").decode("utf-8")
     except Exception:
         return None
     hashes: dict[str, str] = {}
@@ -581,9 +806,12 @@ def _cargar_manifest_hashes() -> dict[str, str] | None:
         if not linea or linea.startswith("#"):
             continue
         partes = linea.split(None, 1)
-        if len(partes) != 2 or len(partes[0]) != 64:
+        if len(partes) != 2:
             return None  # línea con formato inesperado — manifiesto no confiable, fail closed
-        hashes[partes[1].strip()] = partes[0].lower()
+        digest, ruta = partes[0].lower(), partes[1].strip()
+        if not _HASH_RE.fullmatch(digest) or not _ruta_relativa_segura(ruta) or ruta in hashes:
+            return None
+        hashes[ruta] = digest
     return hashes or None
 
 
@@ -637,6 +865,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("scripts/avalos-wallpaper", "/usr/local/bin/avalos-wallpaper", 0o755),
         ("scripts/avalos-about", "/usr/local/bin/avalos-about", 0o755),
         ("scripts/avalos-store", "/usr/local/bin/avalos-store", 0o755),
+        ("scripts/avalos-store-helper", "/usr/local/bin/avalos-store-helper", 0o755),
         ("scripts/avalos-restore", "/usr/local/bin/avalos-restore", 0o755),
         ("scripts/avalos-doctor", "/usr/local/bin/avalos-doctor", 0o755),
         ("scripts/avalos-welcome", "/usr/local/bin/avalos-welcome", 0o755),
@@ -693,10 +922,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
     for src_rel, dest, mode in manifest:
         url = f"{REPO_RAW}/{src_rel}"
         try:
-            with urllib.request.urlopen(url, timeout=15) as resp:
-                if resp.status != 200:
-                    raise OSError(f"HTTP {resp.status}")
-                contenido = resp.read()
+            contenido = _descargar(url)
         except Exception as e:
             _out(f"aviso: no se pudo bajar {src_rel}: {e} — se deja el archivo actual sin tocar.")
             fallas += 1
@@ -708,22 +934,18 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
             fallas += 1
             continue
 
-        dest_path = Path(dest)
         try:
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = Path(str(dest_path) + ".avalos-tmp")
-            tmp.write_bytes(contenido)
-            tmp.chmod(mode)
-            tmp.replace(dest_path)  # replace es atómico dentro del mismo filesystem
+            _escribir_atomico(SYNC_ROOT / dest.lstrip("/"), contenido, mode)
             _out(f"actualizado: {dest}")
         except OSError as e:
             _out(f"aviso: no se pudo escribir {dest}: {e}")
             fallas += 1
 
+    # Código != 0 si algo no se actualizó: antes el helper salía con 0 igual, y la GUI («qué hay de nuevo»)
+    # daba por sincronizadas las configs aunque no lo estuvieran.
     if fallas:
-        _out(f"sync terminado con {fallas} archivo(s) que no se pudieron actualizar (ver arriba).")
-    else:
-        _out("archivos de sistema de AvalOS sincronizados contra el repo.")
+        _fail(f"sync terminado con {fallas} archivo(s) que no se pudieron actualizar (ver arriba).", 3)
+    _out("archivos de sistema de AvalOS sincronizados contra el repo.")
 
 
 # ── Restauración de un snapshot (one-click restore) ─────────────────────
@@ -779,7 +1001,13 @@ _AT_FDCWD = -100
 RESTORE_BACKUP_PREFIX = "@.avalos-restore-backup-"
 RESTORE_INCOMING_NAME = "@.avalos-restore-incoming"
 _SNAPSHOTS_SUBVOL = "@snapshots"
-_BACKUP_NAME_RE = re.compile(r"^@\.avalos-restore-backup-\d{8}-\d{6}-\d{6}$")
+# re.ASCII + [0-9] + fullmatch: con `\d` y `^…$` + match() un nombre con dígitos Unicode o con un salto de línea
+# final también pasaba. Esto decide qué subvolumen btrfs se borra como root: tiene que ser exacto.
+_BACKUP_NAME_RE = re.compile(r"@\.avalos-restore-backup-[0-9]{8}-[0-9]{6}-[0-9]{6}", re.ASCII)
+
+
+def _es_nombre_de_respaldo(nombre) -> bool:
+    return isinstance(nombre, str) and _BACKUP_NAME_RE.fullmatch(nombre) is not None
 _TOP_MOUNT_BASE = Path("/run/avalos-restore")
 
 
@@ -885,7 +1113,7 @@ def _parse_snapper_json(raw: str, config: str = "root") -> list[dict]:
     varias formas razonables antes de rendirse."""
     try:
         data = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):  # RecursionError: JSON anidado a miles de niveles (salida corrupta)
         return []
     if isinstance(data, list):
         return data
@@ -901,7 +1129,7 @@ def _parse_snapper_json(raw: str, config: str = "root") -> list[dict]:
 
 
 def _list_backups(top: Path) -> list[str]:
-    return sorted((p.name for p in top.iterdir() if _BACKUP_NAME_RE.match(p.name)), reverse=True)
+    return sorted((p.name for p in top.iterdir() if _es_nombre_de_respaldo(p.name)), reverse=True)
 
 
 def cmd_list_restore_points(args: argparse.Namespace) -> None:
@@ -1020,7 +1248,7 @@ def cmd_list_backups(args: argparse.Namespace) -> None:
 def cmd_delete_backup(args: argparse.Namespace) -> None:
     _require_root_via_pkexec()
     name = args.name
-    if not _BACKUP_NAME_RE.match(name):
+    if not _es_nombre_de_respaldo(name):
         _fail(
             f"'{name}' no tiene el formato de un respaldo de avalos-restore — por seguridad, "
             f"esto nunca borra nada que no matchee exactamente '{RESTORE_BACKUP_PREFIX}AAAAMMDD-HHMMSS-ffffff'."
@@ -1054,7 +1282,7 @@ def main() -> None:
     p.set_defaults(func=cmd_apply_kernel)
 
     p = sub.add_parser("apply-aur", help="yay -S para paquetes puntuales de AUR")
-    p.add_argument("packages", nargs="+")
+    p.add_argument("packages", nargs="+", type=_paquete_aur)
     p.set_defaults(func=cmd_apply_aur)
 
     p = sub.add_parser("snapshot", help="snapshot de snapper antes de actualizar")
@@ -1079,7 +1307,8 @@ def main() -> None:
     p.set_defaults(func=cmd_delete_backup)
 
     args = ap.parse_args()
-    args.func(args)
+    with _senales_como_salida():
+        args.func(args)
 
 
 if __name__ == "__main__":
