@@ -564,10 +564,20 @@ class ApplyAurSignals(HelperCase):
         h.main()
     """)
 
+    @staticmethod
+    def reap(proc):
+        """Mata si sigue vivo, espera y CIERRA los pipes (si no, ResourceWarning por cada subproceso)."""
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=20)
+        for pipe in (proc.stdout, proc.stderr):
+            if pipe is not None and not pipe.closed:
+                pipe.close()
+
     def start(self):
         proc = subprocess.Popen([sys.executable, "-c", self.DRIVER, str(SCRIPT), str(self.tmp)],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.addCleanup(lambda: (proc.poll() is None) and proc.kill())
+        self.addCleanup(self.reap, proc)
         vistas = []
         while True:   # el helper imprime «### instalando…» antes de llegar al _stream falso que imprime READY
             line = proc.stdout.readline()
@@ -594,7 +604,8 @@ class ApplyAurSignals(HelperCase):
         proc.kill()
         proc.wait(timeout=20)
         self.assertTrue(self.sudoers.exists(), "SIGKILL no se puede atrapar: el archivo queda")
-        self.h._limpiar_sudoers_aur_huerfano()
+        with contextlib.redirect_stdout(io.StringIO()):         # imprime «eliminado un NOPASSWD temporal huérfano…»
+            self.h._limpiar_sudoers_aur_huerfano()
         self.assertFalse(self.sudoers.exists())
 
 

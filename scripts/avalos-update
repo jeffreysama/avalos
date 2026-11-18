@@ -47,7 +47,7 @@ HELPER_BIN = "/usr/local/bin/avalos-update-helper"
 HELPER_IDLE_TIMEOUT = 180
 
 
-def _read_lines(proc, idle_timeout):
+def _read_lines_raw(proc, idle_timeout):
     """Líneas de proc.stdout (un pipe en BINARIO sin búfer), leídas del fd con os.read.
 
     Antes: select() sobre el pipe + readline() de un TextIOWrapper. select() mira el fd, no el búfer de Python: las líneas
@@ -76,6 +76,15 @@ def _read_lines(proc, idle_timeout):
     pending += dec.decode(b"", final=True)
     if pending:
         yield pending.replace("\r", "")
+
+
+def _read_lines(proc, idle_timeout):
+    """_read_lines_raw + cierre del pipe al terminar (también si se interrumpe o lanza TimeoutError): sin esto el descriptor
+    quedaba abierto hasta que el recolector de basura lo cerraba y Python avisaba con un ResourceWarning por cada llamada."""
+    try:
+        yield from _read_lines_raw(proc, idle_timeout)
+    finally:
+        proc.stdout.close()
 
 
 def _abort_proc(proc):

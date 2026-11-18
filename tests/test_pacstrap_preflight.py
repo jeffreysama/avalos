@@ -360,7 +360,9 @@ def build_fixture(root):
     """Repos core/extra/multilib de mentira (bases escritas a mano) + un 'live' con paquetes ya
     instalados. -> ruta del pacman.conf"""
     sync = os.path.join(root, "db", "sync")
-    for d in (sync, os.path.join(root, "root"), os.path.join(root, "cache")):
+    # «gpg» también: GPGDir = {root}/gpg está en el conf y pacman ≥ 7 se niega a correr si el directorio no existe
+    # («failed to resolve path … passed to 'GPGDir'»); pacman 6 lo toleraba.
+    for d in (sync, os.path.join(root, "root"), os.path.join(root, "cache"), os.path.join(root, "gpg")):
         os.makedirs(d)
     conf = ["[options]", f"RootDir = {root}/root", f"DBPath = {root}/db", f"CacheDir = {root}/cache",
             f"LogFile = {root}/pacman.log", f"GPGDir = {root}/gpg", "Architecture = x86_64",

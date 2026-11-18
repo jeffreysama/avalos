@@ -100,7 +100,8 @@ jobs:
             [[ -z "$VERSION" ]] && VERSION=$(date +%Y.%m.%d)
           fi
           # La versión acaba en nombres de archivo, en la etiqueta del release y en otros `run:`: solo [0-9A-Za-z._+-]
-          if ! [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$ ]]; then
+          # LC_ALL=C en un subshell: en un locale UTF-8 los rangos A-Za-z/0-9 de [[ =~ ]] aceptan letras y dígitos no ASCII
+          if ! ( LC_ALL=C; [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$ ]] ); then
             echo "::error::version con formato inesperado: '$VERSION'"
             exit 1
           fi
