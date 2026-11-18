@@ -331,6 +331,14 @@ def system_info() -> dict:
 
 
 # ── Salud (la calcula avalos-doctor) ───────────────────────────────────────
+def _as_count(value) -> int:
+    """Número entero ≥ 0 de lo que sea que venga en el JSON del doctor (otra versión, archivo dañado…): 0 si no lo es."""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def health_summary() -> dict:
     """Corre `avalos-doctor --json` (solo lectura) y lo reduce a lo que muestra la tarjeta:
     {"state": "missing"|"error"|"done", "ok", "warn", "fail", "issues": [{"title", "status"}]}."""
@@ -343,18 +351,19 @@ def health_summary() -> dict:
         data = json.loads(res.stdout)
         summary = data["summary"]
         findings = data.get("findings") or []
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, RecursionError):   # RecursionError: JSON anidado a miles de niveles
         return {"state": "error"}
     if not isinstance(summary, dict) or not isinstance(findings, list):
         return {"state": "error"}
     order = {"fail": 0, "warn": 1}
-    problems = sorted((f for f in findings if isinstance(f, dict) and f.get("status") in order),
+    # isinstance(str): `["x"] in {"fail": 0}` lanza TypeError (lista no hashable) con un doctor de otra versión
+    problems = sorted((f for f in findings if isinstance(f, dict) and isinstance(f.get("status"), str) and f["status"] in order),
                       key=lambda f: order[f["status"]])
     return {
         "state": "done",
-        "ok": int(summary.get("ok", 0)),
-        "warn": int(summary.get("warn", 0)),
-        "fail": int(summary.get("fail", 0)),
+        "ok": _as_count(summary.get("ok", 0)),
+        "warn": _as_count(summary.get("warn", 0)),
+        "fail": _as_count(summary.get("fail", 0)),
         "issues": [{"title": str(f.get("title", "")), "status": f["status"]} for f in problems[:MAX_ISSUES]],
     }
 

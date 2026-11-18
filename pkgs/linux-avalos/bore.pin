@@ -1,0 +1,14 @@
+# Pin de revisión del parche BORE (CachyOS/kernel-patches) — lo lee scripts/check-bore-patch.py desde build-kernel.yml.
+#
+#   mode=warn      el parche se aplica aunque haya cambiado desde la última revisión, y el resumen del job lo
+#                  avisa con el comando para fijar el nuevo hash (no rompe el build semanal cuando CachyOS actualiza BORE).
+#   mode=enforce   un parche que no coincide con el pin NO se aplica (el kernel -bore sale SIN BORE) y el workflow baja
+#                  el parche del COMMIT de abajo, no de «master» — BORE sigue funcionando con lo que se revisó.
+#
+# Formato:  <X.Y del kernel>  <sha256 del parche revisado>  <commit de CachyOS/kernel-patches de donde salió>
+# Después de revisar un parche nuevo:  sha256sum 7.3/sched/0001-bore.patch  y  git log -1 --format=%H -- 7.3/sched/0001-bore.patch
+#
+# 7.2: hash y commit tomados el 2026-11-13 (blob del commit == master ese día). Se comprobó el ALCANCE (13 archivos, todos del
+# planificador, +728/−13 líneas) y que no hay patrones de credenciales/syscalls/ensamblador. NO fue una auditoría línea por línea.
+mode=warn
+7.2  61b9543e400d6fb38a68ee2276538ae14834bec75d7b06d3e1ac9977174ff619  a40b85abdcb9f4ba653e2e1ea89d3d1f0cf563ba

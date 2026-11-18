@@ -226,9 +226,15 @@ DRIVER = textwrap.dedent('''
         _orig(self, path or tmp / "live.log", usb_mount_dir or tmp / "usb", run, variant)
     logfile.InstallLog.__init__ = _init
     entry()
-    mods = sorted(n for n in sys.modules if n == "avalos_installer" or n.startswith("avalos_installer."))
     api = calls["api"]
     session = getattr(api, "session", None) or getattr(api, "_session", None)
+    # Session arranca un hilo (_usb_thread → logfile._attach_usb) que importa disk.bootmedium de forma perezosa. Si se
+    # muestrea sys.modules sin esperarlo, el resultado depende de quién llegue primero (falló 1 de cada ~15 corridas
+    # aisladas: «Second list contains 1 additional elements: avalos_installer.disk.bootmedium»).
+    usb_thread = getattr(session, "_usb_thread", None)
+    if usb_thread is not None:
+        usb_thread.join(timeout=30)
+    mods = sorted(n for n in sys.modules if n == "avalos_installer" or n.startswith("avalos_installer."))
     print(json.dumps({
         "started": calls.get("started"),
         "html_sha": hashlib.sha256(calls["html"].encode()).hexdigest(),

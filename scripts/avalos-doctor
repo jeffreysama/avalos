@@ -50,7 +50,7 @@ ICON_DIR = Path("/usr/share/icons/hicolor/scalable/apps")
 KERNEL_PKGS = ("linux", "linux-lts", "linux-zen", "linux-hardened",
                "linux-avalos", "linux-avalos-bore", "linux-avalos-compat")
 AVALOS_APPS = ("avalos-settings", "avalos-wallpaper", "avalos-about", "avalos-update",
-               "avalos-update-helper", "avalos-store", "avalos-restore", "avalos-doctor")
+               "avalos-update-helper", "avalos-store", "avalos-store-helper", "avalos-restore", "avalos-doctor")
 # Mismas apps que validate_app_consistency.NEEDS_DESKTOP: sin .desktop e ícono no aparecen en el menú.
 NEEDS_DESKTOP = {"avalos-settings", "avalos-store", "avalos-update", "avalos-restore", "avalos-doctor"}
 # Lo único que la ventana puede lanzar. Cualquier otro nombre se rechaza.
