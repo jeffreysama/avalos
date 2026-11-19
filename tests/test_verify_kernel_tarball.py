@@ -354,11 +354,16 @@ class SignedTarball(unittest.TestCase):
         self.assertEqual(list(dest.iterdir()), [])
 
     def test_cli_rejects_hostile_versions_and_bad_destinations(self):
-        for version in ("9.9.9; id", "../9.9", "9", "9.9.9.9", "", "$(id)", "9.9\n", "٩.٩"):
-            with self.subTest(version=version):
-                rc = self.m.main(["--version", version, "--dest", str(self.tmp)])
-                self.assertEqual(rc, 2)
-        self.assertEqual(self.m.main(["--version", "9.9.9", "--dest", str(self.tmp / "no-existe")]), 2)
+        # stdout y stderr capturados: el script imprime «::error::…» (comandos de workflow de GitHub) y, sin capturarlos, el
+        # runner del CI los convertía en 8 anotaciones rojas en una corrida que en realidad salía verde.
+        err = io.StringIO()
+        with mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", err):
+            for version in ("9.9.9; id", "../9.9", "9", "9.9.9.9", "", "$(id)", "9.9\n", "٩.٩"):
+                with self.subTest(version=version):
+                    rc = self.m.main(["--version", version, "--dest", str(self.tmp)])
+                    self.assertEqual(rc, 2)
+            self.assertEqual(self.m.main(["--version", "9.9.9", "--dest", str(self.tmp / "no-existe")]), 2)
+        self.assertEqual(err.getvalue().count("::error::"), 9, "cada rechazo tiene que explicarse con un ::error::")
 
     def test_the_urls_it_builds_are_kernel_org_per_major_series(self):
         seen = []
