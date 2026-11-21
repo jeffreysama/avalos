@@ -115,6 +115,7 @@ jobs:
         env:
           FORCE: ${{ github.event.inputs.force_rebuild }}
           KERNEL_VER: ${{ steps.get_ver.outputs.kernel_ver }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
 
           if [[ "$FORCE" == "true" ]]; then
@@ -154,8 +155,6 @@ jobs:
             echo "La version $KERNEL_VER no esta publicada - iniciando build"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   prepare:
     name: Preparar PKGBUILD y config
