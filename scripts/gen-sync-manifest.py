@@ -24,7 +24,7 @@ el botón (más el aprobador del Environment `sync-release`, si se configura en 
 A mano son estos pasos, en este orden:
   1. commitear los cambios a los archivos de RUTAS
   2. python3 scripts/gen-sync-manifest.py
-     git add configs/MANIFEST.sha256 && git commit -m "chore: manifiesto de sync"
+     git add configs/MANIFEST.sha256 && git commit -m "chore: sync manifest"
   3. python3 scripts/gen-sync-manifest.py --pin
      git commit -am "chore: pin AVALOS_SYNC_REF"
   4. git push        (el commit pineado tiene que estar en GitHub antes del primer sync)
@@ -337,8 +337,8 @@ def cmd_release(root: Path) -> int:
             return 1
         if _git(root, "status", "--porcelain", "--", MANIFEST).stdout.strip():
             _git(root, "add", MANIFEST)
-            _git(root, "commit", "-q", "-m", "chore: manifiesto de sync")
-            print("commit: chore: manifiesto de sync")
+            _git(root, "commit", "-q", "-m", "chore: sync manifest")
+            print("commit: chore: sync manifest")
         if cmd_pin(root, indicar_siguiente=False) != 0:
             return 1
         _git(root, "add", *PIN_FILES)

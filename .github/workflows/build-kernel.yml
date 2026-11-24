@@ -304,7 +304,7 @@ jobs:
             git -C "$GITHUB_WORKSPACE" config user.name "avalos-bot"
             git -C "$GITHUB_WORKSPACE" config user.email "actions@users.noreply.github.com"
             git -C "$GITHUB_WORKSPACE" add "${{ env.PKGBUILD_DIR }}/PKGBUILD"
-            git -C "$GITHUB_WORKSPACE" commit -m "chore(kernel): bump linux-avalos a ${{ needs.check-version.outputs.kernel_ver }}"
+            git -C "$GITHUB_WORKSPACE" commit -m "chore(kernel): bump linux-avalos to ${{ needs.check-version.outputs.kernel_ver }}"
             git -C "$GITHUB_WORKSPACE" push \
               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ env.AVALOS_REPO }}.git" \
               "HEAD:refs/heads/$REF_NAME"
