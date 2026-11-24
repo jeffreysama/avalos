@@ -78,6 +78,63 @@ class PolkitAgentCheck(unittest.TestCase):
             self.assertEqual(self.doc.chk_polkit_agent()[0], "warn")
 
 
+class AppsCheck(unittest.TestCase):
+    """avalos-settings.desktop usa Icon=preferences-system (un icono del tema), pero el chequeo le exigía un
+    avalos-settings.svg que el repo nunca tuvo: aviso falso en cualquier instalación. El SVG propio solo hace falta
+    si el .desktop lo pide por su nombre."""
+
+    def setUp(self):
+        self.doc = load_doctor()
+        base = Path(tempfile.mkdtemp(prefix="avalos-apps-"))
+        self.addCleanup(shutil.rmtree, base, True)
+        self.bin, self.apps, self.icons = base / "bin", base / "apps", base / "icons"
+        for d in (self.bin, self.apps, self.icons):
+            d.mkdir()
+        for p in (mock.patch.object(self.doc, "BIN_DIR", self.bin), mock.patch.object(self.doc, "APPS_DIR", self.apps),
+                  mock.patch.object(self.doc, "ICON_DIR", self.icons)):
+            p.start()
+            self.addCleanup(p.stop)
+        for app in self.doc.AVALOS_APPS:
+            (self.bin / app).write_text("#!/bin/sh\n")
+            (self.bin / app).chmod(0o755)
+        for app in self.doc.NEEDS_DESKTOP:
+            self.desktop(app, app)
+            (self.icons / f"{app}.svg").write_text("<svg/>")
+
+    def desktop(self, app, icon):
+        (self.apps / f"{app}.desktop").write_text(f"[Desktop Entry]\nName={app}\nIcon={icon}\n")
+
+    def test_everything_in_place_is_ok(self):
+        self.assertEqual(self.doc.chk_apps()[:2], ("ok", "d-apps-ok"))
+
+    def test_an_app_that_uses_a_theme_icon_needs_no_svg_of_its_own(self):
+        self.desktop("avalos-settings", "preferences-system")
+        (self.icons / "avalos-settings.svg").unlink()
+        self.assertEqual(self.doc.chk_apps()[:2], ("ok", "d-apps-ok"))
+
+    def test_an_app_that_asks_for_its_own_icon_still_needs_the_svg(self):
+        (self.icons / "avalos-store.svg").unlink()
+        status, key, args, _ = self.doc.chk_apps()
+        self.assertEqual((status, key), ("warn", "d-apps-warn"))
+        self.assertIn("avalos-store.svg", args["missing"])
+
+    def test_the_shipped_settings_desktop_really_uses_a_theme_icon(self):
+        text = (ROOT / "configs" / "avalos-settings.desktop").read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^Icon=(?!avalos-settings\s*$)\S+")
+
+    def test_a_missing_desktop_file_is_reported(self):
+        (self.apps / "avalos-doctor.desktop").unlink()
+        status, _, args, _ = self.doc.chk_apps()
+        self.assertEqual(status, "warn")
+        self.assertIn("avalos-doctor.desktop", args["missing"])
+
+    def test_a_missing_executable_is_reported(self):
+        (self.bin / "avalos-wallpaper").unlink()
+        status, _, args, _ = self.doc.chk_apps()
+        self.assertEqual(status, "warn")
+        self.assertIn("avalos-wallpaper", args["missing"])
+
+
 class FlathubCheck(unittest.TestCase):
     def setUp(self):
         self.doc = load_doctor()

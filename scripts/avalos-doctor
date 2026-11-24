@@ -901,6 +901,12 @@ def chk_build():
     return R("ok", "d-build-ok", build=m.group(1)) if m else R("info", "d-build-none")
 
 
+def _desktop_icon(app) -> str:
+    """El Icon= del .desktop de la app ('' si no existe el archivo o no lo declara)."""
+    m = re.search(r"^Icon=(.+?)\s*$", _read(APPS_DIR / f"{app}.desktop"), re.M)
+    return m.group(1) if m else ""
+
+
 def chk_apps():
     missing = []
     for app in AVALOS_APPS:
@@ -910,7 +916,8 @@ def chk_apps():
         if app in NEEDS_DESKTOP:
             if not (APPS_DIR / f"{app}.desktop").is_file():
                 missing.append(f"{app}.desktop")
-            if not (ICON_DIR / f"{app}.svg").is_file():
+            # El SVG propio solo hace falta si el .desktop lo pide por su nombre: avalos-settings usa un icono del tema.
+            if _desktop_icon(app) == app and not (ICON_DIR / f"{app}.svg").is_file():
                 missing.append(f"{app}.svg")
     if missing:
         shown = ", ".join(missing[:6]) + (f" … (+{len(missing) - 6})" if len(missing) > 6 else "")
