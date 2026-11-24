@@ -16,6 +16,9 @@
 #
 # Requiere: python-pywebview, webkit2gtk-4.1, python-gobject
 # (agregados a HYPRLAND_PKGS en skill_instalar_usb.py).
+# Opcional: python-pillow (miniaturas reducidas; sin él se envían los archivos tal cual, hasta RAW_MAX_BYTES).
+import base64
+import io
 import json
 import os
 import re
@@ -44,6 +47,9 @@ WALLPAPER_DIRS = [
 EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_DEPTH = 4
 FIT_MODES = ("cover", "contain", "fill", "tile")
+THUMB_MAX = (480, 300)             # 2x de la tarjeta (~180x112 px), para pantallas HiDPI
+RAW_MAX_BYTES = 6 * 1024 * 1024    # sin Pillow se envía el archivo tal cual: nada mayor que esto
+_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 
 # ── i18n — autocontenido, mismo patrón que avalos-about/avalos-settings ────
 _AVALOS_LANG_FILE = Path("/etc/avalos-lang")
@@ -257,12 +263,54 @@ def _enlace_a(p: Path) -> Path:
     return link
 
 
+# ── Miniaturas ──────────────────────────────────────────────────────────
+def _thumb_data_uri(p: Path) -> str:
+    """Miniatura como data: URI. WebKitGTK no deja cargar <img src="file://…"> desde una página en memoria (las
+    miniaturas salían negras con webkit2gtk 2.54.3 + pywebview 6.2.1), así que la imagen viaja por la API de Python.
+    Con Pillow se reduce a THUMB_MAX y se manda como JPEG; sin Pillow se manda el archivo tal cual si no pesa mucho."""
+    try:
+        from PIL import Image
+    except ImportError:
+        Image = None
+    if Image is None:
+        if p.stat().st_size > RAW_MAX_BYTES:
+            return ""
+        mime = _MIME.get(p.suffix.lower(), "image/png")
+        return f"data:{mime};base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+    with Image.open(p) as im:
+        im.draft("RGB", THUMB_MAX)          # JPEG: lo decodifica ya reducido (no hace nada con otros formatos)
+        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+            im = im.convert("RGBA")
+            fondo = Image.new("RGB", im.size, (22, 22, 30))   # --bg-alt de la UI
+            fondo.paste(im, mask=im.getchannel("A"))
+            im = fondo
+        else:
+            im = im.convert("RGB")
+        im.thumbnail(THUMB_MAX)
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=82, optimize=True)
+    return "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode("ascii")
+
+
 # ── API expuesta a JS vía pywebview ─────────────────────────────────────
 class WallpaperAPI:
+    def __init__(self):
+        self._listed = set()    # rutas que list() mostró: thumb() no sirve nada fuera de esa lista
+
+    def thumb(self, path):
+        if not isinstance(path, str) or path not in self._listed:
+            return ""
+        try:
+            return _thumb_data_uri(Path(path))
+        except Exception:       # imagen corrupta, enorme, ilegible…: sin miniatura, pero la app sigue
+            return ""
+
     def list(self):
         cur_path, cur_fit = _current_state()
+        items = list_wallpapers()
+        self._listed = {it["path"] for it in items}
         return json.dumps({
-            "items": list_wallpapers(),
+            "items": items,
             "current": cur_path,
             "fit_mode": cur_fit,
             "strings": T,
@@ -432,9 +480,22 @@ const FIT_ICONS = {
            '<rect x="1.5" y="6.5" width="7" height="5" fill="currentColor" opacity="0.55"/><rect x="9.5" y="6.5" width="7" height="5" fill="currentColor" opacity="0.85"/></svg>',
 };
 
-function encodePath(p) {
-  return p.split('/').map(encodeURIComponent).join('/');
+// WebKitGTK no deja cargar archivos locales desde una página en memoria: la miniatura la entrega Python (api.thumb) como data: URI.
+async function loadThumb(img) {
+  try {
+    const uri = await window.pywebview.api.thumb(img.dataset.path);
+    if (uri) img.src = uri;
+  } catch (e) { /* sin miniatura: queda el recuadro vacío */ }
 }
+const thumbObserver = ('IntersectionObserver' in window)
+  ? new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        thumbObserver.unobserve(e.target);
+        loadThumb(e.target);
+      }
+    }, { rootMargin: '200px' })
+  : null;
 
 function setStatus(msg, kind) {
   const el = document.getElementById('status');
@@ -491,10 +552,11 @@ function renderGrid() {
     const thumbWrap = document.createElement('div');
     thumbWrap.className = 'thumb-wrap';
     const img = document.createElement('img');
-    img.loading = 'lazy';
-    img.alt = it.name;
-    img.src = 'file://' + encodePath(it.path);
+    img.alt = '';
+    img.title = it.name;
+    img.dataset.path = it.path;
     thumbWrap.appendChild(img);
+    if (thumbObserver) thumbObserver.observe(img); else loadThumb(img);
     const check = document.createElement('div');
     check.className = 'check';
     check.textContent = '✓';

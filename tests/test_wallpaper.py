@@ -18,8 +18,10 @@ CConfig::parseLine (el de abajo coincide con la librería real en todos los caso
 AVALOS_HYPRLANG_PROBE apunta a un binario que imprima «PATH:<valor>» al parsear un archivo, las pruebas lo usan
 además del port.
 """
+import base64
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -31,7 +33,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+try:
+    from PIL import Image as PILImage
+except ImportError:      # opcional: sin Pillow solo se saltan las pruebas que lo necesitan
+    PILImage = None
+
 ROOT = Path(__file__).resolve().parent.parent
+TINY_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")  # PNG válido de 1x1
 SCRIPT = ROOT / "scripts" / "avalos-wallpaper"
 PROBE = os.environ.get("AVALOS_HYPRLANG_PROBE")
 
@@ -413,6 +421,68 @@ class Scanning(WallpaperCase):
         self.assertEqual(self.wp._current_state(), (None, "cover"))
         self.wp.HYPR_CONF.mkdir()                       # un directorio en vez de archivo
         self.assertEqual(self.wp._current_state(), (None, "cover"))
+
+
+class Thumbnails(WallpaperCase):
+    """Las miniaturas salían negras en vivo (webkit2gtk 2.54.3 + pywebview 6.2.1): la página, cargada desde una cadena,
+    no puede cargar <img src="file://…">. Ahora Python entrega la miniatura como data: URI por api.thumb()."""
+
+    def listed(self, f):
+        self.api.list()                       # thumb() solo sirve lo que list() acaba de mostrar
+        return str(f.resolve())
+
+    @unittest.skipUnless(PILImage, "Pillow no está instalado")
+    def test_a_big_png_becomes_a_small_jpeg_data_uri(self):
+        f = self.pics / "grande.png"
+        PILImage.new("RGB", (3840, 2160), (200, 30, 30)).save(f)
+        uri = self.api.thumb(self.listed(f))
+        self.assertTrue(uri.startswith("data:image/jpeg;base64,"))
+        im = PILImage.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1])))
+        self.assertLessEqual(im.width, self.wp.THUMB_MAX[0])
+        self.assertLessEqual(im.height, self.wp.THUMB_MAX[1])
+        self.assertGreater(im.convert("RGB").getpixel((5, 5))[0], 150)         # sigue siendo rojo, no negro
+        self.assertLess(len(uri), f.stat().st_size)                            # y pesa mucho menos que el original
+
+    @unittest.skipUnless(PILImage, "Pillow no está instalado")
+    def test_transparent_pixels_land_on_the_dark_ui_background_not_on_black(self):
+        f = self.pics / "transparente.png"
+        PILImage.new("RGBA", (64, 40), (0, 0, 0, 0)).save(f)
+        uri = self.api.thumb(self.listed(f))
+        im = PILImage.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1]))).convert("RGB")
+        r, g, b = im.getpixel((10, 10))
+        self.assertTrue(18 <= r <= 26 and 18 <= g <= 26 and 26 <= b <= 34, (r, g, b))      # #16161e de la UI
+
+    def test_without_pillow_the_original_bytes_are_sent(self):
+        f = self.image("x.png", b"\x89PNG\r\n\x1a\nbytes de prueba")
+        with mock.patch.dict(sys.modules, {"PIL": None}):                      # `import PIL` falla
+            uri = self.api.thumb(self.listed(f))
+        self.assertEqual(uri, "data:image/png;base64," + base64.b64encode(f.read_bytes()).decode())
+
+    def test_without_pillow_a_file_over_the_limit_is_skipped(self):
+        f = self.image("enorme.png", b"0" * (self.wp.RAW_MAX_BYTES + 1))
+        with mock.patch.dict(sys.modules, {"PIL": None}):
+            self.assertEqual(self.api.thumb(self.listed(f)), "")
+
+    @unittest.skipUnless(PILImage, "Pillow no está instalado")
+    def test_a_corrupt_image_gives_no_thumbnail_and_does_not_raise(self):
+        f = self.image("rota.png", b"esto no es una imagen")
+        self.assertEqual(self.api.thumb(self.listed(f)), "")
+
+    def test_only_what_list_returned_is_served(self):
+        fuera = self.home / "secreto.png"
+        fuera.write_bytes(b"\x89PNG\r\n\x1a\nsecreto")
+        dentro = self.image("ok.png", TINY_PNG)
+        self.assertEqual(self.api.thumb(str(dentro.resolve())), "")              # antes de list(): nada
+        self.api.list()
+        for malo in (str(fuera), "/etc/passwd", str(self.pics / ".." / "secreto.png"), "", None, 42, ["a"]):
+            with self.subTest(path=malo):
+                self.assertEqual(self.api.thumb(malo), "")
+        self.assertTrue(self.api.thumb(str(dentro.resolve())).startswith("data:image/"))
+
+    def test_the_page_asks_python_for_thumbnails_instead_of_loading_file_urls(self):
+        html = self.wp._build_html()
+        self.assertNotIn("file://", html)
+        self.assertIn("api.thumb(", html)
 
 
 class ProbeAvailable(unittest.TestCase):
