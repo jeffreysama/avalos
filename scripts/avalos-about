@@ -1,62 +1,175 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════╗
 # ║  avalos-about — Información del sistema AvalOS                      ║
-# ║  Muestra fastfetch + datos específicos de AvalOS.                   ║
+# ║  Muestra fastfetch + datos específicos de AvalOS, en el idioma que  ║
+# ║  se eligió al instalar (English · Español · 中文简体 · 日本語).        ║
 # ╚═══════════════════════════════════════════════════════════════════════╝
+#
+# Uso:
+#   avalos-about          abre la ventana (kitty): lo que lanzan avalos-settings y el Control Center
+#   avalos-about --text   imprime la información por stdout, sin ventana ni «pulsa Enter» (pruebas, scripts)
 
-kitty --title "AvalOS — About / Acerca de" -- bash -c '
-    clear
+# Idioma real de UI: /etc/avalos-lang (la fuente de verdad del instalador; ver avalos-settings para el
+# porqué de NO usar LANG a secas). AVALOS_LANG_FILE solo existe para poder probar el script.
+_LANG_FILE="${AVALOS_LANG_FILE:-/etc/avalos-lang}"
+LANG_CODE=""
+if [[ -r "$_LANG_FILE" ]]; then
+    LANG_CODE="$(<"$_LANG_FILE")"
+    LANG_CODE="${LANG_CODE//[$'\t\r\n ']/}"
+fi
+case "$LANG_CODE" in
+  en|es|zh|ja) ;;
+  *) LANG_CODE="${LANG%%_*}" ;;   # archivo ausente o con contenido inválido: fallback
+esac
 
-    # fastfetch si está disponible
+# ── Textos ────────────────────────────────────────────────────────────────
+# Antes, todo lo que está debajo de fastfetch estaba escrito a mano en español (y «Press Enter» en inglés),
+# así que en cualquier otro idioma la ventana salía mezclada. Aquí va TODO el texto visible.
+_PAD=17   # ancho de la columna de etiquetas (solo en/es: en zh/ja los caracteres anchos no alinean)
+case "$LANG_CODE" in
+  es)
+    T_TITLE="AvalOS — Acerca de"
+    T_KERNEL_AVALOS="Kernel AvalOS"; T_KERNEL="Kernel"
+    T_MEMORY="Memoria libre";        T_DISK="Disco raíz"
+    T_FREE_OF="%s libre de %s"
+    T_UPTIME="Tiempo encendido";     T_SHELL="Shell"
+    T_INSTALLED="Instalado";         T_AUTHOR="Autor"
+    T_U_DAY=" d"; T_U_HOUR=" h"; T_U_MIN=" min"
+    T_PRESS_ENTER="Pulsa Enter para cerrar."
+    ;;
+  zh)
+    _PAD=0
+    T_TITLE="AvalOS — 关于"
+    T_KERNEL_AVALOS="AvalOS 内核";   T_KERNEL="内核"
+    T_MEMORY="可用内存";             T_DISK="根分区"
+    T_FREE_OF="%s 可用，共 %s"
+    T_UPTIME="运行时间";             T_SHELL="Shell"
+    T_INSTALLED="安装时间";          T_AUTHOR="作者"
+    T_U_DAY="天"; T_U_HOUR="小时"; T_U_MIN="分钟"
+    T_PRESS_ENTER="按 Enter 键关闭。"
+    ;;
+  ja)
+    _PAD=0
+    T_TITLE="AvalOS — 情報"
+    T_KERNEL_AVALOS="AvalOS カーネル"; T_KERNEL="カーネル"
+    T_MEMORY="空きメモリ";           T_DISK="ルートディスク"
+    T_FREE_OF="%s 空き（合計 %s）"
+    T_UPTIME="稼働時間";             T_SHELL="シェル"
+    T_INSTALLED="インストール日";    T_AUTHOR="作者"
+    T_U_DAY="日"; T_U_HOUR="時間"; T_U_MIN="分"
+    T_PRESS_ENTER="Enter キーで閉じます。"
+    ;;
+  *)  # English (default)
+    T_TITLE="AvalOS — About"
+    T_KERNEL_AVALOS="Kernel AvalOS"; T_KERNEL="Kernel"
+    T_MEMORY="Free memory";          T_DISK="Root disk"
+    T_FREE_OF="%s free of %s"
+    T_UPTIME="Uptime";               T_SHELL="Shell"
+    T_INSTALLED="Installed";         T_AUTHOR="Author"
+    T_U_DAY=" d"; T_U_HOUR=" h"; T_U_MIN=" min"
+    T_PRESS_ENTER="Press Enter to close."
+    ;;
+esac
+
+# Una fila «etiqueta : valor». Con _PAD > 0 la columna de etiquetas queda alineada; en zh/ja va pegada y
+# con los dos puntos de ancho completo, como ya hacía el bloque de usuario de avalos-settings.
+_row() {
+    if (( _PAD > 0 )); then
+        printf '  %-*s : %s\n' "$_PAD" "$1" "$2"
+    else
+        printf '  %s：%s\n' "$1" "$2"
+    fi
+}
+
+# Tiempo encendido en el idioma de la UI. `uptime -p` solo habla inglés («up 28 minutes»): se calcula
+# a mano desde /proc/uptime (AVALOS_PROC_UPTIME solo existe para poder probarlo).
+_uptime_text() {
+    local secs d h m out=""
+    secs="$(cut -d. -f1 "${AVALOS_PROC_UPTIME:-/proc/uptime}" 2>/dev/null)"
+    [[ "$secs" =~ ^[0-9]+$ ]] || { echo "N/A"; return; }
+    d=$(( secs / 86400 )); h=$(( secs % 86400 / 3600 )); m=$(( secs % 3600 / 60 ))
+    (( d > 0 )) && out+="${d}${T_U_DAY} "
+    (( d > 0 || h > 0 )) && out+="${h}${T_U_HOUR} "
+    out+="${m}${T_U_MIN}"
+    echo "$out"
+}
+
+# Versión de Waybar. BUG: antes era `waybar --version | head -1`, y waybar escribe sus mensajes de log
+# («[info] no JOURNAL_STREAM, logging to console») ANTES de la versión, así que la primera línea era ese
+# log y no la versión. Se elige la línea que de verdad empieza con «Waybar <versión>» y se extrae el número;
+# `command -v` primero porque con waybar ausente el shell imprime «waybar: command not found».
+_waybar_version() {
+    command -v waybar &>/dev/null || return 0
+    waybar --version 2>&1 \
+        | grep -iEm1 '^waybar[[:space:]]+v?[0-9]' \
+        | grep -oE 'v?[0-9]+(\.[0-9]+)+' | head -1
+}
+
+_render() {
     if command -v fastfetch &>/dev/null; then
         fastfetch
     fi
 
-    # Info adicional específica de AvalOS
     echo ""
     echo "  ╔══════════════════════════════════════════════════════════╗"
     echo "  ║   AvalOS — Arch Linux + Hyprland + Tokyo Night          ║"
     echo "  ╚══════════════════════════════════════════════════════════╝"
     echo ""
 
-    # Versión del kernel avalos si está corriendo
-    _kver=$(uname -r)
-    if echo "$_kver" | grep -q "avalos"; then
-        echo "  Kernel AvalOS  : $_kver"
+    local kver hver wver mfree mtotal dfree dtotal
+    kver="$(uname -r)"
+    if [[ "$kver" == *avalos* ]]; then
+        _row "$T_KERNEL_AVALOS" "$kver"
     else
-        echo "  Kernel         : $_kver"
+        _row "$T_KERNEL" "$kver"
     fi
 
-    # BUG-15 FIX: "| head -1 || echo N/A" nunca disparaba el fallback —
-    # el exit code del pipe es el de head, que sale 0 aunque no reciba
-    # nada. Resultado real: con hyprctl ausente o sin match, quedaba
-    # vacío en vez de "N/A"; con waybar ausente (2>&1 + head -1), se
-    # mostraba el error crudo del shell ("bash: waybar: command not
-    # found") en vez de "N/A". Mismo patrón que LC_TIME en hyprlock.conf:
-    # capturar primero, decidir el fallback después con ${var:-...}.
-    _hver=$(hyprctl version 2>/dev/null | grep -o "v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -1)
-    echo "  Hyprland       : ${_hver:-N/A}"
-    _wver=$(waybar --version 2>/dev/null | head -1)
-    echo "  Waybar         : ${_wver:-N/A}"
-    _mfree=$(free -h | awk /^Mem:/{print\$4})
-    _mtotal=$(free -h | awk /^Mem:/{print\$2})
-    echo "  Memoria libre  : $_mfree libre de $_mtotal"
-    _dfree=$(df -h / | awk NR==2{print\$4})
-    _dtotal=$(df -h / | awk NR==2{print\$2})
-    echo "  Disco raíz     : $_dfree libre de $_dtotal"
-    echo "  Uptime         : $(uptime -p)"
-    echo "  Shell          : $SHELL"
+    # BUG-15 FIX (conservado): capturar primero y decidir el fallback después con ${var:-...}; un
+    # «| head -1 || echo N/A» nunca dispara el fallback porque el exit code del pipe es el de head.
+    hver="$(hyprctl version 2>/dev/null | grep -o "v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*" | head -1)"
+    _row "Hyprland" "${hver:-N/A}"
+    wver="$(_waybar_version)"
+    _row "Waybar" "${wver:-N/A}"
+
+    mfree="$(free -h | awk '/^Mem:/{print $4}')"
+    mtotal="$(free -h | awk '/^Mem:/{print $2}')"
+    # shellcheck disable=SC2059   # T_FREE_OF es una plantilla nuestra, con dos %s
+    _row "$T_MEMORY" "$(printf "$T_FREE_OF" "${mfree:-N/A}" "${mtotal:-N/A}")"
+    dfree="$(df -h / | awk 'NR==2{print $4}')"
+    dtotal="$(df -h / | awk 'NR==2{print $2}')"
+    # shellcheck disable=SC2059
+    _row "$T_DISK" "$(printf "$T_FREE_OF" "${dfree:-N/A}" "${dtotal:-N/A}")"
+    _row "$T_UPTIME" "$(_uptime_text)"
+    _row "$T_SHELL" "${SHELL:-N/A}"
 
     # Fecha de instalación (si existe el archivo de marca)
     if [[ -f /etc/avalos-install-date ]]; then
-        echo "  Instalado      : $(cat /etc/avalos-install-date)"
+        _row "$T_INSTALLED" "$(cat /etc/avalos-install-date)"
     fi
 
     echo ""
-    echo "  GitHub  : https://github.com/jeffreysama/avalos"
-    echo "  Autor   : Jefferson Stanley Avalos Avalos"
-    echo ""
-    echo "  ──────────────────────────────────────────────────────────"
-    echo "  Pulsa Enter para cerrar / Press Enter to close."
-    read -r
-'
+    _row "GitHub" "https://github.com/jeffreysama/avalos"
+    _row "$T_AUTHOR" "Jefferson Stanley Avalos Avalos"
+}
+
+case "${1:-}" in
+    --text)
+        _render
+        exit 0
+        ;;
+    --inner)    # lo que corre DENTRO de la ventana de kitty
+        clear
+        _render
+        echo ""
+        echo "  ──────────────────────────────────────────────────────────"
+        echo "  $T_PRESS_ENTER"
+        read -r
+        exit 0
+        ;;
+esac
+
+if command -v kitty &>/dev/null; then
+    exec kitty --title "$T_TITLE" -- "$(readlink -f -- "$0")" --inner
+fi
+# Sin kitty (no debería pasar: lo instala el instalador): se muestra en la terminal desde la que se lanzó.
+_render

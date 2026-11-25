@@ -43,6 +43,9 @@ case "$LANG_CODE" in
     T_WELCOME=" Bienvenida  Primeros pasos"
     T_ABOUT="  Acerca de  Info del sistema"
     T_NO_APP="❌ Aplicación no instalada"
+    T_PRESS_ENTER="Pulsa Enter para cerrar."
+    T_SNAP_NOCONF="snapper no está configurado para root."
+    T_SNAP_MISSING="snapper no está instalado."
     ;;
   zh)
     T_TITLE="  AvalOS 设置"
@@ -60,6 +63,9 @@ case "$LANG_CODE" in
     T_WELCOME=" 欢迎  开始使用"
     T_ABOUT="  关于  系统信息"
     T_NO_APP="❌ 未安装该应用程序"
+    T_PRESS_ENTER="按 Enter 键关闭。"
+    T_SNAP_NOCONF="snapper 尚未为 root 配置。"
+    T_SNAP_MISSING="未安装 snapper。"
     ;;
   ja)
     T_TITLE="  AvalOS 設定"
@@ -77,6 +83,9 @@ case "$LANG_CODE" in
     T_WELCOME=" ようこそ  はじめに"
     T_ABOUT="  情報  システム情報"
     T_NO_APP="❌ アプリケーションがインストールされていません"
+    T_PRESS_ENTER="Enter キーで閉じます。"
+    T_SNAP_NOCONF="snapper が root 用に設定されていません。"
+    T_SNAP_MISSING="snapper がインストールされていません。"
     ;;
   *)  # English (default)
     T_TITLE="  AvalOS Settings"
@@ -94,6 +103,9 @@ case "$LANG_CODE" in
     T_WELCOME=" Welcome  Getting started"
     T_ABOUT="  About  System info"
     T_NO_APP="❌ Application not installed"
+    T_PRESS_ENTER="Press Enter to close."
+    T_SNAP_NOCONF="snapper is not configured for root."
+    T_SNAP_MISSING="snapper is not installed."
     ;;
 esac
 
@@ -167,7 +179,7 @@ elif [[ "$chosen" == "$T_USERS" ]]; then
     # LANG_CODE ya resuelto arriba (desde /etc/avalos-lang) se exporta al
     # sub-shell del heredoc en vez de que este vuelva a derivarlo de LANG
     # por su cuenta — era una segunda instancia del mismo bug.
-    AVALOS_LANG_CODE="$LANG_CODE" kitty --title "AvalOS — Usuario / User" -- bash -c '
+    AVALOS_LANG_CODE="$LANG_CODE" AVALOS_PRESS_ENTER="$T_PRESS_ENTER" kitty --title "AvalOS — Usuario / User" -- bash -c '
         LANG_CODE="$AVALOS_LANG_CODE"
         case "$LANG_CODE" in
           es)
@@ -248,7 +260,7 @@ elif [[ "$chosen" == "$T_USERS" ]]; then
             ;;
         esac
         echo ""
-        echo "  Press Enter to close."
+        echo "  $AVALOS_PRESS_ENTER"
         read -r
     ' &
     disown
@@ -262,6 +274,7 @@ elif [[ "$chosen" == "$T_SNAPSHOTS" ]]; then
     elif command -v snapper-gui &>/dev/null; then
         _run snapper-gui
     else
+        AVALOS_PRESS_ENTER="$T_PRESS_ENTER" AVALOS_SNAP_NOCONF="$T_SNAP_NOCONF" AVALOS_SNAP_MISSING="$T_SNAP_MISSING" \
         kitty --title "AvalOS — Snapshots" -- bash -c '
             echo ""
             echo "  ╔════════════════════════════════════════╗"
@@ -269,12 +282,12 @@ elif [[ "$chosen" == "$T_SNAPSHOTS" ]]; then
             echo "  ╚════════════════════════════════════════╝"
             echo ""
             if command -v snapper &>/dev/null; then
-                snapper -c root list 2>/dev/null || echo "  snapper no está configurado para root."
+                snapper -c root list 2>/dev/null || echo "  $AVALOS_SNAP_NOCONF"
             else
-                echo "  snapper no está instalado."
+                echo "  $AVALOS_SNAP_MISSING"
             fi
             echo ""
-            echo "  Press Enter to close."
+            echo "  $AVALOS_PRESS_ENTER"
             read -r
         ' &
         disown
@@ -301,7 +314,7 @@ elif [[ "$chosen" == "$T_ABOUT" ]]; then
         avalos-about &
         disown
     elif command -v fastfetch &>/dev/null; then
-        kitty --title "AvalOS — About" -- bash -c 'fastfetch; echo ""; echo "  Press Enter to close."; read -r' &
+        AVALOS_PRESS_ENTER="$T_PRESS_ENTER" kitty --title "AvalOS — About" -- bash -c 'fastfetch; echo ""; echo "  $AVALOS_PRESS_ENTER"; read -r' &
         disown
     else
         notify-send "AvalOS Settings" "$T_NO_APP: avalos-about / fastfetch" \
