@@ -8,6 +8,7 @@ versión: waybar escribe sus logs ANTES de la versión y el script se quedaba co
 Se prueba el script real (`--text`: mismo contenido que la ventana, sin kitty) con waybar/hyprctl de mentira.
 """
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -16,6 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ABOUT = ROOT / "scripts" / "avalos-about"
 SETTINGS = ROOT / "scripts" / "avalos-settings"
+BASH = shutil.which("bash")
+SYSTEM_TOOLS = ("awk", "cat", "cut", "df", "free", "grep", "head", "readlink", "uname")
 
 # 93784 s = 1 día, 2 horas, 3 minutos
 UPTIME_SECONDS = "93784.52 180000.10\n"
@@ -41,6 +44,13 @@ class AboutTextBase(unittest.TestCase):
         self.dir = Path(self.tmp.name)
         self.bin = self.dir / "bin"
         self.bin.mkdir()
+        # PATH aislado: solo estas herramientas del sistema (por enlace) y los stubs de cada test. Si no, el waybar o el
+        # hyprctl REALES del equipo de quien corre los tests (en el de Jeff sí están) se cuelan en el resultado.
+        for name in SYSTEM_TOOLS:
+            real = shutil.which(name)
+            if real is None:
+                self.skipTest(f"este sistema no tiene `{name}`")
+            (self.bin / name).symlink_to(real)
         self.stub("fastfetch", "#!/bin/sh\necho FASTFETCH-STUB\n")
         self.stub("hyprctl", "#!/bin/sh\necho 'Hyprland 0.57.2, built from branch main (v0.57.2).'\n")
         self.stub("waybar", WAYBAR_NOISY)
@@ -57,14 +67,14 @@ class AboutTextBase(unittest.TestCase):
         if not with_waybar:
             (self.bin / "waybar").unlink()
         env = {
-            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "PATH": str(self.bin),
             "AVALOS_LANG_FILE": str(self.dir / ("lang" if lang_file else "no-such-file")),
             "AVALOS_PROC_UPTIME": str(self.dir / "uptime"),
             "SHELL": "/bin/bash",
             "LANG": "C",
             "HOME": str(self.dir),
         }
-        proc = subprocess.run(["bash", str(ABOUT), "--text"], env=env, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([BASH, str(ABOUT), "--text"], env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
 

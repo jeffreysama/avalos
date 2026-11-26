@@ -25,6 +25,8 @@ APPEARANCE = ROOT / "scripts" / "avalos-appearance"
 LIVE_LUA = ROOT / "configs" / "hyprland" / "hyprland.lua"
 TEMPLATE_LUA = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
 LUA = shutil.which("lua5.4") or shutil.which("lua")
+BASH = shutil.which("bash")
+SYSTEM_TOOLS = ("awk", "cat", "sleep", "stat", "tr")
 
 INI = "[Settings]\ngtk-theme-name = Adwaita-dark\ngtk-cursor-theme-name = {theme}\ngtk-cursor-theme-size = {size}\n"
 
@@ -36,6 +38,13 @@ class Sandbox(unittest.TestCase):
         self.dir = Path(self.tmp.name)
         self.bin = self.dir / "bin"
         self.bin.mkdir()
+        # PATH aislado: solo estas herramientas del sistema (por enlace) y los stubs de cada test. Sin esto, un hyprctl o un
+        # nwg-look REALES (en el equipo de Jeff están los dos) se ejecutarían de verdad durante los tests.
+        for name in SYSTEM_TOOLS:
+            real = shutil.which(name)
+            if real is None:
+                self.skipTest(f"este sistema no tiene `{name}`")
+            (self.bin / name).symlink_to(real)
         self.log = self.dir / "hyprctl.log"
         self.ini = self.dir / "settings.ini"
         self.stub("hyprctl", f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{self.log}"\n')
@@ -49,7 +58,7 @@ class Sandbox(unittest.TestCase):
 
     def env(self, **extra):
         env = {
-            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "PATH": str(self.bin),
             "HOME": str(self.dir),
             "HYPRLAND_INSTANCE_SIGNATURE": "test-instance",
             "AVALOS_GTK_SETTINGS": str(self.ini),
@@ -62,7 +71,7 @@ class Sandbox(unittest.TestCase):
         return self.log.read_text(encoding="utf-8").splitlines() if self.log.exists() else []
 
     def apply(self, **extra_env):
-        proc = subprocess.run(["bash", str(APPEARANCE), "--apply-cursor"], env=self.env(**extra_env),
+        proc = subprocess.run([BASH, str(APPEARANCE), "--apply-cursor"], env=self.env(**extra_env),
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return self.calls()
@@ -112,11 +121,11 @@ class ApplyCursor(Sandbox):
 
     def test_outside_hyprland_or_without_hyprctl_it_does_nothing_and_does_not_fail(self):
         self.ini.write_text(INI.format(theme="capitaine-cursors", size=24), encoding="utf-8")
-        proc = subprocess.run(["bash", str(APPEARANCE), "--apply-cursor"], capture_output=True, text=True, timeout=30,
-                              env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.dir), "AVALOS_GTK_SETTINGS": str(self.ini)})
+        proc = subprocess.run([BASH, str(APPEARANCE), "--apply-cursor"], capture_output=True, text=True, timeout=30,
+                              env={"PATH": str(self.bin), "HOME": str(self.dir), "AVALOS_GTK_SETTINGS": str(self.ini)})
         self.assertEqual((proc.returncode, self.calls()), (0, []))
         (self.bin / "hyprctl").unlink()
-        self.assertEqual(self.apply(PATH="/usr/bin:/bin"), [])
+        self.assertEqual(self.apply(), [])      # sin hyprctl en el PATH (aislado: el del equipo no cuenta)
 
 
 class Launcher(Sandbox):
@@ -127,7 +136,7 @@ class Launcher(Sandbox):
         self.stub("nwg-look", f"#!/bin/sh\n{rewrite}sleep 1.2\nexit {exit_code}\n")
 
     def run_launcher(self):
-        return subprocess.run(["bash", str(APPEARANCE)], env=self.env(), capture_output=True, text=True, timeout=60)
+        return subprocess.run([BASH, str(APPEARANCE)], env=self.env(), capture_output=True, text=True, timeout=60)
 
     def test_pressing_apply_changes_the_cursor_once_and_the_launcher_returns_nwg_looks_exit_code(self):
         self.ini.write_text(INI.format(theme="capitaine-cursors", size=24), encoding="utf-8")
@@ -140,7 +149,7 @@ class Launcher(Sandbox):
     def test_the_cursor_is_applied_while_nwg_look_is_still_open(self):
         self.ini.write_text(INI.format(theme="capitaine-cursors", size=24), encoding="utf-8")
         self.stub("nwg-look", f'#!/bin/sh\nsleep 0.4\nprintf "[Settings]\\ngtk-cursor-theme-name=Bibata-Modern-Classic\\n" > "{self.ini}"\nsleep 4\n')
-        proc = subprocess.Popen(["bash", str(APPEARANCE)], env=self.env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen([BASH, str(APPEARANCE)], env=self.env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(lambda: proc.poll() is None and proc.kill())
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline and not any(c.startswith("setcursor") for c in self.calls()):
@@ -157,8 +166,7 @@ class Launcher(Sandbox):
         self.assertEqual([c for c in self.calls() if c.startswith("setcursor")], ["setcursor capitaine-cursors-white 24"])
 
     def test_without_nwg_look_it_fails_with_a_message_instead_of_hanging(self):
-        proc = subprocess.run(["bash", str(APPEARANCE)], env=self.env(PATH=f"{self.bin}:/usr/bin:/bin"),
-                              capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([BASH, str(APPEARANCE)], env=self.env(), capture_output=True, text=True, timeout=30)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("nwg-look", proc.stderr)
 
