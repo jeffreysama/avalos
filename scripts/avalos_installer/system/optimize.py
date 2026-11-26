@@ -103,7 +103,7 @@ def configure_optimizations(session: InstallSession, gpu_info: dict, cpu_arch: s
     session.log(session.t("log-gpu-env-installed"), "ok")
 
     session.log(session.t("log-installing-scripts"), "info")
-    _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about",
+    _avalos_scripts = ("avalos-settings", "avalos-wallpaper", "avalos-about", "avalos-appearance",
                        "avalos-update", "avalos-update-helper", "avalos-store", "avalos-store-helper", "avalos-restore", "avalos-doctor", "avalos-welcome", "avalos-control", "avalos-gamecenter", "avalos-version")
     for _script_name in _avalos_scripts:
         _content = read_config(f"scripts/{_script_name}")

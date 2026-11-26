@@ -692,7 +692,7 @@ AvalOS ships a handful of its own apps — Settings, Wallpaper picker, About, Up
 
 ```bash
 mkdir -p /usr/local/bin
-for f in avalos-settings avalos-wallpaper avalos-about avalos-update avalos-update-helper avalos-store; do
+for f in avalos-settings avalos-wallpaper avalos-about avalos-appearance avalos-update avalos-update-helper avalos-store; do
   cp "/usr/share/avalos/configs/scripts/$f" "/usr/local/bin/$f"
   chmod 755 "/usr/local/bin/$f"
 done

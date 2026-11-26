@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║  avalos-appearance — Apariencia (nwg-look) con el cursor en vivo     ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+#
+# Uso:
+#   avalos-appearance                  abre nwg-look; al pulsar «Apply» el cursor cambia al instante
+#   avalos-appearance --apply-cursor   aplica ahora el cursor guardado en settings.ini y sale
+#
+# Por qué existe (comprobado contra el código de nwg-look 1.2.1 y de Hyprland):
+#   · «Apply» de nwg-look escribe gsettings, ~/.config/gtk-3.0/settings.ini y ~/.icons/default/index.theme,
+#     pero NUNCA avisa al compositor: no llama a hyprctl.
+#   · Hyprland arrancaba con XCURSOR_THEME=capitaine-cursors fijo en hyprland.lua y, con
+#     cursor:sync_gsettings_theme (activo por defecto), reescribe gsettings con el tema de ESA variable cada
+#     vez que carga su cursor (al arrancar, cuando cambia la escala de un monitor y con cada
+#     `hyprctl setcursor`). Resultado: el tema elegido se revertía, y el puntero de Hyprland, XWayland y
+#     las apps Qt/Electron/kitty (que leen XCURSOR_*) nunca lo veían.
+# Este script cierra el hueco: después de que nwg-look guarda, lee tema y tamaño y se los pasa a Hyprland
+# (hyprctl setcursor para el compositor y XWayland; hl.env para las apps que se abran desde ese momento).
+# hyprland.lua lee el mismo settings.ini al arrancar, así que la elección también sobrevive al reinicio.
+#
+# AVALOS_GTK_SETTINGS y AVALOS_APPEARANCE_POLL solo existen para poder probar el script.
+
+set -u
+
+_GTK_INI="${AVALOS_GTK_SETTINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/gtk-3.0/settings.ini}"
+_POLL="${AVALOS_APPEARANCE_POLL:-0.5}"
+
+# Valor de una clave de la sección [Settings] (la última que aparezca), sin espacios alrededor.
+_ini_value() {
+    [[ -r "$_GTK_INI" ]] || return 0
+    awk -v key="$1" '
+        /^[[:space:]]*\[/ { in_s = ($0 ~ /^[[:space:]]*\[Settings\][[:space:]]*$/); next }
+        in_s && index($0, "=") {
+            k = substr($0, 1, index($0, "=") - 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+            if (k == key) {
+                v = substr($0, index($0, "=") + 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); val = v
+            }
+        }
+        END { print val }
+    ' "$_GTK_INI"
+}
+
+# Respaldo si settings.ini no trae la clave (p. ej. nwg-look con esa exportación desactivada).
+_gsettings_value() {
+    command -v gsettings &>/dev/null || return 0
+    gsettings get org.gnome.desktop.interface "$1" 2>/dev/null | tr -d "'"
+}
+
+# El tema acaba dentro de código Lua que se evalúa en Hyprland: solo caracteres de nombre de carpeta.
+_valid_theme() { [[ "$1" =~ ^[A-Za-z0-9._+-]+$ ]]; }
+_valid_size()  { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 8 && 10#$1 <= 256 )); }
+
+_last_applied=""
+
+_apply_cursor() {
+    # Fuera de Hyprland no hay compositor al que avisar.
+    [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || return 0
+    command -v hyprctl &>/dev/null || return 0
+
+    local theme size
+    theme="$(_ini_value gtk-cursor-theme-name)"
+    size="$(_ini_value gtk-cursor-theme-size)"
+    [[ -n "$theme" ]] || theme="$(_gsettings_value cursor-theme)"
+    [[ -n "$size" ]]  || size="$(_gsettings_value cursor-size)"
+    _valid_theme "$theme" || return 0          # nada guardado, o algo raro: no se toca el cursor
+    _valid_size "$size" || size=24
+    size=$(( 10#$size ))
+
+    # Sin cambios desde la última vez: no se recarga el tema (cada recarga hace que Hyprland vuelva a
+    # escribir gsettings, y el sondeo de abajo volvería a verlo como un cambio).
+    [[ "$theme $size" == "$_last_applied" ]] && return 0
+
+    # 1) Variables de Hyprland: las heredan las apps que se abran a partir de ahora (kitty, Qt, Electron...).
+    hyprctl eval "hl.env('XCURSOR_THEME', '$theme'); hl.env('XCURSOR_SIZE', '$size')" &>/dev/null
+    # 2) El cursor del compositor y de XWayland, al instante. Hyprland sincroniza gsettings con este mismo valor.
+    hyprctl setcursor "$theme" "$size" &>/dev/null
+    _last_applied="$theme $size"
+}
+
+case "${1:-}" in
+    --apply-cursor)
+        _apply_cursor
+        exit 0
+        ;;
+    -h|--help)
+        cat <<'USAGE'
+Uso:
+  avalos-appearance                  abre nwg-look; al pulsar «Apply» el cursor cambia al instante
+  avalos-appearance --apply-cursor   aplica ahora el cursor guardado en settings.ini y sale
+USAGE
+        exit 0
+        ;;
+esac
+
+if ! command -v nwg-look &>/dev/null; then
+    notify-send "AvalOS" "nwg-look" -i preferences-desktop-theme -t 4000 2>/dev/null || true
+    echo "avalos-appearance: nwg-look no está instalado." >&2
+    exit 1
+fi
+
+nwg-look "$@" &
+_pid=$!
+trap 'kill "$_pid" 2>/dev/null' TERM INT
+
+# «Apply» reescribe settings.ini: cuando su fecha cambia, se aplica el cursor sin esperar a que se cierre la
+# ventana. (Se sondea la fecha del archivo cada medio segundo: así no hace falta un segundo proceso
+# inotifywait que vigilar ni limpiar, y es lo bastante rápido para que se sienta inmediato.)
+_stamp() { stat -c '%y' "$_GTK_INI" 2>/dev/null; }
+_prev="$(_stamp)"
+while kill -0 "$_pid" 2>/dev/null; do
+    sleep "$_POLL"
+    _cur="$(_stamp)"
+    if [[ "$_cur" != "$_prev" ]]; then
+        _prev="$_cur"
+        sleep 0.3          # nwg-look escribe varios archivos seguidos: que termine antes de leer
+        _apply_cursor
+    fi
+done
+wait "$_pid"
+_rc=$?
+_apply_cursor              # por si se cerró justo después de «Apply»
+exit "$_rc"

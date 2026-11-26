@@ -34,8 +34,38 @@ hl.monitor({
 pcall(require, "monitors")
 
 -- ── Variables de entorno ──────────────────────────────────────────
-hl.env("XCURSOR_SIZE",                        "24")
-hl.env("XCURSOR_THEME",                       "capitaine-cursors")
+-- Cursor: tema y tamaño salen de lo que guardó nwg-look (~/.config/gtk-3.0/settings.ini); sin nada
+-- guardado, capitaine-cursors a 24. Antes esto estaba fijo acá y la elección de nwg-look no se
+-- aplicaba nunca: Hyprland (cursor:sync_gsettings_theme, activo por defecto) reescribe gsettings con
+-- el tema de ESTAS variables cada vez que carga su cursor, y el compositor, XWayland y las apps
+-- Qt/Electron/kitty leen XCURSOR_*. Ver scripts/avalos-appearance para el cambio en vivo.
+-- avalos:cursor-begin
+local cursor_theme, cursor_size = "capitaine-cursors", "24"
+pcall(function()
+    local home = os.getenv("HOME")
+    if not home then return end
+    local f = io.open(home .. "/.config/gtk-3.0/settings.ini", "r")
+    if not f then return end
+    local in_settings = false
+    for line in f:lines() do
+        local section = line:match("^%s*%[(.-)%]%s*$")
+        if section then
+            in_settings = (section == "Settings")
+        elseif in_settings then
+            local key, value = line:match("^%s*([%w%-_]+)%s*=%s*(.-)%s*$")
+            if key == "gtk-cursor-theme-name" and value:match("^[%w%._%+%-]+$") then
+                cursor_theme = value
+            elseif key == "gtk-cursor-theme-size" and value:match("^%d+$")
+                   and tonumber(value) >= 8 and tonumber(value) <= 256 then
+                cursor_size = tostring(tonumber(value))
+            end
+        end
+    end
+    f:close()
+end)
+hl.env("XCURSOR_SIZE",  cursor_size)
+hl.env("XCURSOR_THEME", cursor_theme)
+-- avalos:cursor-end
 hl.env("QT_QPA_PLATFORM",                     "wayland;xcb")
 hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 hl.env("GDK_BACKEND",                         "wayland,x11")

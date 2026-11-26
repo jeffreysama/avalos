@@ -151,7 +151,14 @@ if   [[ "$chosen" == "$T_CONTROL" ]]; then
     _run avalos-control
 
 elif [[ "$chosen" == "$T_APPEARANCE" ]]; then
-    _run nwg-look
+    # avalos-appearance = nwg-look + el cursor aplicado en vivo en Hyprland (nwg-look no le avisa al
+    # compositor; ver ese script). Si este sistema todavía no lo tiene (llega con la próxima sync), se
+    # abre nwg-look a secas.
+    if command -v avalos-appearance &>/dev/null; then
+        _run avalos-appearance
+    else
+        _run nwg-look
+    fi
 
 elif [[ "$chosen" == "$T_DISPLAY" ]]; then
     _run nwg-displays

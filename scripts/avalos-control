@@ -62,7 +62,7 @@ TILES = [
     ("apps", "games", ("avalos-gamecenter",), "🎮"),
     ("apps", "store", ("avalos-store",), "🛍️"),
     ("look", "wallpaper", ("avalos-wallpaper",), "🖼️"),
-    ("look", "appearance", ("nwg-look",), "🎨"),
+    ("look", "appearance", ("avalos-appearance",), "🎨"),
     ("hardware", "displays", ("nwg-displays",), "🖥️"),
     ("hardware", "audio", ("pavucontrol",), "🔊"),
     ("hardware", "network", ("nm-connection-editor",), "📶"),

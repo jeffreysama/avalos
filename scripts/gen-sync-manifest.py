@@ -56,6 +56,7 @@ RUTAS = [
     "scripts/avalos-settings",
     "scripts/avalos-wallpaper",
     "scripts/avalos-about",
+    "scripts/avalos-appearance",
     "scripts/avalos-store",
     "scripts/avalos-store-helper",
     "scripts/avalos-restore",
