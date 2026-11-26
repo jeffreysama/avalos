@@ -25,7 +25,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 LANGS = {"en", "es", "zh", "ja"}
-TOOLS_WITH_STRINGS = ["avalos-control", "avalos-doctor", "avalos-gamecenter", "avalos-restore", "avalos-store",
+TOOLS_WITH_STRINGS = ["avalos-control", "avalos-doctor", "avalos-gamecenter", "avalos-language", "avalos-restore", "avalos-store",
                       "avalos-update", "avalos-wallpaper", "avalos-welcome", "avalos-version"]
 fmt = string.Formatter()
 

@@ -37,6 +37,7 @@ case "$LANG_CODE" in
     T_BLUETOOTH=" Bluetooth  Dispositivos inalámbricos"
     T_WALLPAPER=" Fondo de pantalla  Cambiar imagen"
     T_FILES=" Archivos  Explorador de archivos"
+    T_LANGUAGE=" Idioma  Idioma de AvalOS"
     T_USERS="  Usuario  Contraseña · Perfil"
     T_SNAPSHOTS=" Snapshots  Instantáneas del sistema"
     T_DOCTOR=" Doctor  Salud del sistema"
@@ -57,6 +58,7 @@ case "$LANG_CODE" in
     T_BLUETOOTH=" 蓝牙  无线设备"
     T_WALLPAPER=" 壁纸  更换壁纸"
     T_FILES=" 文件  文件管理器"
+    T_LANGUAGE=" 语言  AvalOS 显示语言"
     T_USERS="  用户  密码 · 个人设置"
     T_SNAPSHOTS=" 快照  系统快照管理"
     T_DOCTOR=" 诊断  系统健康检查"
@@ -77,6 +79,7 @@ case "$LANG_CODE" in
     T_BLUETOOTH=" Bluetooth  ワイヤレスデバイス"
     T_WALLPAPER=" 壁紙  背景を変更"
     T_FILES=" ファイル  ファイルマネージャー"
+    T_LANGUAGE=" 言語  AvalOS の表示言語"
     T_USERS="  ユーザー  パスワード・プロフィール"
     T_SNAPSHOTS=" スナップショット  システムのスナップショット"
     T_DOCTOR=" 診断  システムの健康チェック"
@@ -97,6 +100,7 @@ case "$LANG_CODE" in
     T_BLUETOOTH=" Bluetooth  Wireless devices"
     T_WALLPAPER=" Wallpaper  Change background"
     T_FILES=" Files  File manager"
+    T_LANGUAGE=" Language  AvalOS display language"
     T_USERS="  User  Password · Profile"
     T_SNAPSHOTS=" Snapshots  System snapshots"
     T_DOCTOR=" Doctor  System health"
@@ -133,6 +137,7 @@ chosen=$(printf '%s\n' \
     "$T_WALLPAPER"  \
     "$T_FILES"      \
     "$T_USERS"      \
+    "$T_LANGUAGE"   \
     "$T_SNAPSHOTS"  \
     "$T_DOCTOR"     \
     "$T_WELCOME"    \
@@ -141,7 +146,7 @@ chosen=$(printf '%s\n' \
          -i \
          -no-custom \
          -p "$T_TITLE" \
-         -theme-str 'window {width: 480px;} listview {lines: 13;}')
+         -theme-str 'window {width: 480px;} listview {lines: 14;}')
 
 [[ -z "$chosen" ]] && exit 0
 
@@ -271,6 +276,10 @@ elif [[ "$chosen" == "$T_USERS" ]]; then
         read -r
     ' &
     disown
+
+elif [[ "$chosen" == "$T_LANGUAGE" ]]; then
+    # avalos-language cambia /etc/avalos-lang (vía pkexec), el login y las etiquetas de fastfetch.
+    _run avalos-language
 
 elif [[ "$chosen" == "$T_SNAPSHOTS" ]]; then
     # avalos-restore (one-click restore) es la vía principal: además de listar,

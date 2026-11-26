@@ -865,6 +865,7 @@ def cmd_sync_system_files(args: argparse.Namespace) -> None:
         ("scripts/avalos-wallpaper", "/usr/local/bin/avalos-wallpaper", 0o755),
         ("scripts/avalos-about", "/usr/local/bin/avalos-about", 0o755),
         ("scripts/avalos-appearance", "/usr/local/bin/avalos-appearance", 0o755),
+        ("scripts/avalos-language", "/usr/local/bin/avalos-language", 0o755),
         ("scripts/avalos-store", "/usr/local/bin/avalos-store", 0o755),
         ("scripts/avalos-store-helper", "/usr/local/bin/avalos-store-helper", 0o755),
         ("scripts/avalos-restore", "/usr/local/bin/avalos-restore", 0o755),
@@ -1268,6 +1269,86 @@ def cmd_delete_backup(args: argparse.Namespace) -> None:
         _unmount_top_level(top)
 
 
+# ── Idioma de la UI ─────────────────────────────────────────────────
+
+LANG_CODES = ("en", "es", "zh", "ja")
+
+# Textos del tema de SDDM (la pantalla de inicio de sesión) por idioma. Son los MISMOS que
+# translations.py (lbl-user, lbl-pass y sddm-*): el instalador los pone al instalar y `set-language` los vuelve
+# a poner al cambiar de idioma. translations.py sigue siendo la fuente de verdad: tests/test_language.py falla si
+# esta tabla se desalinea. Ningún valor lleva comillas ni barras, porque van dentro de literales de QML.
+SDDM_TEXTOS = {
+    "en": {
+        "SDDM_USER": "Username",
+        "SDDM_PASS": "Password",
+        "SDDM_SIGNIN": "Sign In",
+        "SDDM_FAIL": "Authentication failed. Try again.",
+        "SDDM_SESSION": "Session",
+        "SDDM_SUSPEND": "Suspend",
+        "SDDM_RESTART": "Restart",
+        "SDDM_SHUTDOWN": "Shutdown",
+    },
+    "es": {
+        "SDDM_USER": "Usuario",
+        "SDDM_PASS": "Contraseña",
+        "SDDM_SIGNIN": "Iniciar Sesión",
+        "SDDM_FAIL": "Autenticación fallida. Intenta de nuevo.",
+        "SDDM_SESSION": "Sesión",
+        "SDDM_SUSPEND": "Suspender",
+        "SDDM_RESTART": "Reiniciar",
+        "SDDM_SHUTDOWN": "Apagar",
+    },
+    "zh": {
+        "SDDM_USER": "用户名",
+        "SDDM_PASS": "密码",
+        "SDDM_SIGNIN": "登录",
+        "SDDM_FAIL": "认证失败，请重试。",
+        "SDDM_SESSION": "会话",
+        "SDDM_SUSPEND": "睡眠",
+        "SDDM_RESTART": "重启",
+        "SDDM_SHUTDOWN": "关机",
+    },
+    "ja": {
+        "SDDM_USER": "ユーザー名",
+        "SDDM_PASS": "パスワード",
+        "SDDM_SIGNIN": "サインイン",
+        "SDDM_FAIL": "認証に失敗しました。もう一度お試しください。",
+        "SDDM_SESSION": "セッション",
+        "SDDM_SUSPEND": "サスペンド",
+        "SDDM_RESTART": "再起動",
+        "SDDM_SHUTDOWN": "シャットダウン",
+    },
+}
+
+
+def cmd_set_language(args: argparse.Namespace) -> None:
+    """Cambia el idioma de UI de AvalOS después de la instalación: /etc/avalos-lang (lo leen todas las apps) y los
+    textos de la pantalla de inicio de sesión. Lo que vive en el HOME del usuario (las etiquetas de fastfetch)
+    lo reescribe avalos-language, sin privilegios. `--code` ya viene acotado por argparse (choices=)."""
+    _require_root_via_pkexec()
+    code = args.code
+    _escribir_atomico(SYNC_ROOT / "etc" / "avalos-lang", f"{code}\n".encode("utf-8"), 0o644)
+    _out(f"idioma de AvalOS: {code}")
+
+    # El tema de SDDM se renderiza igual que en el instalador: plantilla con marcas %%SDDM_*%% → textos del idioma.
+    plantilla = SYNC_ROOT / "usr" / "share" / "avalos" / "configs" / "sddm" / "Main.qml"
+    tema = SYNC_ROOT / "usr" / "share" / "sddm" / "themes" / "avalos" / "Main.qml"
+    if not tema.parent.is_dir():
+        _out("pantalla de inicio de sesión (SDDM): el tema de AvalOS no está instalado, se omite.")
+        return
+    try:
+        qml = plantilla.read_text(encoding="utf-8")
+        for marca, texto in SDDM_TEXTOS[code].items():
+            qml = qml.replace(f"%%{marca}%%", texto)
+        if "%%SDDM_" in qml:
+            raise ValueError("la plantilla trae marcas que este helper no conoce")
+        _escribir_atomico(tema, qml.encode("utf-8"), 0o644)
+        _out("pantalla de inicio de sesión (SDDM): textos actualizados.")
+    except (OSError, ValueError) as e:
+        # El idioma ya quedó cambiado: un fallo del login no debe deshacerlo ni dar la operación por fallida.
+        _out(f"aviso: no se pudieron actualizar los textos de SDDM ({e}); el resto sí quedó en {code}.")
+
+
 # ── CLI ──────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1306,6 +1387,10 @@ def main() -> None:
     p = sub.add_parser("delete-backup", help="borrar un respaldo de una restauración anterior, para liberar espacio")
     p.add_argument("--name", required=True)
     p.set_defaults(func=cmd_delete_backup)
+
+    p = sub.add_parser("set-language", help="cambiar el idioma de UI de AvalOS (/etc/avalos-lang y el login de SDDM)")
+    p.add_argument("--code", required=True, choices=list(LANG_CODES))
+    p.set_defaults(func=cmd_set_language)
 
     args = ap.parse_args()
     with _senales_como_salida():

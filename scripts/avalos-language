@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""avalos-language — cambia el idioma de AvalOS después de la instalación.
+
+Antes el idioma solo se elegía en el instalador y no había forma de cambiarlo después. Qué cambia esto:
+  · /etc/avalos-lang, que leen TODAS las herramientas de AvalOS (Ajustes, Centro de control, Actualizar,
+    Doctor, Tienda, Bienvenida, Acerca de…). Lo escribe `avalos-update-helper set-language` vía pkexec,
+    porque /etc es de root; esta herramienta corre sin privilegios.
+  · Los textos de la pantalla de inicio de sesión (SDDM), que el mismo helper vuelve a renderizar.
+  · Las etiquetas de fastfetch en ~/.config/fastfetch/config.jsonc (OS, Kernel, Uptime…): el instalador las deja
+    escritas en el idioma elegido y no las lee en vivo, así que se reescriben aquí.
+
+Lo que NO cambia: la configuración regional del sistema (LANG: formato de fecha, moneda…). Es un ajuste distinto
+—el instalador también los separa— y las ventanas que ya estén abiertas conservan el idioma anterior.
+
+Uso:
+  avalos-language             menú (rofi) para elegir el idioma
+  avalos-language --set es    cambia directamente (en | es | zh | ja)
+  avalos-language --current   muestra el idioma actual
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+LANG_FILE = Path("/etc/avalos-lang")
+HELPER = "/usr/local/bin/avalos-update-helper"
+SUPPORTED = ("en", "es", "zh", "ja")
+NAMES = {"en": "English", "es": "Español", "zh": "中文（简体）", "ja": "日本語"}
+
+# Etiquetas de los módulos de fastfetch por idioma. Son las MISMAS que translations.py (ff-*): el instalador las
+# escribe al instalar y esto las reescribe al cambiar de idioma. translations.py sigue siendo la fuente de verdad:
+# tests/test_language.py falla si esta tabla se desalinea. (Las barras `\\uXXXX` son escapes JSON: van tal cual.)
+FASTFETCH_KEYS = {
+    "en": {
+        "os": " OS",
+        "host": "\uf0e4 Host",
+        "kernel": " Kernel",
+        "uptime": "\uf55f Uptime",
+        "packages": "\uf439 Packages",
+        "shell": " Shell",
+        "display": "\uf879 Resolution",
+        "wm": " WM",
+        "terminal": " Terminal",
+        "cpu": " CPU",
+        "gpu": "\uf43f GPU",
+        "memory": "\uf55b RAM",
+        "disk": "\uf4cb Disk",
+    },
+    "es": {
+        "os": " OS",
+        "host": "\uf0e4 Host",
+        "kernel": " Kernel",
+        "uptime": "\uf55f Uptime",
+        "packages": "\uf439 Paquetes",
+        "shell": " Shell",
+        "display": "\uf879 Resolución",
+        "wm": " WM",
+        "terminal": " Terminal",
+        "cpu": " CPU",
+        "gpu": "\uf43f GPU",
+        "memory": "\uf55b RAM",
+        "disk": "\uf4cb Disco",
+    },
+    "zh": {
+        "os": " 系统",
+        "host": "\uf0e4 主机",
+        "kernel": " 内核",
+        "uptime": "\uf55f 运行时间",
+        "packages": "\uf439 软件包",
+        "shell": " Shell",
+        "display": "\uf879 分辨率",
+        "wm": " WM",
+        "terminal": " 终端",
+        "cpu": " CPU",
+        "gpu": "\uf43f GPU",
+        "memory": "\uf55b 内存",
+        "disk": "\uf4cb 磁盘",
+    },
+    "ja": {
+        "os": " OS",
+        "host": "\uf0e4 ホスト",
+        "kernel": " カーネル",
+        "uptime": "\uf55f 稼働時間",
+        "packages": "\uf439 パッケージ",
+        "shell": " シェル",
+        "display": "\uf879 解像度",
+        "wm": " WM",
+        "terminal": " ターミナル",
+        "cpu": " CPU",
+        "gpu": "\uf43f GPU",
+        "memory": "\uf55b RAM",
+        "disk": "\uf4cb ディスク",
+    },
+}
+
+STRINGS = {
+    "en": {
+        "title": "Language",
+        "done": "Language changed to {name}. Windows that are already open keep the old language until you reopen them.",
+        "same": "AvalOS is already in {name}.",
+        "outdated": "This system's update helper can't change the language yet. Update AvalOS first and try again.",
+        "failed": "Could not change the language: {why}",
+        "no-rofi": "rofi is not installed. Use: avalos-language --set en|es|zh|ja",
+    },
+    "es": {
+        "title": "Idioma",
+        "done": "Idioma cambiado a {name}. Las ventanas que ya están abiertas conservan el idioma anterior hasta que las vuelvas a abrir.",
+        "same": "AvalOS ya está en {name}.",
+        "outdated": "El ayudante de actualización de este sistema todavía no puede cambiar el idioma. Actualiza AvalOS primero y vuelve a intentarlo.",
+        "failed": "No se pudo cambiar el idioma: {why}",
+        "no-rofi": "rofi no está instalado. Usa: avalos-language --set en|es|zh|ja",
+    },
+    "zh": {
+        "title": "语言",
+        "done": "语言已更改为 {name}。已打开的窗口需要重新打开才会使用新语言。",
+        "same": "AvalOS 已经是 {name}。",
+        "outdated": "此系统的更新助手尚不支持更改语言。请先更新 AvalOS，然后重试。",
+        "failed": "无法更改语言：{why}",
+        "no-rofi": "未安装 rofi。请使用：avalos-language --set en|es|zh|ja",
+    },
+    "ja": {
+        "title": "言語",
+        "done": "言語を {name} に変更しました。すでに開いているウィンドウは、開き直すまで以前の言語のままです。",
+        "same": "AvalOS はすでに {name} です。",
+        "outdated": "このシステムの更新ヘルパーはまだ言語の変更に対応していません。先に AvalOS を更新してから、もう一度お試しください。",
+        "failed": "言語を変更できませんでした：{why}",
+        "no-rofi": "rofi がインストールされていません。次を使用してください：avalos-language --set en|es|zh|ja",
+    },
+}
+
+
+def current_language(lang_file: Path | None = None, environ=os.environ) -> str:
+    """Idioma de UI actual: /etc/avalos-lang; si falta o trae algo inválido, el prefijo de LANG; si no, inglés."""
+    try:
+        code = (lang_file or LANG_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        code = ""
+    if code not in SUPPORTED:
+        code = (environ.get("LANG") or "").split(".")[0].split("_")[0]
+    return code if code in SUPPORTED else "en"
+
+
+def relabel_fastfetch(text: str, code: str) -> str:
+    """Pone en `text` (config.jsonc) las etiquetas de `code`. Se busca cada módulo por su `"type"` y se cambia solo su
+    `"key"`, así da igual en qué idioma estuviera antes. Un módulo que el usuario reordenó o quitó no se toca."""
+    for module, label in FASTFETCH_KEYS[code].items():
+        pattern = re.compile(r'(\{\s*"type"\s*:\s*"' + re.escape(module) + r'"\s*,\s*"key"\s*:\s*")((?:[^"\\]|\\.)*)(")')
+        text = pattern.sub(lambda m: m.group(1) + label + m.group(3), text, count=1)   # lambda: sin escapes de re
+    return text
+
+
+def fastfetch_config_path(environ=os.environ) -> Path:
+    base = environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "fastfetch" / "config.jsonc"
+
+
+def relabel_fastfetch_file(path: Path, code: str) -> bool:
+    """Reescribe el config.jsonc del usuario (atómico). True si cambió algo; False si no existe o ya estaba así."""
+    try:
+        path = path.resolve()
+        original = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    updated = relabel_fastfetch(original, code)
+    if updated == original:
+        return False
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.avalos-tmp-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(updated)
+        os.chmod(tmp, path.stat().st_mode & 0o777)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def _why(proc) -> str:
+    """Última línea útil de lo que dijo el helper, sin el prefijo «### ERROR: »."""
+    lines = [ln.strip() for ln in ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines() if ln.strip()]
+    return re.sub(r"^#+\s*(ERROR:\s*)?", "", lines[-1]) if lines else f"código {proc.returncode}"
+
+
+def change_language(code: str, *, run=subprocess.run, lang_file: Path | None = None,
+                    ff_config: Path | None = None) -> tuple[str, str]:
+    """Cambia el idioma. Devuelve (estado, detalle) con estado: done | same | cancelled | outdated | error."""
+    if code not in SUPPORTED:
+        return "error", f"idioma desconocido: {code}"
+    if code == current_language(lang_file):
+        return "same", ""
+    if not os.access(HELPER, os.X_OK):
+        return "error", f"{HELPER} no está instalado"
+    try:
+        proc = run(["pkexec", HELPER, "set-language", "--code", code], capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "error", str(e)
+    if proc.returncode in (126, 127):          # pkexec: la autenticación se canceló o se denegó
+        return "cancelled", ""
+    if proc.returncode == 2 and "invalid choice" in (proc.stderr or ""):   # helper viejo: no conoce set-language
+        return "outdated", ""
+    if proc.returncode != 0:
+        return "error", _why(proc)
+    relabel_fastfetch_file(ff_config or fastfetch_config_path(), code)
+    return "done", ""
+
+
+def notify(text: str) -> None:
+    print(text)
+    if shutil.which("notify-send"):
+        subprocess.run(["notify-send", "-i", "preferences-desktop-locale", "-t", "8000", "AvalOS", text], check=False)
+
+
+def pick_with_rofi(current: str, run=subprocess.run) -> str | None:
+    lines = [f" {'✔' if code == current else ' '}  {NAMES[code]}" for code in SUPPORTED]
+    proc = run(["rofi", "-dmenu", "-i", "-no-custom", "-p", STRINGS[current]["title"], "-theme-str",
+                "window {width: 360px;} listview {lines: 4;}"], input="\n".join(lines), capture_output=True, text=True)
+    chosen = (proc.stdout or "").strip()
+    return next((code for code in SUPPORTED if chosen.endswith(NAMES[code])), None)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="avalos-language", description="Cambia el idioma de AvalOS.")
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument("--set", dest="code", choices=SUPPORTED, help="cambiar directamente, sin menú")
+    group.add_argument("--current", action="store_true", help="mostrar el idioma actual")
+    args = ap.parse_args(argv)
+
+    current = current_language()
+    if args.current:
+        print(current)
+        return 0
+    code = args.code
+    if code is None:
+        if not shutil.which("rofi"):
+            print(STRINGS[current]["no-rofi"], file=sys.stderr)
+            return 1
+        code = pick_with_rofi(current)
+        if code is None:                        # se cerró el menú sin elegir
+            return 0
+
+    status, detail = change_language(code)
+    if status == "done":
+        notify(STRINGS[code]["done"].format(name=NAMES[code]))
+        return 0
+    if status == "same":
+        notify(STRINGS[current]["same"].format(name=NAMES[code]))
+        return 0
+    if status == "cancelled":
+        return 1
+    notify(STRINGS[current]["outdated" if status == "outdated" else "failed"].format(why=detail))
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
