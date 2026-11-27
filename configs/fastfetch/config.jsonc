@@ -22,34 +22,34 @@
     { "type": "title",    "format": "{user-name}@{host-name}" },
     "separator",
 
-    { "type": "os",       "key": " OS",            "format": "AvalOS {build-id}" },
-    { "type": "host",     "key": "\uf0e4 Host" },
-    { "type": "kernel",   "key": " Kernel" },
-    { "type": "uptime",   "key": "\uf55f Uptime" },
+    { "type": "os",       "key": "\udb80\udf3d OS",            "format": "AvalOS {build-id}" },
+    { "type": "host",     "key": "\udb80\uddc4 Host" },
+    { "type": "kernel",   "key": "\udb81\ude1a Kernel" },
+    { "type": "uptime",   "key": "\udb81\udd1f Uptime" },
 
     // BUG-1 FIX: "key" de packages y display estaban en español ("Paquetes", "Resolución").
     // El instalador en skill_instalar_usb.py reemplaza estas claves buscando
     // el texto en inglés como baseline. Si están en español, el reemplazo no
     // encuentra el match y fastfetch queda siempre en español sin importar
     // qué idioma haya elegido el usuario durante la instalación.
-    { "type": "packages", "key": "\uf439 Packages" },
-    { "type": "shell",    "key": " Shell" },
-    { "type": "display",  "key": "\uf879 Resolution" },
-    { "type": "wm",       "key": " WM" },
-    { "type": "terminal", "key": " Terminal" },
+    { "type": "packages", "key": "\udb80\udfd7 Packages" },
+    { "type": "shell",    "key": "\udb81\udfb7 Shell" },
+    { "type": "display",  "key": "\udb80\udf79 Resolution" },
+    { "type": "wm",       "key": "\udb81\uddaf WM" },
+    { "type": "terminal", "key": "\udb80\udd8d Terminal" },
     "separator",
 
     // BUG-2 FIX: showPeCoreCount ausente en el módulo cpu del template.
     // En CPUs híbridas (Intel Alder Lake / Raptor Lake con P-cores y E-cores)
     // fastfetch mostraba solo el total de cores sin distinguir P/E.
     // showPeCoreCount = true muestra "8P + 4E" en lugar de "12".
-    { "type": "cpu",    "key": " CPU",   "showPeCoreCount": true, "temp": true },
-    { "type": "gpu",    "key": "\uf43f GPU",  "temp": true },
-    { "type": "memory", "key": "\uf55b RAM" },
+    { "type": "cpu",    "key": "\udb83\udee0 CPU",   "showPeCoreCount": true, "temp": true },
+    { "type": "gpu",    "key": "\udb83\udfb2 GPU",  "temp": true },
+    { "type": "memory", "key": "\udb80\udf5b RAM" },
 
     // BUG-3 FIX: "key" de disk estaba en español ("Disco").
     // Mismo problema que packages/display — el instalador no encuentra el match.
-    { "type": "disk",   "key": "\uf4cb Disk", "folders": "/" },
+    { "type": "disk",   "key": "\udb80\udeca Disk", "folders": "/" },
     "separator",
 
     // BUG-4 FIX: módulo "colors" con paddingLeft pero sin "symbol".
@@ -62,6 +62,6 @@
     // Se muestra en ambas rutas de "About" (avalos-about y el fallback
     // directo a fastfetch en avalos-settings), porque ambas leen este
     // mismo config.jsonc.
-    { "type": "custom", "format": "  AvalOS — Created, Developed & Supported by Jefferson Stanley Avalos Avalos" }
+    { "type": "custom", "format": "\udb80\uded1  AvalOS — Created, Developed & Supported by Jefferson Stanley Avalos Avalos" }
   ]
 }

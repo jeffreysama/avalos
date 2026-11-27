@@ -251,19 +251,19 @@ export XDG_SESSION_TYPE=wayland
     if _content:
         _translations = translations.TRANSLATIONS.get(lang, translations.TRANSLATIONS["en"])
         _ff_keys = {
-            '" OS"': f'"{_translations.get("ff-os", " OS")}"',
-            '"\\uf0e4 Host"': f'"{_translations.get("ff-host", "\\uf0e4 Host")}"',
-            '" Kernel"': f'"{_translations.get("ff-kernel", " Kernel")}"',
-            '"\\uf55f Uptime"': f'"{_translations.get("ff-uptime", "\\uf55f Uptime")}"',
-            '"\\uf439 Packages"': f'"{_translations.get("ff-packages", "\\uf439 Packages")}"',
-            '" Shell"': f'"{_translations.get("ff-shell", " Shell")}"',
-            '"\\uf879 Resolution"': f'"{_translations.get("ff-display", "\\uf879 Resolution")}"',
-            '" WM"': f'"{_translations.get("ff-wm", " WM")}"',
-            '" Terminal"': f'"{_translations.get("ff-terminal", " Terminal")}"',
-            '" CPU"': f'"{_translations.get("ff-cpu", " CPU")}"',
-            '"\\uf43f GPU"': f'"{_translations.get("ff-gpu", "\\uf43f GPU")}"',
-            '"\\uf4cb Disk"': f'"{_translations.get("ff-disk", "\\uf4cb Disk")}"',
-            '"\\uf55b RAM"': f'"{_translations.get("ff-ram", "\\uf55b RAM")}"',
+            '"\\udb80\\udf3d OS"': f'"{_translations.get("ff-os", "\\udb80\\udf3d OS")}"',
+            '"\\udb80\\uddc4 Host"': f'"{_translations.get("ff-host", "\\udb80\\uddc4 Host")}"',
+            '"\\udb81\\ude1a Kernel"': f'"{_translations.get("ff-kernel", "\\udb81\\ude1a Kernel")}"',
+            '"\\udb81\\udd1f Uptime"': f'"{_translations.get("ff-uptime", "\\udb81\\udd1f Uptime")}"',
+            '"\\udb80\\udfd7 Packages"': f'"{_translations.get("ff-packages", "\\udb80\\udfd7 Packages")}"',
+            '"\\udb81\\udfb7 Shell"': f'"{_translations.get("ff-shell", "\\udb81\\udfb7 Shell")}"',
+            '"\\udb80\\udf79 Resolution"': f'"{_translations.get("ff-display", "\\udb80\\udf79 Resolution")}"',
+            '"\\udb81\\uddaf WM"': f'"{_translations.get("ff-wm", "\\udb81\\uddaf WM")}"',
+            '"\\udb80\\udd8d Terminal"': f'"{_translations.get("ff-terminal", "\\udb80\\udd8d Terminal")}"',
+            '"\\udb83\\udee0 CPU"': f'"{_translations.get("ff-cpu", "\\udb83\\udee0 CPU")}"',
+            '"\\udb83\\udfb2 GPU"': f'"{_translations.get("ff-gpu", "\\udb83\\udfb2 GPU")}"',
+            '"\\udb80\\udf5b RAM"': f'"{_translations.get("ff-ram", "\\udb80\\udf5b RAM")}"',
+            '"\\udb80\\udeca Disk"': f'"{_translations.get("ff-disk", "\\udb80\\udeca Disk")}"',
         }
         for _old_k, _new_k in _ff_keys.items():
             _content = _content.replace(_old_k, _new_k)

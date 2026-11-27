@@ -7,8 +7,8 @@ configuration {
   icon-theme:          "Papirus-Dark";
   drun-display-format: "{name}";
   display-drun:        "󰍉 Apps";
-  display-run:         " Run";
-  display-window:      " Windows";
+  display-run:         "󰞷 Run";
+  display-window:      "󰖲 Windows";
   kb-cancel:           "Escape";
   /* BUG-1 FIX: kb-remove-to-eol y kb-accept-entry ausentes.
    * Sin kb-accept-entry explícito, en algunos entornos Wayland
@@ -94,7 +94,7 @@ entry {
    * El placeholder es texto del sistema que debe ser neutral/inglés
    * para que el mecanismo de traducción del instalador lo pueda reemplazar,
    * o usar un texto sin idioma (solo el icono). */
-  placeholder:      " Search…";
+  placeholder:      "󰍉 Search…";
   placeholder-color: #565f89;
 }
 

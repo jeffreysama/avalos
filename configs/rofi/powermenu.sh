@@ -26,36 +26,36 @@ ROFI_THEME="$HOME/.config/rofi/config.rasi"
 
 case "$LANG_CODE" in
   es)
-    T_OFF="  Apagar"
-    T_REBOOT="  Reiniciar"
-    T_SUSPEND="  Suspender"
+    T_OFF="󰐥  Apagar"
+    T_REBOOT="󰜉  Reiniciar"
+    T_SUSPEND="󰤄  Suspender"
     T_LOGOUT="󰍃  Cerrar Sesión"
-    T_LOCK="  Bloquear"
-    T_TITLE="  Menú de Energía"
+    T_LOCK="󰌾  Bloquear"
+    T_TITLE="󰐦  Menú de Energía"
     ;;
   zh)
-    T_OFF="  关机"
-    T_REBOOT="  重启"
-    T_SUSPEND="  睡眠"
+    T_OFF="󰐥  关机"
+    T_REBOOT="󰜉  重启"
+    T_SUSPEND="󰤄  睡眠"
     T_LOGOUT="󰍃  注销"
-    T_LOCK="  锁屏"
-    T_TITLE="  电源"
+    T_LOCK="󰌾  锁屏"
+    T_TITLE="󰐦  电源"
     ;;
   ja)
-    T_OFF="  シャットダウン"
-    T_REBOOT="  再起動"
-    T_SUSPEND="  スリープ"
+    T_OFF="󰐥  シャットダウン"
+    T_REBOOT="󰜉  再起動"
+    T_SUSPEND="󰤄  スリープ"
     T_LOGOUT="󰍃  ログアウト"
-    T_LOCK="  ロック"
-    T_TITLE="  電源メニュー"
+    T_LOCK="󰌾  ロック"
+    T_TITLE="󰐦  電源メニュー"
     ;;
   *)  # English (default)
-    T_OFF="  Power Off"
-    T_REBOOT="  Reboot"
-    T_SUSPEND="  Suspend"
+    T_OFF="󰐥  Power Off"
+    T_REBOOT="󰜉  Reboot"
+    T_SUSPEND="󰤄  Suspend"
     T_LOGOUT="󰍃  Log Out"
-    T_LOCK="  Lock"
-    T_TITLE="  Power Menu"
+    T_LOCK="󰌾  Lock"
+    T_TITLE="󰐦  Power Menu"
     ;;
 esac
 
@@ -84,10 +84,10 @@ chosen=$(printf '%s\n' "$T_LOCK" "$T_SUSPEND" "$T_LOGOUT" "$T_REBOOT" "$T_OFF" \
 _confirm() {
   local msg="$1"
   case "$LANG_CODE" in
-    es) local yes="  Sí" no="  No" ;;
-    zh) local yes="  是" no="  否" ;;
-    ja) local yes="  はい" no="  いいえ" ;;
-    *)  local yes="  Yes" no="  No" ;;
+    es) local yes="󰄬  Sí" no="󰅖  No" ;;
+    zh) local yes="󰄬  是" no="󰅖  否" ;;
+    ja) local yes="󰄬  はい" no="󰅖  いいえ" ;;
+    *)  local yes="󰄬  Yes" no="󰅖  No" ;;
   esac
   local result
   result=$(printf '%s\n' "$yes" "$no" \

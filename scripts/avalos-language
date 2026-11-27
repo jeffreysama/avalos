@@ -16,6 +16,9 @@ Uso:
   avalos-language             menú (rofi) para elegir el idioma
   avalos-language --set es    cambia directamente (en | es | zh | ja)
   avalos-language --current   muestra el idioma actual
+  avalos-language --relabel   reescribe los íconos y etiquetas de fastfetch en el idioma actual (sin cambiar nada más;
+                              útil tras actualizar AvalOS, porque el config.jsonc de fastfetch es del usuario y el
+                              actualizador nunca toca ~/.config)
 """
 from __future__ import annotations
 
@@ -38,64 +41,64 @@ NAMES = {"en": "English", "es": "Español", "zh": "中文（简体）", "ja": "�
 # tests/test_language.py falla si esta tabla se desalinea. (Las barras `\\uXXXX` son escapes JSON: van tal cual.)
 FASTFETCH_KEYS = {
     "en": {
-        "os": " OS",
-        "host": "\uf0e4 Host",
-        "kernel": " Kernel",
-        "uptime": "\uf55f Uptime",
-        "packages": "\uf439 Packages",
-        "shell": " Shell",
-        "display": "\uf879 Resolution",
-        "wm": " WM",
-        "terminal": " Terminal",
-        "cpu": " CPU",
-        "gpu": "\uf43f GPU",
-        "memory": "\uf55b RAM",
-        "disk": "\uf4cb Disk",
+        "os": "\\udb80\\udf3d OS",
+        "host": "\\udb80\\uddc4 \uf0e4 Host",
+        "kernel": "\\udb81\\ude1a Kernel",
+        "uptime": "\\udb81\\udd1f \uf55f Uptime",
+        "packages": "\\udb80\\udfd7 \uf439 Packages",
+        "shell": "\\udb81\\udfb7 Shell",
+        "display": "\\udb80\\udf79 \uf879 Resolution",
+        "wm": "\\udb81\\uddaf WM",
+        "terminal": "\\udb80\\udd8d Terminal",
+        "cpu": "\\udb83\\udee0 CPU",
+        "gpu": "\\udb83\\udfb2 \uf43f GPU",
+        "memory": "\\udb80\\udf5b \uf55b RAM",
+        "disk": "\\udb80\\udeca \uf4cb Disk",
     },
     "es": {
-        "os": " OS",
-        "host": "\uf0e4 Host",
-        "kernel": " Kernel",
-        "uptime": "\uf55f Uptime",
-        "packages": "\uf439 Paquetes",
-        "shell": " Shell",
-        "display": "\uf879 Resolución",
-        "wm": " WM",
-        "terminal": " Terminal",
-        "cpu": " CPU",
-        "gpu": "\uf43f GPU",
-        "memory": "\uf55b RAM",
-        "disk": "\uf4cb Disco",
+        "os": "\\udb80\\udf3d OS",
+        "host": "\\udb80\\uddc4 \uf0e4 Host",
+        "kernel": "\\udb81\\ude1a Kernel",
+        "uptime": "\\udb81\\udd1f \uf55f Uptime",
+        "packages": "\\udb80\\udfd7 \uf439 Paquetes",
+        "shell": "\\udb81\\udfb7 Shell",
+        "display": "\\udb80\\udf79 \uf879 Resolución",
+        "wm": "\\udb81\\uddaf WM",
+        "terminal": "\\udb80\\udd8d Terminal",
+        "cpu": "\\udb83\\udee0 CPU",
+        "gpu": "\\udb83\\udfb2 \uf43f GPU",
+        "memory": "\\udb80\\udf5b \uf55b RAM",
+        "disk": "\\udb80\\udeca \uf4cb Disco",
     },
     "zh": {
-        "os": " 系统",
-        "host": "\uf0e4 主机",
-        "kernel": " 内核",
-        "uptime": "\uf55f 运行时间",
-        "packages": "\uf439 软件包",
-        "shell": " Shell",
-        "display": "\uf879 分辨率",
-        "wm": " WM",
-        "terminal": " 终端",
-        "cpu": " CPU",
-        "gpu": "\uf43f GPU",
-        "memory": "\uf55b 内存",
-        "disk": "\uf4cb 磁盘",
+        "os": "\\udb80\\udf3d 系统",
+        "host": "\\udb80\\uddc4 \uf0e4 主机",
+        "kernel": "\\udb81\\ude1a 内核",
+        "uptime": "\\udb81\\udd1f \uf55f 运行时间",
+        "packages": "\\udb80\\udfd7 \uf439 软件包",
+        "shell": "\\udb81\\udfb7 Shell",
+        "display": "\\udb80\\udf79 \uf879 分辨率",
+        "wm": "\\udb81\\uddaf WM",
+        "terminal": "\\udb80\\udd8d 终端",
+        "cpu": "\\udb83\\udee0 CPU",
+        "gpu": "\\udb83\\udfb2 \uf43f GPU",
+        "memory": "\\udb80\\udf5b \uf55b 内存",
+        "disk": "\\udb80\\udeca \uf4cb 磁盘",
     },
     "ja": {
-        "os": " OS",
-        "host": "\uf0e4 ホスト",
-        "kernel": " カーネル",
-        "uptime": "\uf55f 稼働時間",
-        "packages": "\uf439 パッケージ",
-        "shell": " シェル",
-        "display": "\uf879 解像度",
-        "wm": " WM",
-        "terminal": " ターミナル",
-        "cpu": " CPU",
-        "gpu": "\uf43f GPU",
-        "memory": "\uf55b RAM",
-        "disk": "\uf4cb ディスク",
+        "os": "\\udb80\\udf3d OS",
+        "host": "\\udb80\\uddc4 \uf0e4 ホスト",
+        "kernel": "\\udb81\\ude1a カーネル",
+        "uptime": "\\udb81\\udd1f \uf55f 稼働時間",
+        "packages": "\\udb80\\udfd7 \uf439 パッケージ",
+        "shell": "\\udb81\\udfb7 シェル",
+        "display": "\\udb80\\udf79 \uf879 解像度",
+        "wm": "\\udb81\\uddaf WM",
+        "terminal": "\\udb80\\udd8d ターミナル",
+        "cpu": "\\udb83\\udee0 CPU",
+        "gpu": "\\udb83\\udfb2 \uf43f GPU",
+        "memory": "\\udb80\\udf5b \uf55b RAM",
+        "disk": "\\udb80\\udeca \uf4cb ディスク",
     },
 }
 
@@ -107,6 +110,8 @@ STRINGS = {
         "outdated": "This system's update helper can't change the language yet. Update AvalOS first and try again.",
         "failed": "Could not change the language: {why}",
         "no-rofi": "rofi is not installed. Use: avalos-language --set en|es|zh|ja",
+        "relabeled": "fastfetch labels and icons updated.",
+        "relabel-same": "fastfetch labels and icons were already up to date (or there is no fastfetch config).",
     },
     "es": {
         "title": "Idioma",
@@ -115,6 +120,8 @@ STRINGS = {
         "outdated": "El ayudante de actualización de este sistema todavía no puede cambiar el idioma. Actualiza AvalOS primero y vuelve a intentarlo.",
         "failed": "No se pudo cambiar el idioma: {why}",
         "no-rofi": "rofi no está instalado. Usa: avalos-language --set en|es|zh|ja",
+        "relabeled": "Etiquetas e íconos de fastfetch actualizados.",
+        "relabel-same": "Las etiquetas e íconos de fastfetch ya estaban al día (o no hay config de fastfetch).",
     },
     "zh": {
         "title": "语言",
@@ -123,6 +130,8 @@ STRINGS = {
         "outdated": "此系统的更新助手尚不支持更改语言。请先更新 AvalOS，然后重试。",
         "failed": "无法更改语言：{why}",
         "no-rofi": "未安装 rofi。请使用：avalos-language --set en|es|zh|ja",
+        "relabeled": "fastfetch 的标签和图标已更新。",
+        "relabel-same": "fastfetch 的标签和图标已是最新（或没有 fastfetch 配置）。",
     },
     "ja": {
         "title": "言語",
@@ -131,6 +140,8 @@ STRINGS = {
         "outdated": "このシステムの更新ヘルパーはまだ言語の変更に対応していません。先に AvalOS を更新してから、もう一度お試しください。",
         "failed": "言語を変更できませんでした：{why}",
         "no-rofi": "rofi がインストールされていません。次を使用してください：avalos-language --set en|es|zh|ja",
+        "relabeled": "fastfetch のラベルとアイコンを更新しました。",
+        "relabel-same": "fastfetch のラベルとアイコンはすでに最新です（または fastfetch の設定がありません）。",
     },
 }
 
@@ -233,11 +244,16 @@ def main(argv: list[str] | None = None) -> int:
     group = ap.add_mutually_exclusive_group()
     group.add_argument("--set", dest="code", choices=SUPPORTED, help="cambiar directamente, sin menú")
     group.add_argument("--current", action="store_true", help="mostrar el idioma actual")
+    group.add_argument("--relabel", action="store_true", help="reescribir los íconos y etiquetas de fastfetch en el idioma actual")
     args = ap.parse_args(argv)
 
     current = current_language()
     if args.current:
         print(current)
+        return 0
+    if args.relabel:
+        changed = relabel_fastfetch_file(fastfetch_config_path(), current)
+        print(STRINGS[current]["relabeled" if changed else "relabel-same"])
         return 0
     code = args.code
     if code is None:

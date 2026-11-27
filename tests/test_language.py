@@ -11,6 +11,7 @@ Qué se prueba:
   · Las tablas que duplican a translations.py (SDDM en el helper, fastfetch en avalos-language) no se desalinean.
   · El menú de Ajustes y el Centro de control lo ofrecen y el script está registrado donde toca.
 """
+import ast
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -61,24 +62,17 @@ def installer_sddm(template, lang):
             .replace("%%SDDM_SHUTDOWN%%", t.get("sddm-shutdown", "Shutdown")))
 
 
+def installer_ff_table(lang):
+    """El diccionario REAL con el que el instalador reescribe las etiquetas de fastfetch: se extrae del código fuente
+    (hyprland.py) y se evalúa con las traducciones de `lang`, en vez de copiar sus literales a mano."""
+    source = (SCRIPTS / "avalos_installer" / "desktop" / "hyprland.py").read_text(encoding="utf-8")
+    node = next(n.value for n in ast.walk(ast.parse(source))
+                if isinstance(n, ast.Assign) and any(isinstance(x, ast.Name) and x.id == "_ff_keys" for x in n.targets))
+    return eval(compile(ast.Expression(node), "<_ff_keys>", "eval"), {"_translations": TRANSLATIONS.get(lang, TRANSLATIONS["en"])})
+
+
 def installer_fastfetch(baseline, lang):
-    t = TRANSLATIONS.get(lang, TRANSLATIONS["en"])
-    keys = {
-        '" OS"': f'"{t.get("ff-os", " OS")}"',
-        '"\\uf0e4 Host"': f'"{t.get("ff-host", "\\uf0e4 Host")}"',
-        '" Kernel"': f'"{t.get("ff-kernel", " Kernel")}"',
-        '"\\uf55f Uptime"': f'"{t.get("ff-uptime", "\\uf55f Uptime")}"',
-        '"\\uf439 Packages"': f'"{t.get("ff-packages", "\\uf439 Packages")}"',
-        '" Shell"': f'"{t.get("ff-shell", " Shell")}"',
-        '"\\uf879 Resolution"': f'"{t.get("ff-display", "\\uf879 Resolution")}"',
-        '" WM"': f'"{t.get("ff-wm", " WM")}"',
-        '" Terminal"': f'"{t.get("ff-terminal", " Terminal")}"',
-        '" CPU"': f'"{t.get("ff-cpu", " CPU")}"',
-        '"\\uf43f GPU"': f'"{t.get("ff-gpu", "\\uf43f GPU")}"',
-        '"\\uf4cb Disk"': f'"{t.get("ff-disk", "\\uf4cb Disk")}"',
-        '"\\uf55b RAM"': f'"{t.get("ff-ram", "\\uf55b RAM")}"',
-    }
-    for old, new in keys.items():
+    for old, new in installer_ff_table(lang).items():
         baseline = baseline.replace(old, new)
     return baseline
 
@@ -222,6 +216,13 @@ class FastfettLabels(unittest.TestCase):
             with self.subTest(lang=lang):
                 self.assertEqual(self.m.relabel_fastfetch(FASTFETCH_BASELINE, lang), installer_fastfetch(FASTFETCH_BASELINE, lang))
 
+    def test_every_key_the_installer_replaces_exists_exactly_once_in_the_shipped_config(self):
+        for lang in LANGS:
+            for old in installer_ff_table(lang):
+                with self.subTest(lang=lang, key=old):
+                    self.assertEqual(FASTFETCH_BASELINE.count(old), 1,
+                                     "el literal de línea base del instalador no coincide con configs/fastfetch/config.jsonc")
+
     def test_it_does_not_matter_which_language_the_config_was_in_before(self):
         for first in LANGS:
             for second in LANGS:
@@ -359,10 +360,24 @@ class ChangeLanguage(unittest.TestCase):
             self.assertEqual(self.m.main(["--current"]), 0)
         self.assertEqual(out.getvalue().strip(), "es")
 
+    def test_relabel_refreshes_fastfetch_in_the_current_language_without_touching_anything_else(self):
+        self.lang_file.write_text("ja\n", encoding="utf-8")        # el sistema está en japonés; el config del usuario, en español
+        out = io.StringIO()
+        with (mock.patch.object(self.m, "LANG_FILE", self.lang_file), mock.patch.object(self.m, "fastfetch_config_path", return_value=self.ff),
+              contextlib.redirect_stdout(out)):
+            self.assertEqual(self.m.main(["--relabel"]), 0)
+            self.assertEqual(self.ff.read_text(encoding="utf-8"), installer_fastfetch(FASTFETCH_BASELINE, "ja"))
+            self.assertIn(self.m.STRINGS["ja"]["relabeled"], out.getvalue())
+            out.truncate(0)
+            self.assertEqual(self.m.main(["--relabel"]), 0)                    # segunda vez: ya estaba al día
+            self.assertIn(self.m.STRINGS["ja"]["relabel-same"], out.getvalue())
+        self.assertEqual(self.lang_file.read_text(encoding="utf-8"), "ja\n")
+        self.assertEqual(self.calls, [], "--relabel no debe llamar a pkexec")
+
     def test_every_result_has_a_message_in_the_four_languages(self):
         for lang in LANGS:
             table = self.m.STRINGS[lang]
-            for key in ("title", "done", "same", "outdated", "failed", "no-rofi"):
+            for key in ("title", "done", "same", "outdated", "failed", "no-rofi", "relabeled", "relabel-same"):
                 self.assertTrue(table[key].strip(), f"{lang}/{key}")
             self.assertIn("{name}", table["done"])
             self.assertIn("{why}", table["failed"])

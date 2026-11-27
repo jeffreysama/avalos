@@ -45,18 +45,18 @@
     // Solución: .* al inicio y final para capturar el título completo, y
     // clase de caracteres [Xx] para cubrir la capitalización real de cada app.
     "rewrite": {
-      "^kitty$":                   " Terminal",
-      ".*[Ff]irefox.*":           " Firefox",
-      ".*[Tt]hunar.*":            " Files",
-      ".*[Cc]hromium.*":          " Chromium",
-      "(?i).*nvim.*":             " Neovim",
-      ".*Visual Studio Code.*":   " VSCode"
+      "^kitty$":                   "\udb80\udd8d Terminal",
+      ".*[Ff]irefox.*":           "\udb80\ude39 Firefox",
+      ".*[Tt]hunar.*":            "\udb80\ude4b Files",
+      ".*[Cc]hromium.*":          "\udb80\udeaf Chromium",
+      "(?i).*nvim.*":             "\udb80\udd69 Neovim",
+      ".*Visual Studio Code.*":   "\udb82\ude1e VSCode"
     }
   },
 
   "clock": {
-    "format": " {:%H:%M}",
-    "format-alt": " {:%A, %d %B %Y}",
+    "format": "\udb80\udd50 {:%H:%M}",
+    "format-alt": "\udb80\udced {:%A, %d %B %Y}",
     "tooltip-format": "<tt>{calendar}</tt>",
     // BUG-6 FIX: calendar con primeros días y locale ausentes.
     // Sin calendar options, el tooltip del reloj muestra el calendario
@@ -80,7 +80,7 @@
   },
 
   "cpu": {
-    "format": " {usage}%",
+    "format": "\udb83\udee0 {usage}%",
     "interval": 2,
     "tooltip": false,
     // BUG-21 FIX: "states" ausente en cpu — style.css define #cpu.warning y
@@ -165,7 +165,7 @@
   },
 
   "custom/powermenu": {
-    "format": "",
+    "format": "\udb81\udc25",
     "tooltip": false,
     "on-click": "~/.config/rofi/scripts/powermenu.sh"
   }
