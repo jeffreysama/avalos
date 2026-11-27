@@ -14,6 +14,7 @@ de Lua (en CI viene lua5.4; si no hay, esa parte se omite).
 """
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -26,7 +27,7 @@ LIVE_LUA = ROOT / "configs" / "hyprland" / "hyprland.lua"
 TEMPLATE_LUA = ROOT / "configs" / "hyprland" / "hyprland_conf_lua.template"
 LUA = shutil.which("lua5.4") or shutil.which("lua")
 BASH = shutil.which("bash")
-SYSTEM_TOOLS = ("awk", "cat", "sleep", "stat", "tr")
+SYSTEM_TOOLS = ("awk", "cat", "python3", "sleep", "stat", "tr")
 
 INI = "[Settings]\ngtk-theme-name = Adwaita-dark\ngtk-cursor-theme-name = {theme}\ngtk-cursor-theme-size = {size}\n"
 
@@ -169,6 +170,225 @@ class Launcher(Sandbox):
         proc = subprocess.run([BASH, str(APPEARANCE)], env=self.env(), capture_output=True, text=True, timeout=30)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("nwg-look", proc.stderr)
+
+
+# Un hyprland.lua como el de una instalación antigua: el tema fijo en dos líneas con las columnas alineadas.
+STOCK_HYPRLAND = """-- Variables de entorno
+hl.env("XCURSOR_SIZE",                        "24")
+hl.env("XCURSOR_THEME",                       "capitaine-cursors")
+hl.env("QT_QPA_PLATFORM", "wayland")
+
+hl.on("hyprland.start", function()
+    hl.exec_cmd("waybar")
+end)
+"""
+CURSOR_BLOCK = re.search(r"(-- avalos:cursor-begin\n.*?-- avalos:cursor-end\n)", TEMPLATE_LUA.read_text(encoding="utf-8"), re.S).group(1)
+
+
+class FixHyprland(Sandbox):
+    """`avalos-appearance --fix-hyprland`: que un hyprland.lua antiguo deje de pisar el cursor guardado."""
+
+    def setUp(self):
+        super().setUp()
+        self.lua = self.dir / "hyprland.lua"
+        self.lua.write_text(STOCK_HYPRLAND, encoding="utf-8")
+        self.lang = self.dir / "lang"
+        self.lang.write_text("en\n", encoding="utf-8")
+
+    def fix(self, lang="en", **extra_env):
+        self.lang.write_text(f"{lang}\n", encoding="utf-8")
+        env = self.env(AVALOS_HYPR_LUA=str(self.lua), AVALOS_HYPR_TEMPLATE=str(TEMPLATE_LUA), AVALOS_LANG_FILE=str(self.lang), **extra_env)
+        proc = subprocess.run([BASH, str(APPEARANCE), "--fix-hyprland"], env=env, capture_output=True, text=True, timeout=60)
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+
+    def backups(self):
+        return sorted(p.name for p in self.dir.iterdir() if ".bak-cursor" in p.name)
+
+    def test_the_two_stock_lines_become_the_template_block_and_nothing_else_changes(self):
+        rc, out, err = self.fix()
+        self.assertEqual(rc, 0, err)
+        migrated = self.lua.read_text(encoding="utf-8")
+        self.assertIn(CURSOR_BLOCK, migrated)
+        self.assertNotIn('hl.env("XCURSOR_THEME",                       "capitaine-cursors")', migrated)
+        self.assertEqual(migrated.count("XCURSOR_SIZE"), 1)       # solo el del bloque
+        self.assertEqual(migrated.count("XCURSOR_THEME"), 1)
+        # el resto del archivo, byte a byte
+        self.assertTrue(migrated.startswith("-- Variables de entorno\n"))
+        self.assertTrue(migrated.endswith('hl.env("QT_QPA_PLATFORM", "wayland")\n\nhl.on("hyprland.start", function()\n    hl.exec_cmd("waybar")\nend)\n'))
+        self.assertEqual(self.backups(), ["hyprland.lua.bak-cursor"])
+        self.assertEqual((self.dir / "hyprland.lua.bak-cursor").read_text(encoding="utf-8"), STOCK_HYPRLAND)
+        self.assertIn("hyprland.bak-cursor".replace("hyprland.", "hyprland.lua."), out)
+
+    def test_running_it_twice_does_not_touch_the_file_or_make_another_backup(self):
+        self.assertEqual(self.fix()[0], 0)
+        once = self.lua.read_text(encoding="utf-8")
+        rc, out, _ = self.fix()
+        self.assertEqual((rc, self.lua.read_text(encoding="utf-8"), self.backups()), (0, once, ["hyprland.lua.bak-cursor"]))
+        self.assertIn("already follows", out)
+
+    def test_it_copes_with_other_spacing_comments_and_lines_that_are_not_adjacent(self):
+        self.lua.write_text('hl.env( "XCURSOR_THEME" , "capitaine-cursors" )  -- tema\nhl.env("A", "b")\n  hl.env("XCURSOR_SIZE","24")\nprint("fin")\n', encoding="utf-8")
+        rc, _, err = self.fix()
+        self.assertEqual(rc, 0, err)
+        migrated = self.lua.read_text(encoding="utf-8")
+        self.assertEqual(migrated.count(CURSOR_BLOCK), 1)
+        self.assertIn('hl.env("A", "b")\nprint("fin")\n', migrated)
+        self.assertNotIn("-- tema", migrated)
+
+    def test_a_cursor_the_user_fixed_on_purpose_is_never_overwritten(self):
+        custom = STOCK_HYPRLAND.replace('"24")', '"32")').replace('"capitaine-cursors")', '"Bibata-Modern-Classic")')
+        self.lua.write_text(custom, encoding="utf-8")
+        rc, out, _ = self.fix()
+        self.assertEqual(rc, 1)
+        self.assertIn("Bibata-Modern-Classic 32", out)
+        self.assertEqual((self.lua.read_text(encoding="utf-8"), self.backups()), (custom, []))
+
+    def test_a_file_it_does_not_recognize_is_left_alone(self):
+        for label, text in (("sin las líneas", "print('hola')\n"),
+                            ("tema repetido", STOCK_HYPRLAND + 'hl.env("XCURSOR_THEME", "capitaine-cursors")\n')):
+            with self.subTest(case=label):
+                self.lua.write_text(text, encoding="utf-8")
+                rc, out, _ = self.fix()
+                self.assertEqual((rc, self.lua.read_text(encoding="utf-8"), self.backups()), (2, text, []))
+                self.assertIn("lost on restart", out)
+
+    def test_without_the_template_block_it_explains_and_changes_nothing(self):
+        for label, template in (("sin plantilla", None), ("plantilla vieja", "hl.env('XCURSOR_THEME', 'x')\n")):
+            with self.subTest(case=label):
+                fake = self.dir / "template"
+                if template is None:
+                    fake.unlink(missing_ok=True)
+                else:
+                    fake.write_text(template, encoding="utf-8")
+                env = self.env(AVALOS_HYPR_LUA=str(self.lua), AVALOS_HYPR_TEMPLATE=str(fake), AVALOS_LANG_FILE=str(self.lang))
+                proc = subprocess.run([BASH, str(APPEARANCE), "--fix-hyprland"], env=env, capture_output=True, text=True, timeout=60)
+                self.assertEqual((proc.returncode, self.lua.read_text(encoding="utf-8"), self.backups()), (2, STOCK_HYPRLAND, []))
+
+    def test_a_missing_hyprland_lua_is_an_error_not_a_crash(self):
+        self.lua.unlink()
+        rc, out, _ = self.fix()
+        self.assertEqual(rc, 2)
+        self.assertIn("hyprland.lua", out)
+
+    def test_a_symlinked_hyprland_lua_edits_the_real_file_and_keeps_the_link_and_the_mode(self):
+        real = self.dir / "dotfiles" / "hyprland.lua"
+        real.parent.mkdir()
+        real.write_text(STOCK_HYPRLAND, encoding="utf-8")
+        real.chmod(0o640)
+        self.lua.unlink()
+        self.lua.symlink_to(real)
+        self.assertEqual(self.fix()[0], 0)
+        self.assertTrue(self.lua.is_symlink())
+        self.assertIn(CURSOR_BLOCK, real.read_text(encoding="utf-8"))
+        self.assertEqual(stat.S_IMODE(real.stat().st_mode), 0o640)
+        self.assertEqual(sorted(p.name for p in real.parent.iterdir()), ["hyprland.lua", "hyprland.lua.bak-cursor"])
+
+    def test_if_lua_rejects_the_result_the_file_is_not_touched(self):
+        self.stub("luac5.4", "#!/bin/sh\nexit 1\n")
+        rc, out, _ = self.fix()
+        self.assertEqual((rc, self.lua.read_text(encoding="utf-8"), self.backups()), (2, STOCK_HYPRLAND, []))
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir() if "avalos-tmp" in p.name), [], "sin temporales sobrantes")
+
+    def test_when_lua_accepts_it_the_file_is_migrated_and_luac_was_really_asked(self):
+        self.stub("luac5.4", f'#!/bin/sh\necho "$@" >> "{self.dir / "luac.log"}"\nexit 0\n')
+        self.assertEqual(self.fix()[0], 0)
+        self.assertIn("-p", (self.dir / "luac.log").read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(LUA, "no hay intérprete de Lua")
+    def test_the_migrated_file_loads_in_lua_and_follows_what_nwg_look_saved(self):
+        self.assertEqual(self.fix()[0], 0)
+        (self.dir / ".config" / "gtk-3.0").mkdir(parents=True)
+        (self.dir / ".config" / "gtk-3.0" / "settings.ini").write_text(INI.format(theme="capitaine-cursors-white", size=32), encoding="utf-8")
+        harness = ('local calls = {}\n'
+                   'hl = setmetatable({ env = function(k, v) print(k .. "=" .. v) end }, { __index = function() return function() end end })\n'
+                   f'assert(loadfile("{self.lua}"))()\n')
+        proc = subprocess.run([LUA, "-"], input=harness, env={"HOME": str(self.dir)}, capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.splitlines(), ["XCURSOR_SIZE=32", "XCURSOR_THEME=capitaine-cursors-white", "QT_QPA_PLATFORM=wayland"])
+
+    def test_the_messages_exist_in_four_languages_and_name_the_backup(self):
+        src = APPEARANCE.read_text(encoding="utf-8")
+        for name in ("T_NO_NWG", "T_MIGRATED", "T_CUSTOM", "T_FAILED", "T_ALREADY"):
+            self.assertEqual(len(re.findall(rf'^\s+{name}="', src, re.M)), 4, name)
+        for name in ("T_MIGRATED", "T_CUSTOM", "T_FAILED"):
+            for value in re.findall(rf'^\s+{name}="(.*)"$', src, re.M):
+                self.assertEqual(value.count("%s"), 1, f"{name}: {value}")
+        seen = set()
+        for lang in ("en", "es", "zh", "ja"):
+            self.lua.write_text(STOCK_HYPRLAND, encoding="utf-8")
+            for old in self.dir.glob("hyprland.lua.bak-cursor*"):
+                old.unlink()
+            rc, out, _ = self.fix(lang)
+            self.assertEqual(rc, 0)
+            self.assertIn("hyprland.lua.bak-cursor", out)
+            seen.add(out.split("hyprland.lua.bak-cursor")[0])
+        self.assertEqual(len(seen), 4, "cada idioma tiene su propio texto")
+
+
+class PersistFromTheLauncher(Sandbox):
+    """Al usar Apariencia, el cursor guardado se conserva sin que el usuario edite nada a mano."""
+
+    def setUp(self):
+        super().setUp()
+        self.lua = self.dir / "hyprland.lua"
+        self.lua.write_text(STOCK_HYPRLAND, encoding="utf-8")
+        self.notes = self.dir / "notify.log"
+        self.stub("notify-send", f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.notes}"\n')
+        self.lang = self.dir / "lang"
+        self.lang.write_text("en\n", encoding="utf-8")
+
+    def run_launcher(self, theme, size=24, rewrite=True):
+        self.ini.write_text(INI.format(theme="capitaine-cursors", size=24), encoding="utf-8")
+        body = (f'sleep 0.5\nprintf "[Settings]\\ngtk-cursor-theme-name={theme}\\ngtk-cursor-theme-size={size}\\n" > "{self.ini}"\n' if rewrite else "")
+        self.stub("nwg-look", f"#!/bin/sh\n{body}sleep 1.2\n")
+        env = self.env(AVALOS_HYPR_LUA=str(self.lua), AVALOS_HYPR_TEMPLATE=str(TEMPLATE_LUA), AVALOS_LANG_FILE=str(self.lang))
+        return subprocess.run([BASH, str(APPEARANCE)], env=env, capture_output=True, text=True, timeout=60)
+
+    def notifications(self):
+        return self.notes.read_text(encoding="utf-8").splitlines() if self.notes.exists() else []
+
+    def test_choosing_another_cursor_makes_hyprland_lua_stop_overriding_it_and_says_so_once(self):
+        proc = self.run_launcher("capitaine-cursors-white")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(CURSOR_BLOCK, self.lua.read_text(encoding="utf-8"))
+        self.assertTrue((self.dir / "hyprland.lua.bak-cursor").exists())
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("hyprland.lua.bak-cursor", notes[0])
+        self.assertIn("setcursor capitaine-cursors-white 24", self.calls())
+
+    def test_the_choice_made_before_this_update_is_also_rescued_when_the_user_just_opens_and_closes_it(self):
+        self.ini.write_text(INI.format(theme="capitaine-cursors-white", size=24), encoding="utf-8")
+        self.stub("nwg-look", "#!/bin/sh\nsleep 0.6\n")
+        env = self.env(AVALOS_HYPR_LUA=str(self.lua), AVALOS_HYPR_TEMPLATE=str(TEMPLATE_LUA), AVALOS_LANG_FILE=str(self.lang))
+        proc = subprocess.run([BASH, str(APPEARANCE)], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(CURSOR_BLOCK, self.lua.read_text(encoding="utf-8"))
+
+    def test_when_the_saved_cursor_is_the_one_the_old_file_already_sets_nothing_is_touched(self):
+        self.run_launcher("capitaine-cursors", rewrite=False)
+        self.assertEqual((self.lua.read_text(encoding="utf-8"), self.notifications()), (STOCK_HYPRLAND, []))
+
+    def test_a_hand_fixed_cursor_is_respected_and_the_user_is_told_why_it_will_not_last(self):
+        custom = STOCK_HYPRLAND.replace('"capitaine-cursors")', '"Bibata-Modern-Classic")')
+        self.lua.write_text(custom, encoding="utf-8")
+        self.run_launcher("capitaine-cursors-white")
+        self.assertEqual(self.lua.read_text(encoding="utf-8"), custom)
+        notes = self.notifications()
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Bibata-Modern-Classic", notes[0])
+
+    def test_an_already_migrated_file_causes_no_notification(self):
+        self.run_launcher("capitaine-cursors-white")
+        self.notes.unlink()
+        self.run_launcher("Bibata-Modern-Ice", size=28)
+        self.assertEqual(self.notifications(), [])
+        self.assertEqual(self.lua.read_text(encoding="utf-8").count(CURSOR_BLOCK), 1)
+
+    def test_the_notification_follows_the_ui_language(self):
+        self.lang.write_text("es\n", encoding="utf-8")
+        self.run_launcher("capitaine-cursors-white")
+        self.assertIn("Cursor guardado", self.notifications()[0])
 
 
 def cursor_block(path):

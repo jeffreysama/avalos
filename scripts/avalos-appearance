@@ -6,6 +6,7 @@
 # Uso:
 #   avalos-appearance                  abre nwg-look; al pulsar «Apply» el cursor cambia al instante
 #   avalos-appearance --apply-cursor   aplica ahora el cursor guardado en settings.ini y sale
+#   avalos-appearance --fix-hyprland   hace que ~/.config/hypr/hyprland.lua deje de pisar el cursor guardado
 #
 # Por qué existe (comprobado contra el código de nwg-look 1.2.1 y de Hyprland):
 #   · «Apply» de nwg-look escribe gsettings, ~/.config/gtk-3.0/settings.ini y ~/.icons/default/index.theme,
@@ -17,14 +18,63 @@
 #     las apps Qt/Electron/kitty (que leen XCURSOR_*) nunca lo veían.
 # Este script cierra el hueco: después de que nwg-look guarda, lee tema y tamaño y se los pasa a Hyprland
 # (hyprctl setcursor para el compositor y XWayland; hl.env para las apps que se abran desde ese momento).
-# hyprland.lua lee el mismo settings.ini al arrancar, así que la elección también sobrevive al reinicio.
 #
-# AVALOS_GTK_SETTINGS y AVALOS_APPEARANCE_POLL solo existen para poder probar el script.
+# Que la elección sobreviva al reinicio depende de hyprland.lua, que es del usuario (el actualizador nunca toca
+# ~/.config): las instalaciones nuevas ya traen un hyprland.lua que lee settings.ini al arrancar, pero uno antiguo
+# sigue con el tema fijo y lo volvería a poner en cada inicio de sesión. Por eso, cuando lo guardado difiere de ese
+# tema fijo, este script cambia SOLO esas dos líneas por el bloque «cursor» de la plantilla del sistema
+# (/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template), dejando antes una copia .bak-cursor. Si el archivo no
+# es el original (otro tema o tamaño fijado a mano, o líneas que no reconoce) no lo toca y lo avisa.
+#
+# AVALOS_GTK_SETTINGS, AVALOS_APPEARANCE_POLL, AVALOS_HYPR_LUA, AVALOS_HYPR_TEMPLATE y AVALOS_LANG_FILE solo
+# existen para poder probar el script.
 
 set -u
 
 _GTK_INI="${AVALOS_GTK_SETTINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/gtk-3.0/settings.ini}"
 _POLL="${AVALOS_APPEARANCE_POLL:-0.5}"
+_HYPR_LUA="${AVALOS_HYPR_LUA:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua}"
+_HYPR_TEMPLATE="${AVALOS_HYPR_TEMPLATE:-/usr/share/avalos/configs/hyprland/hyprland_conf_lua.template}"
+
+# Idioma de UI: /etc/avalos-lang (ver avalos-about). Solo hay textos en los avisos al usuario.
+_LANG_FILE="${AVALOS_LANG_FILE:-/etc/avalos-lang}"
+LANG_CODE=""
+if [[ -r "$_LANG_FILE" ]]; then
+    LANG_CODE="$(<"$_LANG_FILE")"
+    LANG_CODE="${LANG_CODE//[$'\t\r\n ']/}"
+fi
+# Con `set -u`, un LANG sin definir (sesión mínima) mataría el script: de ahí el ${LANG:-}.
+case "$LANG_CODE" in en|es|zh|ja) ;; *) LANG_CODE="${LANG:-}"; LANG_CODE="${LANG_CODE%%_*}" ;; esac
+case "$LANG_CODE" in
+  es)
+    T_NO_NWG="nwg-look no está instalado."
+    T_MIGRATED="Cursor guardado. Ajusté 2 líneas de tu hyprland.lua para que la elección se conserve al reiniciar. Copia de la original: %s"
+    T_CUSTOM="El cambio se aplicó, pero tu hyprland.lua fija el cursor a mano (%s) y lo volverá a poner al reiniciar. Para que Apariencia lo controle, cambia esas dos líneas por el bloque «cursor» de /usr/share/avalos/configs/hyprland/hyprland_conf_lua.template."
+    T_FAILED="El cambio se aplicó, pero no pude guardarlo en tu hyprland.lua (%s): se perderá al reiniciar."
+    T_ALREADY="Tu hyprland.lua ya sigue el cursor guardado en nwg-look."
+    ;;
+  zh)
+    T_NO_NWG="未安装 nwg-look。"
+    T_MIGRATED="光标已保存。我修改了你的 hyprland.lua 中的 2 行，使该选择在重启后仍然有效。原文件备份：%s"
+    T_CUSTOM="更改已应用，但你的 hyprland.lua 手动指定了光标（%s），重启后会被恢复。要让“外观”设置接管，请把那两行替换为 /usr/share/avalos/configs/hyprland/hyprland_conf_lua.template 中的“cursor”代码块。"
+    T_FAILED="更改已应用，但无法保存到你的 hyprland.lua（%s）：重启后将丢失。"
+    T_ALREADY="你的 hyprland.lua 已经遵循 nwg-look 中保存的光标。"
+    ;;
+  ja)
+    T_NO_NWG="nwg-look がインストールされていません。"
+    T_MIGRATED="カーソルを保存しました。再起動後も選択が保持されるよう、hyprland.lua の 2 行を調整しました。元のファイルのコピー：%s"
+    T_CUSTOM="変更は適用されましたが、hyprland.lua でカーソルが手動指定されており（%s）、再起動すると元に戻ります。「外観」で管理するには、その 2 行を /usr/share/avalos/configs/hyprland/hyprland_conf_lua.template の「cursor」ブロックに置き換えてください。"
+    T_FAILED="変更は適用されましたが、hyprland.lua に保存できませんでした（%s）。再起動すると失われます。"
+    T_ALREADY="hyprland.lua はすでに nwg-look で保存したカーソルに従っています。"
+    ;;
+  *)
+    T_NO_NWG="nwg-look is not installed."
+    T_MIGRATED="Cursor saved. I adjusted 2 lines of your hyprland.lua so the choice is kept after a restart. Copy of the original: %s"
+    T_CUSTOM="The change was applied, but your hyprland.lua sets the cursor by hand (%s) and will put it back on restart. To let Appearance control it, replace those two lines with the \"cursor\" block of /usr/share/avalos/configs/hyprland/hyprland_conf_lua.template."
+    T_FAILED="The change was applied, but I couldn't save it in your hyprland.lua (%s): it will be lost on restart."
+    T_ALREADY="Your hyprland.lua already follows the cursor saved in nwg-look."
+    ;;
+esac
 
 # Valor de una clave de la sección [Settings] (la última que aparezca), sin espacios alrededor.
 _ini_value() {
@@ -51,31 +101,140 @@ _gsettings_value() {
 _valid_theme() { [[ "$1" =~ ^[A-Za-z0-9._+-]+$ ]]; }
 _valid_size()  { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 8 && 10#$1 <= 256 )); }
 
+# Tema y tamaño guardados, validados, en _theme y _size. Devuelve 1 si no hay nada válido guardado.
+_theme=""; _size=""
+_saved_cursor() {
+    _theme="$(_ini_value gtk-cursor-theme-name)"
+    _size="$(_ini_value gtk-cursor-theme-size)"
+    [[ -n "$_theme" ]] || _theme="$(_gsettings_value cursor-theme)"
+    [[ -n "$_size" ]]  || _size="$(_gsettings_value cursor-size)"
+    _valid_theme "$_theme" || return 1          # nada guardado, o algo raro: no se toca el cursor
+    _valid_size "$_size" || _size=24
+    _size=$(( 10#$_size ))
+}
+
 _last_applied=""
 
 _apply_cursor() {
     # Fuera de Hyprland no hay compositor al que avisar.
     [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || return 0
     command -v hyprctl &>/dev/null || return 0
-
-    local theme size
-    theme="$(_ini_value gtk-cursor-theme-name)"
-    size="$(_ini_value gtk-cursor-theme-size)"
-    [[ -n "$theme" ]] || theme="$(_gsettings_value cursor-theme)"
-    [[ -n "$size" ]]  || size="$(_gsettings_value cursor-size)"
-    _valid_theme "$theme" || return 0          # nada guardado, o algo raro: no se toca el cursor
-    _valid_size "$size" || size=24
-    size=$(( 10#$size ))
+    _saved_cursor || return 0
 
     # Sin cambios desde la última vez: no se recarga el tema (cada recarga hace que Hyprland vuelva a
     # escribir gsettings, y el sondeo de abajo volvería a verlo como un cambio).
-    [[ "$theme $size" == "$_last_applied" ]] && return 0
+    [[ "$_theme $_size" == "$_last_applied" ]] && return 0
 
     # 1) Variables de Hyprland: las heredan las apps que se abran a partir de ahora (kitty, Qt, Electron...).
-    hyprctl eval "hl.env('XCURSOR_THEME', '$theme'); hl.env('XCURSOR_SIZE', '$size')" &>/dev/null
+    hyprctl eval "hl.env('XCURSOR_THEME', '$_theme'); hl.env('XCURSOR_SIZE', '$_size')" &>/dev/null
     # 2) El cursor del compositor y de XWayland, al instante. Hyprland sincroniza gsettings con este mismo valor.
-    hyprctl setcursor "$theme" "$size" &>/dev/null
-    _last_applied="$theme $size"
+    hyprctl setcursor "$_theme" "$_size" &>/dev/null
+    _last_applied="$_theme $_size"
+}
+
+# ── Persistencia: que hyprland.lua deje de pisar lo guardado ──────────────────────────────
+# Salida de una sola línea «estado|detalle»: already | migrated|<copia> | custom|<tema tamaño> | unrecognized|<por qué> | error|<por qué>
+_fix_hyprland_py() {
+    python3 - "$_HYPR_LUA" "$_HYPR_TEMPLATE" <<'PY'
+import os, re, shutil, subprocess, sys, tempfile, time
+
+path, template = sys.argv[1], sys.argv[2]
+BEGIN, END = "-- avalos:cursor-begin", "-- avalos:cursor-end"
+
+
+def done(status, detail=""):
+    print(f"{status}|{detail}")
+    sys.exit(0)
+
+
+try:
+    real = os.path.realpath(path)            # si es un enlace (dotfiles), se edita el archivo real y el enlace queda
+    with open(real, encoding="utf-8") as f:
+        text = f.read()
+except OSError as e:
+    done("error", f"{path}: {e.strerror}")
+if BEGIN in text:
+    done("already")
+
+try:
+    with open(template, encoding="utf-8") as f:
+        tpl = f.read()
+except OSError as e:
+    done("error", f"{template}: {e.strerror}")
+a, b = tpl.find(BEGIN), tpl.find(END)
+if a < 0 or b < a:
+    done("error", "la plantilla instalada todavía no trae el bloque del cursor: actualiza AvalOS")
+end_of_line = tpl.find("\n", b)
+block = tpl[a:end_of_line + 1] if end_of_line >= 0 else tpl[a:] + "\n"
+
+LINE = r'^[ \t]*hl\.env\(\s*"%s"\s*,\s*"([^"\n]*)"\s*\)[ \t]*(?:--[^\n]*)?$\n?'
+sizes = list(re.finditer(LINE % "XCURSOR_SIZE", text, re.M))
+themes = list(re.finditer(LINE % "XCURSOR_THEME", text, re.M))
+if len(sizes) != 1 or len(themes) != 1:
+    done("unrecognized", "no encontré una sola línea hl.env de XCURSOR_SIZE y otra de XCURSOR_THEME")
+size, theme = sizes[0].group(1), themes[0].group(1)
+if (size, theme) != ("24", "capitaine-cursors"):
+    done("custom", f"{theme} {size}")          # el usuario fijó otro valor a propósito: no se le quita
+
+first, second = sorted((sizes[0], themes[0]), key=lambda m: m.start())
+header = "-- avalos-appearance: el cursor sigue lo que guardó nwg-look (antes estaba fijo acá y se perdía al reiniciar).\n"
+updated = text[:first.start()] + header + block + text[first.end():second.start()] + text[second.end():]
+
+tmp = None
+try:
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(real), prefix=".hyprland.lua.avalos-tmp-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(updated)
+    os.chmod(tmp, os.stat(real).st_mode & 0o7777)
+    luac = shutil.which("luac5.4") or shutil.which("luac")
+    if luac and subprocess.run([luac, "-p", tmp], capture_output=True).returncode != 0:
+        done("error", "Lua no aceptó el resultado; tu archivo no se tocó")
+    bak = real + ".bak-cursor"
+    if os.path.exists(bak):
+        bak = f"{real}.bak-cursor-{time.strftime('%Y%m%d-%H%M%S')}"
+    shutil.copy2(real, bak)
+    os.replace(tmp, real)
+    tmp = None
+    done("migrated", bak)
+except OSError as e:
+    done("error", f"{e.filename or path}: {e.strerror}")
+finally:
+    if tmp and os.path.exists(tmp):
+        os.unlink(tmp)
+PY
+}
+
+_fix_msg=""
+_fix_hyprland() {
+    local out status detail
+    out="$(_fix_hyprland_py 2>&1)" || out="error|python3"
+    status="${out%%|*}"
+    detail="${out#*|}"
+    # shellcheck disable=SC2059   # las plantillas T_* son nuestras, con un solo %s
+    case "$status" in
+        already)  _fix_msg=""; return 0 ;;
+        migrated) printf -v _fix_msg "$T_MIGRATED" "$detail"; return 0 ;;
+        custom)   printf -v _fix_msg "$T_CUSTOM" "$detail"; return 1 ;;
+        *)        printf -v _fix_msg "$T_FAILED" "$detail"; return 2 ;;
+    esac
+}
+
+_tell() {
+    echo "$1" >&2
+    notify-send -i preferences-desktop-theme -t 12000 "AvalOS" "$1" 2>/dev/null || true
+}
+
+# Solo hace falta cuando lo guardado difiere del cursor que el hyprland.lua original trae fijo: si coincide, ese
+# archivo ya produce lo mismo y no hay nada que tocar. Una vez por ejecución.
+_persisted=0
+_persist_cursor() {
+    (( _persisted )) && return 0
+    _saved_cursor || return 0
+    [[ "$_theme $_size" == "capitaine-cursors 24" ]] && return 0
+    _persisted=1
+    _fix_hyprland
+    [[ -n "$_fix_msg" ]] && _tell "$_fix_msg"
+    return 0
 }
 
 case "${1:-}" in
@@ -83,19 +242,26 @@ case "${1:-}" in
         _apply_cursor
         exit 0
         ;;
+    --fix-hyprland)
+        _fix_hyprland
+        _rc=$?
+        echo "${_fix_msg:-$T_ALREADY}"
+        exit "$_rc"
+        ;;
     -h|--help)
         cat <<'USAGE'
 Uso:
   avalos-appearance                  abre nwg-look; al pulsar «Apply» el cursor cambia al instante
   avalos-appearance --apply-cursor   aplica ahora el cursor guardado en settings.ini y sale
+  avalos-appearance --fix-hyprland   hace que hyprland.lua deje de pisar el cursor guardado (con copia de respaldo)
 USAGE
         exit 0
         ;;
 esac
 
 if ! command -v nwg-look &>/dev/null; then
-    notify-send "AvalOS" "nwg-look" -i preferences-desktop-theme -t 4000 2>/dev/null || true
-    echo "avalos-appearance: nwg-look no está instalado." >&2
+    notify-send "AvalOS" "$T_NO_NWG" -i preferences-desktop-theme -t 4000 2>/dev/null || true
+    echo "avalos-appearance: $T_NO_NWG" >&2
     exit 1
 fi
 
@@ -115,9 +281,11 @@ while kill -0 "$_pid" 2>/dev/null; do
         _prev="$_cur"
         sleep 0.3          # nwg-look escribe varios archivos seguidos: que termine antes de leer
         _apply_cursor
+        _persist_cursor
     fi
 done
 wait "$_pid"
 _rc=$?
 _apply_cursor              # por si se cerró justo después de «Apply»
+_persist_cursor
 exit "$_rc"
