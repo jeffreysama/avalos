@@ -39,7 +39,7 @@ import webview
 # completo) — duplicado acá, no se importa uno del otro para no crear una
 # dependencia entre el helper con privilegios y este proceso sin privilegios.
 # `python3 scripts/gen-sync-manifest.py --pin` actualiza los dos juntos.
-AVALOS_SYNC_REF = "7972b8ff9a8cbdd66a83eb10a49f795a52ec2c67"
+AVALOS_SYNC_REF = "0355ff6ac4d96d19304b04f484675f5e6c9eb39d"
 REPO_RAW = f"https://raw.githubusercontent.com/jeffreysama/avalos/{AVALOS_SYNC_REF}"
 HELPER_BIN = "/usr/local/bin/avalos-update-helper"
 
